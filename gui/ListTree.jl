@@ -111,33 +111,6 @@ const end_connect = @dom[:indent css"""
                                    width: 50%
                                  """]
 
-dom(ui::Item) = begin
-  indent = depth(ui)
-  @dom[:div css"""
-            display: flex
-            align-items: center
-            &.interested > .header > .content{ background: #3b3f4b }
-            > .header
-              display: flex
-              align-items: center
-              flex-grow: 1
-            > .header > .content
-              display: flex
-              align-items: center
-              transition: background 0.2s
-              background: rgb(49,52,58)
-              border-radius: 0.3rem
-              padding: 0.75rem
-              flex-grow: 1
-            """
-            class.interested=ui.interested
-            class.selected=ui.selected
-            class="item"
-    [:div class="header" css"display: flex; align-items: center"
-      indents(ui)...
-      [:div class="content" css"display: flex; align-items: center" ui.firstchild]]]
-end
-
 islast(ui) = ui.nextsibling == nothing
 depth(ui::TreeItem) = ui.parent isa ListTree ? 0 : 1 + depth(ui.parent)
 rems(ui::Item) = 4
@@ -155,46 +128,59 @@ indents(ui) = begin
   p
 end
 
+const header_css = css"""
+display: flex
+&.interested > header > content{ background: #3b3f4b }
+> header
+  display: flex
+  align-items: center
+  flex-grow: 1
+> header > content
+  display: flex
+  align-items: center
+  transition: background 0.2s
+  background: rgb(49,52,58)
+  border-radius: 0.3rem
+  padding: 0.75rem
+  flex-grow: 1
+"""
+
+dom(ui::Item) = begin
+  @dom[:div css"align-items: center"
+            class=header_css
+            class.interested=ui.interested
+            class.selected=ui.selected
+    [:header indents(ui)... [:content ui.firstchild]]]
+end
+
 dom(ui::ItemGroup) = begin
-  h = ui.collapsed ? 0 : sum(rems, ui.children[2:end])
   @dom[:div css"""
-            display: flex
             flex-direction: column
             position: relative
-            &.interested > header > content { background: #3b3f4b }
-            > header
-              display: flex
-              align-items: center
-              flex-grow: 1
-            > header > content
-              display: flex
-              align-items: center
-              background: rgb(49,52,58)
-              border-radius: 0.3rem
-              padding: 0.75rem
-              flex-grow: 1
             > spacer
               position: absolute
               top: 3.8rem
             > spacer > div
               border-right: 2px solid rgb(49,52,58)
               height: 0.3rem
-            &.collapsed > spacer {opacity: 0}
+            &.collapsed > spacer { opacity: 0 }
             > leaves
               display: flex
               flex-direction: column
               transition: height 170ms
               overflow: hidden
             """
+            class=header_css
             class.interested=ui.interested
             class.selected=ui.selected
             class.collapsed=ui.collapsed
     [:header indents(ui)... [:content chevron(!ui.collapsed) ui.firstchild]]
     [:spacer [:div style.width="$(depth(ui)*2+1)rem"]]
-    [:leaves style.height="$(h)rem" ui.children[2:end]...]]
+    [:leaves style.height="$(ui.collapsed ? 0 : sum(rems, ui.children[2:end]))rem" ui.children[2:end]...]]
 end
 
 nextfamily(ui) = begin
+  ui.parent isa ListTree && return ui.nextsibling
   while ui.parent.nextsibling == nothing
     ui = ui.parent
     ui.parent isa ListTree && return nothing
