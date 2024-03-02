@@ -78,6 +78,10 @@ for (e,T) in event_type
   @eval handler_for(::$T) = $name
 end
 
+onkeydown(ui, e::KeyboardEvent) = onkeydown(ui, e.key)
+onkeyup(ui, e::KeyboardEvent) = onkeyup(ui, e.key)
+onkeypress(ui, e::KeyboardEvent) = onkeypress(ui, e.key)
+
 parse_event(event::AbstractDict, target::UINode) = begin
   parse_event(event_type[event["type"]], event, target)
 end

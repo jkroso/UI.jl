@@ -39,9 +39,6 @@ path_to(bottom, top) = begin
   path
 end
 
-onkeydown(ui::ListTree, event) = onkeydown(ui, event.key)
-onkeydown(ui::ListTree, ::KeyCombo) = nothing
-
 @abstract struct TreeItem <: Component
   interested::Bool=false
   selected::Bool=false
