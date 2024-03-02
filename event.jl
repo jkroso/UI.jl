@@ -1,3 +1,4 @@
+@use "github.com/jkroso/Sequences.jl/collections/Set" Setlet
 @use "github.com/jkroso/Prospects.jl" @abstract @struct
 @use "github.com/jkroso/Units.jl" Time
 @use "./types.jl" UINode
@@ -18,7 +19,28 @@ end
 @struct MouseMoveEvent(position::Tuple) <: MouseEvent
 @struct MouseWheelEvent(delta::Tuple{Int,Int}) <: MouseEvent
 
-@struct KeyboardEvent{type}(key::String, modifiers::Set{Symbol}) <: Event
+struct KeyCombo{key,shft,ctrl,opt,cmd} end
+KeyCombo(key;shft=false,ctrl=false,opt=false,cmd=false) = KeyCombo{Symbol(key),shft,ctrl,opt,cmd}()
+
+Base.getproperty(c::KeyCombo{key,shft,ctrl,opt,cmd}, f::Symbol) where {key,shft,ctrl,opt,cmd} = begin
+  f == :key && return key
+  f == :shft && return shft
+  f == :ctrl && return ctrl
+  f == :opt && return opt
+  f == :cmd && return cmd
+  f == :mods && return Setlet((k for (k,v) in zip((:shft,:ctrl,:opt,:cmd),(shft,ctrl,opt,cmd)) if v))
+  invoke(getproperty, Tuple{Any,Symbol}, c, f)
+end
+
+macro key_str(str)
+  key,mods... = split(str, '+')
+  KeyCombo{Symbol(key), "shft" in mods,
+                        "ctrl" in mods,
+                        "opt" in mods,
+                        "cmd" in mods}
+end
+
+@struct KeyboardEvent{type}(key::KeyCombo) <: Event
 
 @abstract struct Focus <: Event
   target::Union{UINode,Nothing}
@@ -61,7 +83,11 @@ parse_event(event::AbstractDict, target::UINode) = begin
 end
 
 parse_event(T::Type{<:KeyboardEvent}, e::AbstractDict, ::UINode) = begin
-  T(e["key"], Set{Symbol}((Symbol(s) for s in e["modifiers"])))
+  mods = e["modifiers"]
+  T(KeyCombo(e["key"], ctrl="ctrl" in mods,
+                       opt="alt" in mods,
+                       cmd="meta" in mods,
+                       shft="shift" in mods))
 end
 
 parse_event(::Type{MouseMoveEvent}, e::AbstractDict, target::UINode) = begin

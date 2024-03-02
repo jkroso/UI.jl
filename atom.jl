@@ -1,12 +1,12 @@
 @use "github.com/jkroso/Prospects.jl" @mutable @abstract @struct Field assoc group interleave
 @use "github.com/jkroso/Destructure.jl" @destruct
 @use "github.com/jkroso/Promises.jl" need Future
+@use "github.com/jkroso/JSON.jl/write.jl" json
 @use "github.com/jkroso/Unparse.jl" serialize
-@use "github.com/jkroso/write-json.jl" json
 @use "github.com/jkroso/DOM.jl" => DOM @dom
 @use "github.com/jkroso/Units.jl" ns
 @use "./event.jl" emit parse_event Tick tick FocusIn FocusOut Focus KeyboardEvent onsubmit
-@use "./types.jl" UINode TextNode dom focus
+@use "./types.jl" UINode TextNode dom focus onmount
 @use "./gui/basic" brief
 @use "./gui" gui expand
 @use Atom
@@ -73,6 +73,7 @@ mutable struct InlineDisplay
     d.ui = gui(data)
     d.focused = d.ui
     setfield!(d.ui, :parent, TopNode(d, d.ui))
+    onmount(d.ui)
     single && expand(d.ui)
     d
   end
@@ -206,8 +207,6 @@ get_display(str::String) = begin
     inline.snippet.text == str && return inline
   end
 end
-
-get_display(84)
 
 const loop = @async begin
   wait(connected)

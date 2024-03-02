@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @mutable @abstract @struct Field assoc group interleave field_map
+@use "./selector.jl" identitykey get set
 @use OrderedCollections: LittleDict
 @use MacroTools: @capture, @match
-@use "./selector.jl" identitykey get set
 
 @abstract struct UINode
   parent::Union{Nothing, UINode}=nothing
@@ -45,6 +45,7 @@ Base.getproperty(c::Component, sym::Field{:firstchild}) = begin
   isnothing(getfield(c, :firstchild)) && tree(c, children(c)...)
   getfield(c, :firstchild)
 end
+Base.getproperty(ui::UINode, f::Field{:index}) = siblings_l(ui)+1
 
 """
 Components can generate their children lazily if desired. If when a component has it's `children`
@@ -61,7 +62,7 @@ Base.getindex(c::Children, r::UnitRange) = ChildSlice(c[r.start], r.stop - (r.st
 @struct ChildNodes(node::Union{UINode,Nothing}) <: Children
 Base.iterate(c::ChildNodes) = iterate(c, (c.node))
 Base.iterate(c::ChildNodes, next) = isnothing(next) ? nothing : (next, next.nextsibling)
-Base.lastindex(c::ChildNodes) = sibling_count(c.node)
+Base.lastindex(c::ChildNodes) = 1+siblings_r(c.node)
 Base.getindex(c::ChildNodes, i::Integer) = begin
   node = c.node
   isnothing(node) && throw(BoundsError())
@@ -72,9 +73,9 @@ Base.getindex(c::ChildNodes, i::Integer) = begin
   end
   node
 end
-Base.length(c::ChildNodes) = sibling_count(c.node)
+Base.length(c::ChildNodes) = 1+siblings_r(c.node)
 
-@struct ChildSlice(node::Union{UINode,Nothing}, len::Integer=sibling_count(node)) <: Children
+@struct ChildSlice(node::Union{UINode,Nothing}, len::Integer=siblings_r(node)) <: Children
 Base.iterate(c::ChildSlice) = iterate(c, (c.node, c.len))
 Base.iterate(c::ChildSlice, (node, len)) = len < 1 ? nothing : (node, (node.nextsibling, len-1))
 Base.length(c::ChildSlice) = c.len
@@ -88,8 +89,11 @@ Base.getindex(c::ChildSlice, i::Integer) = begin
   end
   node
 end
-sibling_count(::Nothing) = 0
-sibling_count(ui::UINode) = 1 + sibling_count(ui.nextsibling)
+siblings_r(::Nothing) = 0
+siblings_r(ui::UINode) = isnothing(ui.nextsibling) ? 0 : siblings_r(ui.nextsibling)+1
+siblings_l(::Nothing) = 0
+siblings_l(ui::UINode) = isnothing(ui.prevsibling) ? 0 : siblings_l(ui.prevsibling)+1
+siblings(ui::UINode) = siblings_l(ui.prevsibling) + siblings_r(ui.nextsibling)
 
 Base.in(needle::UINode, haystack::UINode) = any(child -> child == needle || needle in child, haystack.children)
 
@@ -138,10 +142,9 @@ add_attr!(d::AbstractDict, (key,value)::Pair) = (d[key] = value; d)
 attr_expression(attrs) = Expr(:kw, :attrs, :(Attrs($(map(normalize_attr, attrs)...))))
 
 tree(parent, children...) = begin
-  prev_sibling = nothing
-  for child in children
-    isnothing(child) && continue
-    prev_sibling = add_child!(parent, adopt(parent, child), prev_sibling)
+  foldl(children, init=nothing) do prev_sibling, child
+    isnothing(child) && return prev_sibling
+    add_child!(parent, adopt(parent, child), prev_sibling)
   end
   parent
 end
@@ -179,3 +182,6 @@ function focus end
 
 "Unsets the target of keyboard events"
 function blur end
+
+onmount(ui::UINode) = foreach(onmount, ui.children)
+onunmount(ui::UINode) = foreach(onunmount, ui.children)
