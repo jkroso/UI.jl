@@ -1,0 +1,3 @@
+# Rutherford.jl
+
+GUI architectures generally fit into either immediate mode or retained mode type. Immediate mode take in state and renders the whole screen from this state in each frame. While retained mode architectures create an abstract representation of the UI at startup time and then affect changes to the screen by mutating this abstract representation. This is a bit of a false dichotomy though because both architectures have state which they mutate in order to affect subsequence renderings. Retained mode systems are simply adding hierarchy so that a UI can be composed of whats effectively many small screens. A retained mode app with 1 component is indistinguishable from an immediate mode app. Retained mode is therefore pure win.

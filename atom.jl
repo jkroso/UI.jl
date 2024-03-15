@@ -6,7 +6,7 @@
 @use "github.com/jkroso/DOM.jl" => DOM @dom
 @use "github.com/jkroso/Units.jl" ns
 @use "./event.jl" emit parse_event Tick tick FocusIn FocusOut Focus KeyboardEvent onsubmit
-@use "./types.jl" UINode TextNode dom focus onmount
+@use "./types.jl" UINode TextNode dom focus onmount init
 @use "./gui/basic" brief
 @use "./gui" gui expand
 @use Atom
@@ -73,8 +73,8 @@ mutable struct InlineDisplay
     d.ui = gui(data)
     d.focused = d.ui
     setfield!(d.ui, :parent, TopNode(d, d.ui))
-    onmount(d.ui)
     single && expand(d.ui)
+    init(d.ui)
     d
   end
 end
@@ -109,17 +109,21 @@ blur(ui::UINode) = begin
 end
 
 const inline_displays = Dict{Int32,InlineDisplay}()
+const first_renders = Channel{UINode}(Inf)
 
 Base.convert(::Type{DOM.Node}, ui::UINode) = begin
-  getfield(ui, :stale) || return ui_dom[ui]
+  ui.stale || return ui_dom[ui]
   html = dom(ui)
   setfield!(ui, :stale, false)
   id = str_id(ui)
+  if !haskey(id_ui, id)
+    put!(first_renders, ui)
+    finalizer(uncache, ui)
+    id_ui[id] = ui
+  end
   if !haskey(html.attrs, :id)
     html = assoc(html, :attrs, assoc(html.attrs, :id, id))
-    finalizer(uncache, ui)
     ui_dom[ui] = html
-    id_ui[id] = ui
   end
   html
 end
@@ -182,6 +186,12 @@ brief(e::Atom.EvalError) = begin
   @dom[:span repr(err)]
 end
 
+Base.getproperty(ui::UINode, ::Field{:dimensions}) = begin
+  dims = Atom.@rpc dimensions(str_id(ui))
+  (x=dims[1], y=dims[2], width=dims[3], height=dims[4])
+end
+
+
 const atom_connected = Atom.handlers["connected"]
 const connected = Future{Bool}()
 Atom.handle("connected") do
@@ -223,6 +233,9 @@ const loop = @async begin
     tick = Tick(new_time - time, new_time)
     time = new_time
     @invokelatest update(tick)
+    while !isempty(first_renders)
+      @invokelatest onmount(take!(first_renders))
+    end
   end
 end
 

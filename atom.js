@@ -261,14 +261,16 @@ connection.client.ipc.handle("patchnode2", ({node, patch}) => {
   DOM.patch(patch, document.getElementById(node))
 })
 
-// connection.client.ipc.handle("AsyncNode", ({id, value}) => {
-//   document.getElementById(String(id)).replaceWith(DOM.create(value))
-// })
-//
-// connection.client.ipc.handle("currentfile", () => {
-//   const {mod, edpath} = runtime.evaluation._currentContext()
-//   return edpath
-// })
+connection.client.ipc.handle("currentfile2", () => {
+  return runtime.evaluation._currentContext().edpath
+})
+
+connection.client.ipc.handle("dimensions", (id) => {
+  const el = document.getElementById(id)
+  if (el == null) return [0, 0, 0, 0]
+  const rect = el.getBoundingClientRect()
+  return [rect.x, rect.y, rect.width, rect.height]
+})
 
 connection.client.ipc.handle("edit2", ({src, line, id}) => {
   const {editor} = runtime.evaluation._currentContext()
@@ -279,12 +281,12 @@ connection.client.ipc.handle("edit2", ({src, line, id}) => {
   editor.setTextInBufferRange(range, src)
 })
 
-// const grammar_remap = {"source.jldoctest": "source.julia.console"}
-//
-// connection.client.ipc.handle("highlight", ({src, grammar, block}) => {
-//   if (grammar in grammar_remap) grammar = grammar_remap[grammar]
-//   grammar = atom.grammars.grammarForScopeName(grammar) || atom.grammars.grammarForScopeName("text.plain")
-//   return Highlighter.highlight(src, grammar, {scopePrefix: 'syntax--', block})
-// })
-//
-// connection.client.ipc.handle("config", (key) => atom.config.get(key))
+const grammar_remap = {"source.jldoctest": "source.julia.console"}
+
+connection.client.ipc.handle("highlight2", ({src, grammar, block}) => {
+  if (grammar in grammar_remap) grammar = grammar_remap[grammar]
+  grammar = atom.grammars.grammarForScopeName(grammar) || atom.grammars.grammarForScopeName("text.plain")
+  return Highlighter.highlight(src, grammar, {scopePrefix: 'syntax--', block})
+})
+
+connection.client.ipc.handle("config2", (key) => atom.config.get(key))

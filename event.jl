@@ -13,11 +13,11 @@ end
   target::UINode
 end
 
-@struct MouseButtonEvent{type}(button::MouseButton, position::Tuple) <: MouseEvent
+@struct MouseButtonEvent{type}(button::MouseButton, position::Vector{Int}) <: MouseEvent
 @struct MouseHoverEvent{type} <: MouseEvent
-@struct ScrollEvent(position::Tuple) <: MouseEvent
-@struct MouseMoveEvent(position::Tuple) <: MouseEvent
-@struct MouseWheelEvent(delta::Tuple{Int,Int}) <: MouseEvent
+@struct ScrollEvent(position::Vector{Int}) <: MouseEvent
+@struct MouseMoveEvent(position::Vector{Int}) <: MouseEvent
+@struct MouseWheelEvent(delta::Vector{Int}) <: MouseEvent
 
 struct KeyCombo{key,shft,ctrl,opt,cmd} end
 KeyCombo(key;shft=false,ctrl=false,opt=false,cmd=false) = KeyCombo{Symbol(key),shft,ctrl,opt,cmd}()
@@ -95,25 +95,25 @@ parse_event(T::Type{<:KeyboardEvent}, e::AbstractDict, ::UINode) = begin
 end
 
 parse_event(::Type{MouseMoveEvent}, e::AbstractDict, target::UINode) = begin
-  MouseMoveEvent(tuple(round.(e["position"])...), target)
+  MouseMoveEvent(round.(e["position"]), target)
 end
 
 parse_event(::Type{MouseWheelEvent}, e::AbstractDict, target::UINode) = begin
-  MouseMoveEvent(tuple(e["delta"]...), target)
+  MouseMoveEvent(e["delta"], target)
 end
 
 parse_event(T::Type{<:MouseButtonEvent}, e::AbstractDict, target::UINode) = begin
-  T(MouseButton(e["button"]), tuple(round.(e["position"])...), target)
+  T(MouseButton(e["button"]), round.(e["position"]), target)
 end
 
 parse_event(T::Type{<:MouseHoverEvent}, e::AbstractDict, target::UINode) = T(target)
 
 parse_event(::Type{MouseMoveEvent}, e::AbstractDict, target::UINode) = begin
-  MouseMoveEvent(tuple(round.(e["position"])...), target)
+  MouseMoveEvent(round.(e["position"]), target)
 end
 
 parse_event(::Type{ScrollEvent}, e::AbstractDict, target::UINode) = begin
-  ScrollEvent(tuple(round.(e["position"])...), target)
+  ScrollEvent(round.(e["position"]), target)
 end
 
 """

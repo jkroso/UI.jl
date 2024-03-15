@@ -14,10 +14,15 @@ end
 @mutable TextNode(value::AbstractString="") <: UINode
 Base.convert(::Type{UINode}, str::AbstractString) = TextNode(str)
 
+"A component is a UINode which generates it's children lazily"
 @abstract struct Component <: UINode
   attrs::AbstractDict{Symbol,Any}=Base.ImmutableDict{Symbol,Any}()
   firstchild::Union{Nothing, UINode}=nothing
 end
+
+"A subcomponent is just a component that depends upon variables from one of it's parents"
+@abstract struct SubComponent <: Component end
+Base.getproperty(c::SubComponent, sym::Field{:stale}) = c.parent.stale
 
 Base.getproperty(c::UINode, sym::Symbol) = getproperty(c, Field{sym}())
 Base.setproperty!(c::UINode, sym::Symbol, x) = setproperty!(c, Field{sym}(), x)
@@ -183,5 +188,6 @@ function focus end
 "Unsets the target of keyboard events"
 function blur end
 
-onmount(ui::UINode) = foreach(onmount, ui.children)
-onunmount(ui::UINode) = foreach(onunmount, ui.children)
+init(ui::UINode) = foreach(init, ui.children)
+onmount(ui::UINode) = nothing
+ondismount(ui::UINode) = nothing
