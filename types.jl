@@ -1,22 +1,26 @@
-@use "github.com/jkroso/Prospects.jl" @mutable @abstract @struct Field assoc group interleave field_map
+@use "github.com/jkroso/Prospects.jl" @mutable @abstract @struct Field group assoc
+@use "github.com/jkroso/Sequences.jl/collections/Map.jl" Map
+@use "./style.jl" @style_str parse_style Style
 @use "./selector.jl" identitykey get set
-@use OrderedCollections: LittleDict
 @use MacroTools: @capture, @match
 
 @abstract struct UINode
   parent::Union{Nothing, UINode}=nothing
   prevsibling::Union{Nothing, UINode}=nothing
   nextsibling::Union{Nothing, UINode}=nothing
-  key::Any=$identitykey
+  key::Any=identitykey
   stale::Bool=true
+  style::Union{Nothing, Style}=nothing
 end
 
 @mutable TextNode(value::AbstractString="") <: UINode
 Base.convert(::Type{UINode}, str::AbstractString) = TextNode(str)
 
+const empty_attrs = Map{Symbol,Any}()
+
 "A component is a UINode which generates it's children lazily"
 @abstract struct Component <: UINode
-  attrs::AbstractDict{Symbol,Any}=Base.ImmutableDict{Symbol,Any}()
+  attrs::AbstractDict{Symbol,Any}=empty_attrs
   firstchild::Union{Nothing, UINode}=nothing
 end
 
@@ -118,9 +122,10 @@ ui_macro(expr::Expr) = begin
     end
     this = tocall(args[1])
     attrs, children = group(isattr, @view args[2:end])
-    children = map(ui_macro, children)
+    style, children = group(isstyle, children)
     isempty(attrs) || push!(this.args, attr_expression(attrs))
-    :(tree($this, $(children...)))
+    isempty(style) || push!(this.args, style_expression(style))
+    :(tree($this, $(map(ui_macro, children)...)))
   else
     esc(expr)
   end
@@ -133,7 +138,8 @@ normalize_attr(e) = begin
     _ => esc(e)
   end
 end
-Attrs(attrs::Pair...) = reduce(add_attr!, attrs, init=LittleDict{Symbol,Any}())
+
+Attrs(attrs::Pair...) = reduce(add_attr, attrs, init=empty_attrs)
 
 tocall(s::Symbol) = Expr(:call, esc(s))
 tocall(s::Expr) = begin
@@ -142,9 +148,15 @@ tocall(s::Expr) = begin
   Expr(:call, esc(s.args[1]), map(esc, args)...)
 end
 isattr(e) = @capture(e, (_ = _))
-add_attr!(d::AbstractDict, (key,value)::Pair{Symbol,<:Pair}) = push!(get!(LittleDict{Symbol,Any}, d, key), value)
-add_attr!(d::AbstractDict, (key,value)::Pair) = (d[key] = value; d)
+isstyle(e) = @capture(e, @style_str(_))
+add_attr(d::AbstractDict, (key,value)::Pair{Symbol,<:Pair}) = begin
+  assoc(d, key, assoc(get(d, key, empty_attrs), value[1], value[2]))
+end
+add_attr(d::AbstractDict, (key,value)::Pair) = assoc(d, key, value)
 attr_expression(attrs) = Expr(:kw, :attrs, :(Attrs($(map(normalize_attr, attrs)...))))
+style_expression(styles) = begin
+  Expr(:kw, :style, parse_style(styles[1].args[3]))
+end
 
 tree(parent, children...) = begin
   foldl(children, init=nothing) do prev_sibling, child

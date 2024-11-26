@@ -2,9 +2,8 @@
 @use "github.com/jkroso/Prospects.jl" @abstract @mutable
 @use "github.com/jkroso/DOM.jl" Node @css_str @dom
 @use "../types.jl" UINode Component adopt @ui dom focus children onmount
-@use "../event.jl" onmousedown onkeydown ondblclick onfocusout onfocusin tick emit Change Submit @key_str KeyCombo
-@use "./basic.jl" VStack chevron HStack gui
-@use "./Icon.jl" Icon
+@use "../event.jl" onkeydown @key_str
+@use "./basic.jl" chevron
 
 @mutable struct ListTree <: Component
   interest::Cons{Int}=convert(Cons{Int}, (1,))
@@ -233,17 +232,19 @@ onkeydown(ui::ListTree, ::key"ArrowLeft") = begin
   end
 end
 
+@use "./basic.jl" HStack @style_str
+
 @ui[ListTree
   [ItemGroup(collapsed=false) "Openwheel"
     [ItemGroup(collapsed=false) "Formula 1"
       [ItemGroup(collapsed=false) "Formula 2"
-        [Item "Formula 3"]
+        [Item [HStack style"padding: 6mm" "Formula 3"]]
         [Item "Formula Renault"]
         [Item "Formula Ford"]]]
     [ItemGroup "Indycar"
       [Item "Cart"]]]
   [ItemGroup "Stockcar"
-    [ItemGroup "Nascar"
+    [ItemGroup [HStack style"padding: 5mm" "Nascar"]
       [Item "Xfinity"]
       [Item "Trucks"]]
     [ItemGroup "Supercars"

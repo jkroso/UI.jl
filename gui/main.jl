@@ -5,7 +5,7 @@
 @use "../types.jl" UINode Component TextNode @ui tree dom
 @use "../event.jl" onmousedown KeyCombo
 @use "./basic.jl" gui expand
-@use Atom
+@use Atom: EvalError
 
 dom(t::TextNode) = DOM.Text(t.value)
 
@@ -20,8 +20,10 @@ gui(d::Pair, key) = PairUI(key=key)
 @use "./Tuple.jl" TupleUI NamedTupleUI
 gui(d::Tuple, key) = TupleUI(key=key)
 gui(d::NamedTuple, key) = NamedTupleUI(key=key)
+@use "./Dict.jl" DictUI
+gui(d::AbstractDict, key) = DictUI(key=key)
 @use "./Error.jl" ErrorUI
-gui(d::Atom.EvalError, key) = ErrorUI(key=key)
+gui(d::EvalError, key) = ErrorUI(key=key)
 @use "./KeyCombo.jl" KeyComboUI
 gui(kc::KeyCombo, key) = @ui[KeyComboUI key=key]
 

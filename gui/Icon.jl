@@ -19,8 +19,8 @@ dom(ui::Icon) = begin
              """
     get!(cache, ui.name) do
      svg = parse(MIME("text/html"), read(joinpath(dir, ui.name*".svg")))
-     assoc(svg, :attrs, dissoc(svg.attrs, :width, :height, :class))
+     assoc(svg, :attrs, dissoc(svg.attrs, :class))
     end]
 end
 
-# Icon(name="2-circle")
+# Icon(name="chevron-right")

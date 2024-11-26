@@ -1,8 +1,10 @@
 @use "github.com/jkroso/Units.jl" mm ["Typography" pt]
-@use "github.com/jkroso/Prospects.jl" @mutable @abstract interleave Field
+@use "github.com/jkroso/Prospects.jl" @mutable @abstract interleave Field assoc
 @use "github.com/jkroso/Promises.jl" @defer
-@use "github.com/jkroso/DOM.jl" => DOM @dom @css_str
+@use "github.com/jkroso/Sequences.jl" push
+@use "github.com/jkroso/DOM.jl" => DOM @dom @css_str empty_set
 @use "../types.jl" Component UINode dom @ui children tree
+@use "../style.jl" @style_str toclass!
 @use "../selector.jl" identitykey
 @use "../event.jl" onmousedown left
 @use "./Icon.jl" Icon
@@ -14,30 +16,24 @@ function gui(x)
   gui(x, identitykey)
 end
 
+dom_attrs(ui::UINode) = begin
+  isnothing(ui.style) && return ui.attrs
+  classes = get(ui.attrs, :class, empty_set)
+  assoc(ui.attrs, :class, push(classes, toclass!(ui.style)))
+end
+
 @mutable HStack <: Component
-dom(hs::HStack) = @dom[hstack{hs.attrs...} css"align-items: center" hs.children...]
-hstack(attrs, children) = @dom[:div{attrs...} css"display: flex; flex-direction: row" children...]
+dom(hs::HStack) = hstack(dom_attrs(hs), hs.children)
+hstack(attrs, children) = @dom[:div{attrs...} css"display: inline-flex; flex-direction: row; align-items: center" children...]
 
 @mutable VStack <: Component
-dom(vs::VStack) = @dom[vstack{vs.attrs...} vs.children...]
+dom(vs::VStack) = vstack(dom_attrs(vs), vs.children)
 vstack(attrs, children) = @dom[:div{attrs...} css"display: flex; flex-direction: column" children...]
 
 @mutable Heading(level::UInt8) <: Component
 dom(ui::Heading) = begin
   h = DOM.Container{Symbol('h', ui.level)}
   @dom[h ui.children...]
-end
-
-@mutable Padding(top=0mm, right=0mm, bottom=0mm, left=0mm) <: Component
-dom(ui::Padding) = begin
-  @dom[:div{ui.attrs...}
-            style.paddingTop=string(convert(pt, ui.top))
-            style.paddingRight=string(convert(pt, ui.right))
-            style.paddingLeft=string(convert(pt, ui.left))
-            style.paddingBottom=string(convert(pt, ui.bottom))
-            style.background=get(ui.attrs, :background, "inherit")
-            style.display="inline-flex"
-            style.borderRadius=string(convert(pt, get(ui.attrs, :borderRadius, 2mm))) ui.children...]
 end
 
 @mutable Chevron(isopen=false) <: Component
@@ -133,4 +129,4 @@ toggle(ui::Expandable) = begin
   ui.children[2].stale = true
 end
 
-# @ui[VStack [HStack "a"] [HStack "b"] [HStack "c"]]
+# @ui[VStack style"padding[left,right]: 5mm; border: 0.5mm solid; padding[top,bottom]: 20mm" [HStack "a"] [HStack "b"] [HStack "c"]]

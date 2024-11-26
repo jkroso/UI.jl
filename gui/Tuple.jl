@@ -3,7 +3,7 @@
 @use "github.com/jkroso/DOM.jl" Node @css_str @dom
 @use "../types.jl" UINode Component adopt @ui dom children
 @use "../event.jl" onmousedown
-@use "./basic.jl" VStack Expandable expansion gui Padding brief
+@use "./basic.jl" VStack Expandable expansion gui brief
 @use "../selector.jl" KeyKey
 @use "./Symbol.jl" SymbolUI
 @use "./Table.jl" Table Row Body Cell

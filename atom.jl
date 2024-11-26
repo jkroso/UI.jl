@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Destructure.jl" @destruct
 @use "github.com/jkroso/Promises.jl" need Future
 @use "github.com/jkroso/JSON.jl/write.jl" json
-@use "github.com/jkroso/Unparse.jl" serialize
+@use "github.com/jkroso/Source.jl" source
 @use "github.com/jkroso/DOM.jl" => DOM @dom
 @use "github.com/jkroso/Units.jl" ns
 @use "./event.jl" emit parse_event Tick tick FocusIn FocusOut Focus KeyboardEvent onsubmit
@@ -32,7 +32,7 @@ Atom.handle("rutherford eval2") do blocks
       for (i, data) in enumerate(blocks)
         @destruct {"text"=>text, "line"=>line, "path"=>path, "id"=>id} = data
         snippet = Snippet(text, line, path, id)
-        inline = InlineDisplay(snippet, single)
+        inline = @showerrors InlineDisplay(snippet, single)
         inline_displays[id] = inline
         @showerrors @invokelatest display(inline)
         @info "eval" progress=i/total _id=progress_id
@@ -85,7 +85,7 @@ Base.setproperty!(t::TopNode, ::Field{:data}, x) = t.display.data = x
 onsubmit(ui::TopNode, event) = begin
   display = ui.display
   @destruct {line, id} = display.snippet
-  src = serialize(ui.data)
+  src = source(ui.data)
   display.snippet = assoc(display.snippet, :text, src)
   msg("edit2", (src=src, line=line, id=id))
 end
@@ -225,14 +225,14 @@ const loop = @async begin
   msg("stylechange2", css)
   while true
     sleep(1//60)
-    if css != need(DOM.css[])
-      css = need(DOM.css[])
-      msg("stylechange2", css)
-    end
     new_time = time_ns()ns
     tick = Tick(new_time - time, new_time)
     time = new_time
     @invokelatest update(tick)
+    if css != need(DOM.css[])
+      css = need(DOM.css[])
+      msg("stylechange2", css)
+    end
     while !isempty(first_renders)
       @invokelatest onmount(take!(first_renders))
     end

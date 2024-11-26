@@ -1,7 +1,7 @@
 @use "github.com/jkroso/DOM.jl" @css_str @dom Container Node
 @use "github.com/jkroso/Prospects.jl" @mutable
 @use "../types.jl" UINode Component adopt @ui dom children add_child!
-@use "./basic.jl" VStack Expandable expansion gui Padding
+@use "./basic.jl" VStack Expandable expansion gui
 
 table(attrs, children) = begin
   @dom[:div{css"""
