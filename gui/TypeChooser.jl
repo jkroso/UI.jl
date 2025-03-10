@@ -3,7 +3,7 @@
 @use "github.com/jkroso/DOM.jl" Node @css_str @dom
 @use "../types.jl" UINode Component adopt @ui dom focus children
 @use "../event.jl" onmousedown onkeydown ondblclick onfocusout onfocusin tick emit Change Submit
-@use "./basic.jl" VStack chevron
+@use "./basic.jl" VStack chevron dom_attrs
 @use "./TextInput.jl" TextInput
 
 @mutable struct TypeChooser <: Component
@@ -29,7 +29,7 @@ end
 @mutable Option <: Component
 
 children(ui::DropDown) = begin
-  UINode[@ui[TextInput(radius=:medium, placeholder="Search Filter")],
+  UINode[@ui[TextInput(radius=:medium, placeholder="Search Filter") style"padding: 2mm"],
          options(ui.parent).children...]
 end
 
@@ -54,7 +54,7 @@ onmousedown(ui::ChosenOption, event) = begin
 end
 
 dom(ui::TypeChooser) = begin
-  @dom[:div (ui.isopen ? ui.children : [ui.firstchild])...]
+  @dom[:div{dom_attrs(ui)...} (ui.isopen ? ui.children : [ui.firstchild])...]
 end
 
 dom(ui::DropDown) = begin
@@ -117,4 +117,4 @@ dom(ui::Option) = begin
             """ ui.children...]
 end
 
-@ui[TypeChooser(top=Number, isopen=true)]
+@ui[VStack style"padding: 3mm 0mm" [TypeChooser(top=Number, isopen=true) style""]]

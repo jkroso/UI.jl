@@ -93,3 +93,5 @@ dom(ui::NumberUI) = begin
     @dom[:span class="syntax--constant syntax--numeric" str]
   end
 end
+
+1.2

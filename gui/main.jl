@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Promises.jl" @defer
 @use "github.com/jkroso/DOM.jl" => DOM @dom @css_str
 @use "../types.jl" UINode Component TextNode @ui tree dom
-@use "../event.jl" onmousedown KeyCombo
+@use "../event.jl" onmousedown
 @use "./basic.jl" gui expand
 @use Atom: EvalError
 
@@ -24,8 +24,8 @@ gui(d::NamedTuple, key) = NamedTupleUI(key=key)
 gui(d::AbstractDict, key) = DictUI(key=key)
 @use "./Error.jl" ErrorUI
 gui(d::EvalError, key) = ErrorUI(key=key)
-@use "./KeyCombo.jl" KeyComboUI
-gui(kc::KeyCombo, key) = @ui[KeyComboUI key=key]
+# @use "./KeyCombo.jl" KeyComboUI
+# gui(kc::KeyCombo, key) = @ui[KeyComboUI key=key]
 
 # TODO: delete this
 gui(ui::UINode) = ui

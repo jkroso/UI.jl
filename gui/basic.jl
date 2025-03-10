@@ -1,20 +1,15 @@
-@use "github.com/jkroso/Units.jl" mm ["Typography" pt]
 @use "github.com/jkroso/Prospects.jl" @mutable @abstract interleave Field assoc
 @use "github.com/jkroso/Promises.jl" @defer
 @use "github.com/jkroso/Sequences.jl" push
 @use "github.com/jkroso/DOM.jl" => DOM @dom @css_str empty_set
 @use "../types.jl" Component UINode dom @ui children tree
-@use "../style.jl" @style_str toclass!
+@use "../style" @style_str toclass!
 @use "../selector.jl" identitykey
-@use "../event.jl" onmousedown left
+@use "../event.jl" onmousedown MouseButton
 @use "./Icon.jl" Icon
 
-"""
-Takes some data and generates a user interface for viewing and manipulating it
-"""
-function gui(x)
-  gui(x, identitykey)
-end
+"Takes some data and generates a user interface for viewing and manipulating it"
+gui(x) = gui(x, identitykey)
 
 dom_attrs(ui::UINode) = begin
   isnothing(ui.style) && return ui.attrs
@@ -118,7 +113,7 @@ end
 brief(m::Base.MethodList) = @dom[:span name(m) " has $(length(collect(m))) methods"]
 
 onmousedown(ui::Expandable, event) = begin
-  event.button == left || return
+  event.button == MouseButton.left || return
   event.target in ui.firstchild && toggle(ui)
 end
 

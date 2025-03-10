@@ -1,10 +1,14 @@
 @use "github.com/jkroso/Prospects.jl" @mutable @struct
 @use "github.com/jkroso/DOM.jl" Node @css_str @dom
 @use "github.com/jkroso/Units.jl" s ns
-@use "../event.jl" ondblclick tick onfocusout onfocusin onkeydown emit Change Submit
+@use "../event.jl" ondblclick tick onfocusout onfocusin onkeydown emit Change Submit Keys
 @use "../types.jl" UINode Component adopt @ui dom focus
 
-@mutable StringUI(editing=false, cursor=typemax(Int), blink=true) <: Component
+@mutable struct StringUI <: Component
+  editing=false
+  cursor=typemax(Int)
+  blink=true
+end
 
 dom(ui::StringUI) = begin
   if ui.editing
@@ -47,29 +51,29 @@ tick(ui::StringUI, event) = begin
   ui.blink = event.time % blink_speed < blink_speed/2
 end
 
-onkeydown(ui::StringUI, e) = begin
+onkeydown(ui::StringUI, e::Keys) = begin
   value = ui.data
   cursor = min(length(value), ui.cursor)
-  if e.key == "Enter"
+  if e.key == :Enter
     emit(ui, Submit(value))
-  elseif e.key == "Backspace"
+  elseif e.key == :Backspace
     str = string(value[1:cursor-1], value[cursor+1:end])
     ui.data = str
     ui.cursor = max(ui.cursor - 1, 0)
     emit(ui, Change(str))
-  elseif e.key == "Delete"
+  elseif e.key == :Delete
     str = string(value[1:cursor], value[cursor+2:end])
     ui.data = str
     emit(ui, Change(str))
-  elseif e.key == "ArrowLeft"
+  elseif e.key == :ArrowLeft
     ui.cursor = max(cursor - 1, 0)
-  elseif e.key == "Home"
+  elseif e.key == :Home
     ui.cursor = 0
-  elseif e.key == "ArrowRight"
+  elseif e.key == :ArrowRight
     ui.cursor = min(cursor + 1, length(value))
-  elseif e.key == "End"
+  elseif e.key == :End
     ui.cursor = length(value)
-  elseif length(e.key) == 1
+  elseif length(string(e.key)) == 1
     str = string(value[1:cursor], e.key, value[cursor+1:end])
     ui.cursor = cursor + 1
     emit(ui, Change(str))

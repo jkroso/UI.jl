@@ -1,5 +1,4 @@
-@use "github.com/jkroso/Sequences.jl/collections/Set" Setlet
-@use "github.com/jkroso/Prospects.jl" @abstract @struct
+@use "github.com/jkroso/Prospects.jl" @abstract @struct ["BitSet.jl" @BitSet setinstances!]
 @use "github.com/jkroso/Units.jl" Time
 @use "./types.jl" UINode
 
@@ -7,7 +6,7 @@
   consumed::Bool=false
 end
 
-@enum MouseButton left middle right
+@BitSet MouseButton left middle right
 
 @abstract struct MouseEvent <: Event
   target::UINode
@@ -19,28 +18,16 @@ end
 @struct MouseMoveEvent(position::Vector{Int}) <: MouseEvent
 @struct MouseWheelEvent(delta::Vector{Int}) <: MouseEvent
 
-struct KeyCombo{key,shft,ctrl,opt,cmd} end
-KeyCombo(key;shft=false,ctrl=false,opt=false,cmd=false) = KeyCombo{Symbol(key),shft,ctrl,opt,cmd}()
-
-Base.getproperty(c::KeyCombo{key,shft,ctrl,opt,cmd}, f::Symbol) where {key,shft,ctrl,opt,cmd} = begin
-  f == :key && return key
-  f == :shft && return shft
-  f == :ctrl && return ctrl
-  f == :opt && return opt
-  f == :cmd && return cmd
-  f == :mods && return Setlet((k for (k,v) in zip((:shft,:ctrl,:opt,:cmd),(shft,ctrl,opt,cmd)) if v))
-  invoke(getproperty, Tuple{Any,Symbol}, c, f)
+@BitSet Keys::UInt128
+let syntax = "` - = [ ] ; ' , . / * +"
+    alphabet = 'a':'z'
+    numbers = 0:9
+    functionkeys = [Symbol("f$n") for n in 1:19]
+    specials = "tab capslock return shft cmd opt ctrl esc delete backspace space fn home pageup pagedown end clear eject left right up down"
+  setinstances!(Keys, map(Symbol, vcat(split(syntax), alphabet, numbers, functionkeys, split(specials))))
 end
 
-macro key_str(str)
-  key,mods... = split(str, '+')
-  KeyCombo{Symbol(key), "shft" in mods,
-                        "ctrl" in mods,
-                        "opt" in mods,
-                        "cmd" in mods}
-end
-
-@struct KeyboardEvent{type}(key::KeyCombo) <: Event
+@struct KeyboardEvent{type}(key::Keys) <: Event
 
 @abstract struct Focus <: Event
   target::Union{UINode,Nothing}
@@ -78,9 +65,9 @@ for (e,T) in event_type
   @eval handler_for(::$T) = $name
 end
 
-onkeydown(ui, e::KeyboardEvent) = onkeydown(ui, e.key)
-onkeyup(ui, e::KeyboardEvent) = onkeyup(ui, e.key)
-onkeypress(ui, e::KeyboardEvent) = onkeypress(ui, e.key)
+onkeydown(ui, e) = e isa KeyboardEvent && onkeydown(ui, e.key)
+onkeyup(ui, e) = e isa KeyboardEvent && onkeyup(ui, e.key)
+onkeypress(ui, e) = e isa KeyboardEvent && onkeypress(ui, e.key)
 
 parse_event(event::AbstractDict, target::UINode) = begin
   parse_event(event_type[event["type"]], event, target)
@@ -88,10 +75,23 @@ end
 
 parse_event(T::Type{<:KeyboardEvent}, e::AbstractDict, ::UINode) = begin
   mods = e["modifiers"]
-  T(KeyCombo(e["key"], ctrl="ctrl" in mods,
-                       opt="alt" in mods,
-                       cmd="meta" in mods,
-                       shft="shift" in mods))
+  k = lowercase(e["key"])
+  k == "meta" && (k="cmd")
+  k == "control" && (k="ctrl")
+  k == "alt" && (k="opt")
+  k == " " && (k="space")
+  k == "shift" && (k="shft")
+  k == "arrowleft" && (k="left")
+  k == "arrowright" && (k="right")
+  k == "arrowup" && (k="up")
+  k == "arrowdown" && (k="down")
+  k == "escape" && (k="esc")
+  key = getproperty(Keys, Symbol(k))
+  "ctrl" in mods && (key|=Keys.ctrl)
+  "alt" in mods && (key|=Keys.opt)
+  "meta" in mods && (key|=Keys.cmd)
+  "shift" in mods && (key|=Keys.shft)
+  T(key)
 end
 
 parse_event(::Type{MouseMoveEvent}, e::AbstractDict, target::UINode) = begin
@@ -103,7 +103,7 @@ parse_event(::Type{MouseWheelEvent}, e::AbstractDict, target::UINode) = begin
 end
 
 parse_event(T::Type{<:MouseButtonEvent}, e::AbstractDict, target::UINode) = begin
-  T(MouseButton(e["button"]), round.(e["position"]), target)
+  T(MouseButton(UInt8(exp2(e["button"]))), round.(e["position"]), target)
 end
 
 parse_event(T::Type{<:MouseHoverEvent}, e::AbstractDict, target::UINode) = T(target)

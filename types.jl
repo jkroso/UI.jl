@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @mutable @abstract @struct Field group assoc
 @use "github.com/jkroso/Sequences.jl/collections/Map.jl" Map
-@use "./style.jl" @style_str parse_style Style
 @use "./selector.jl" identitykey get set
+@use "./style" @style_str style_expr Style
 @use MacroTools: @capture, @match
 
 @abstract struct UINode
@@ -155,7 +155,7 @@ end
 add_attr(d::AbstractDict, (key,value)::Pair) = assoc(d, key, value)
 attr_expression(attrs) = Expr(:kw, :attrs, :(Attrs($(map(normalize_attr, attrs)...))))
 style_expression(styles) = begin
-  Expr(:kw, :style, parse_style(styles[1].args[3]))
+  Expr(:kw, :style, style_expr(styles[1].args[3]))
 end
 
 tree(parent, children...) = begin

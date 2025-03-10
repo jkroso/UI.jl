@@ -147,10 +147,10 @@ const create_result = ({range, line, text}, {editor, mod, edpath}) => {
 
   r.focus_trap.addEventListener("keydown", sendKeyEvent, true)
   r.focus_trap.addEventListener("keyup", sendKeyEvent, true)
-  r.focus_trap.addEventListener("keypress", (e) => {
+  r.focus_trap.addEventListener("beforeinput", (e) => {
     e.preventDefault()
     e.stopPropagation()
-  }, true)
+  })
 
   r.prev_focus = null
   r.isfocused = false

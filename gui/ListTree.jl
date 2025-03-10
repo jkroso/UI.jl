@@ -131,6 +131,7 @@ display: flex
   display: flex
   align-items: center
   flex-grow: 1
+  height: 4rem
 > header > content
   display: flex
   align-items: center
@@ -232,21 +233,21 @@ onkeydown(ui::ListTree, ::key"ArrowLeft") = begin
   end
 end
 
-@use "./basic.jl" HStack @style_str
-
-@ui[ListTree
-  [ItemGroup(collapsed=false) "Openwheel"
-    [ItemGroup(collapsed=false) "Formula 1"
-      [ItemGroup(collapsed=false) "Formula 2"
-        [Item [HStack style"padding: 6mm" "Formula 3"]]
-        [Item "Formula Renault"]
-        [Item "Formula Ford"]]]
-    [ItemGroup "Indycar"
-      [Item "Cart"]]]
-  [ItemGroup "Stockcar"
-    [ItemGroup [HStack style"padding: 5mm" "Nascar"]
-      [Item "Xfinity"]
-      [Item "Trucks"]]
-    [ItemGroup "Supercars"
-      [ItemGroup "Super 2"
-        [Item "Super 3"]]]]]
+# @use "./basic.jl" HStack @style_str
+#
+# @ui[ListTree
+#   [ItemGroup(collapsed=false) "Openwheel"
+#     [ItemGroup(collapsed=false) "Formula 1"
+#       [ItemGroup(collapsed=false) "Formula 2"
+#         [Item "Formula 3"]
+#         [Item "Formula Renault"]
+#         [Item "Formula Ford"]]]
+#     [ItemGroup "Indycar"
+#       [Item "Cart"]]]
+#   [ItemGroup "Stockcar"
+#     [ItemGroup "Nascar"
+#       [Item "Xfinity"]
+#       [Item "Trucks"]]
+#     [ItemGroup "Supercars"
+#       [ItemGroup "Super 2"
+#         [Item "Super 3"]]]]]
