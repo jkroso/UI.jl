@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @property @abstract @def ["Enum.jl" @Enum] assoc
 @use "github.com/jkroso/Font.jl" ["units" pt px]
 @use "github.com/jkroso/Units.jl" Length mm
-@use "../abstract" DescriptiveUI mixin! StyleNode Text
+@use "../abstract" DescriptiveUI mixin! StyleNode Text propertyname
 @use Colors: Color, Colorant, RGB, hex
 
 const transparent = parse(Colorant, "transparent")
@@ -51,20 +51,21 @@ end
 Radius(r) = Radius(r, r, r, r)
 Radius(top, bottom) = Radius(top, top, bottom, bottom)
 
-@Enum GrowType FitContent Grow
+@Enum GrowType FitContent Grow None
 
 @abstract struct Dimension <: StyleNode
-  min::Union{Missing,Length}=missing
-  max::Union{Missing,Length}=missing
-  preferred::Union{GrowType,Length}=GrowType.FitContent
+  min::Length=0px
+  max::Length=px(Inf)
+  preferred::Length=0px
+  grow::GrowType=GrowType.FitContent
 end
 @def Width <: Dimension
 @def Height <: Dimension
 
-Width(value) = Width(missing, missing, value)
-Width(min, max) = Width(min, max, missing)
-Height(value) = Width(missing, missing, value)
-Height(min, max) = Width(min, max, missing)
+Width(value) = Width(preferred=value)
+Width(min, max) = Width(min=min, max=max)
+Height(value) = Height(preferred=value)
+Height(min, max) = Height(min=min, max=max)
 
 @def struct Background <: StyleNode
   color::Colorant=transparent
@@ -91,6 +92,8 @@ border(width, style, color; between_children=false) = begin
          between_children=between_children)
 end
 layout(s::Symbol) = s == :row ? LayoutDirection.row : LayoutDirection.column
+width(args...; kwargs...) = Width(args..., ; kwargs...)
+height(args...; kwargs...) = Height(args...; kwargs...)
 
 # enable property filtering on things like borders. So you can do border(1, :solid, "red")[:top]
 Base.getindex(b::T, keys::Symbol...) where T<:StyleGroup = begin
@@ -117,9 +120,13 @@ rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
   width::Width=Width()
   height::Height=Height()
   layout_direction::LayoutDirection=LayoutDirection.column
-  child_gap::Length=1mm
+  child_gap::Length=0px
 end
 
 mixin!(r::Rect, d::LayoutDirection) = r.layout_direction = d
 
-export padding, background, border, rgb, pt, mm, px, Rect, Text, layout
+@property Rect.between_width = begin
+  self.child_gap + (ismissing(self.border.between_children) ? 0px : self.border.between_children.width)
+end
+
+export padding, background, border, rgb, pt, mm, px, Rect, Text, layout, width, height, GrowType
