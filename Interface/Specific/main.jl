@@ -1,5 +1,5 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str
-@use "github.com/jkroso/Font.jl" Font width => textwidth ["units" Length px FontUnit absolute]
+@use "github.com/jkroso/Font.jl" Font widths! TTFont ["units" Length px FontUnit absolute relative]
 @use "../abstract" resolve ConcreteUI
 @use "../Descriptive"...
 
@@ -8,7 +8,7 @@
   left::px=0px
   height::px=0px
   width::px=0px
-  children::Vector{ConcreteUI}
+  children::Vector{ConcreteUI}=[]
 end
 
 @property ConcreteUI.firstchild = self.children[1]
@@ -18,7 +18,11 @@ end
   font::Font
   width::px=0px
   height::px=0px
-  lines::Vector{String}=Vector[]
+  top::px=0px
+  left::px=0px
+  lines::Vector{SubString{String}}=Vector[]
+  words::Vector{SubString{String}}=Vector[]
+  widths::Vector{FontUnit}=Vector[]
 end
 
 """
@@ -28,21 +32,26 @@ end
 4. Fit Sizing Heights
 5. Grow and Shrink Sizing Heights
 6. Positions
-7. Draw
 """
-
 function resolve(ui::Rect, (w, h))
-  cui = initialpass(ui)
+  cui = initialize(ui, ConcreteRect(width=w,height=h,from=Rect()))
+  if ui.width.grow == GrowType.Grow
+    cui.width = w
+  end
+  if ui.height.grow == GrowType.Grow
+    cui.height = h
+  end
   fitwidths!(cui)
   cui
 end
 
 "The initial pass creates the new tree and sets the width of all nodes to their natural value"
-function initialpass(ui::Rect)
-  children = [initialpass(c) for c in ui.children]
+function initialize(ui::Rect, parent)
+  children = [initialize(c, ui) for c in ui.children]
   width = ui.width.preferred != 0px ? ui.width.preferred : sum(field"width", children, init=0px)
   ConcreteRect(width=clamp(width, ui.width.min, ui.width.max),
                children=children,
+               parent=parent,
                from=ui)
 end
 
@@ -59,6 +68,9 @@ function internalwidth((;width, from, children)::ConcreteUI)
   w = width - from.padding.width - from.border.width
   w - from.between_width * max(0, length(children) - 1)
 end
+
+internalheight(::Nothing) = 0px
+internalheight((;height, from, children)::ConcreteUI) = height - from.padding.height - from.border.height
 
 "Distribute the excess width accross all elements that can accept it"
 function fitwidths!(ui::ConcreteRect)
@@ -99,13 +111,18 @@ function fitwidths!(ui::ConcreteRect)
     end
   end
   foreach(fitwidths!, ui.children)
-  h = ui.from.height.preferred == 0px ? maximum(field"height", ui.children) : ui.from.height.preferred
-  ui.height = clamp(h, minheight(ui), maxheight(ui))
+  if ui.from.height.grow == GrowType.FitContent
+    h = ui.from.height.preferred == 0px ? maximum(field"height", ui.children, init=0px) : ui.from.height.preferred
+    ui.height = clamp(h, minheight(ui), maxheight(ui))
+  elseif ui.from.height.grow == GrowType.Grow
+    ui.height = internalheight(ui.parent)
+  end
+  alignchildren!(ui)
 end
 
 minwidth(ui::ConcreteUI) = minwidth(ui.from)
 minwidth(ui::Rect) = ui.width.min
-minwidth(ui::ConcreteText) = minimum(word->textwidth(String(word), ui.font), split(ui.from.content))
+minwidth(ui::ConcreteText) = minimum(word->textwidth(String(word), ui.font), split(ui.from.content), init=0px)
 minheight(ui::ConcreteText) = ui.height
 minheight(ui::ConcreteUI) = minheight(ui.from)
 minheight(ui::Rect) = ui.height.min
@@ -116,7 +133,7 @@ maxheight(ui::Rect) = ui.height.max
 # The width of the text element should already of been allocated so here we just wrap the text
 # and set the height accordingly
 function fitwidths!(ui::ConcreteText)
-  ui.lines = wraptext(ui.from.content, ui.font, ui.width)
+  ui.lines = wraptext(ui.from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
   ui.height = convert(px, length(ui.lines) * absolute(ui.from.lineheight, ui.from.size))
   nothing
 end
@@ -133,78 +150,56 @@ function top(growable; by=field"width", comp=(>))
   group, 0px
 end
 
-function initialpass(ui::Text)
+function initialize(ui::Text, parent)
   f = Font(ui.family*':'*ui.subfamily)
-  ConcreteText(from=ui, width=textwidth(ui.content, f), font=f)
+  words = split(ui.content)
+  ConcreteText(from=ui,
+               width=textwidth(ui.content, f),
+               font=f,
+               words=words,
+               widths=widths!(words, f.face),
+               parent=parent)
 end
 
-function wraptext(s::String, f::Font, max_width::Length)
-  av_width = textwidth(s, f)/length(s)
-  default_line_len = max_width ÷ av_width
-  start, stop = 1, nextind(s, 1, default_line_len)
-  lines = String[]
-  while stop < length(s)
-    line = s[start:stop]
-    i = lastindex(line)
-    last_char = line[i]
-    w = textwidth(line, f)
-    if w > max_width  # shrink the line
-      while i > 1
-        i = prevind(line, i)
-        prev_char = line[i]
-        w -= textwidth(prev_char, last_char, f)
-        w < max_width && break
-        last_char = prev_char
-      end
-      line = line[1:i]
-      stop = nextind(s, start, ncodeunits(line)-1)
+function wraptext(s::String, face::TTFont{pem}, max_width::px; words=split(s),
+                                                               widths=widths!(words, face),
+                                                               size::pt=12pt) where pem
+  space_width = textwidth(' ', face)
+  limit = relative(FontUnit{pem}, convert(pt, max_width), size)
+  lines = SubString{String}[]
+  pairs = zip(widths, words)
+  w, lastword = first(pairs)
+  offset = 1
+  for (width, word) in Iterators.drop(pairs, 1)
+    w += space_width + width
+    if w >= limit
+      push!(lines, @view s[offset:prevind(s, word.offset)])
+      lastword = word
+      offset = nextind(s, word.offset)
+      w = width
     else
-      while true # grow the line
-        next_char = s[nextind(s, stop)]
-        w += textwidth(last_char, next_char, f)
-        w > max_width && break
-        last_char = next_char
-        line = line*next_char
-        stop = nextind(s, stop)
-      end
+      lastword = word
     end
-    next_char = s[nextind(s, stop)]
-    if !isspace(next_char) # backstep to word break
-      i = findlast(isspace, line)
-      isnothing(i) || (line = s[start:prevind(s,start + i)])
-    end
-    start += ncodeunits(line)
-    stop = start + default_line_len
-    line = strip(line)
-    isempty(line) || push!(lines, line)
   end
-  remainder = strip(s[start:end])
-  isempty(remainder) ? lines : push!(lines, remainder)
+  offset == lastindex(s) && return lines
+  push!(lines, @view s[offset:end])
 end
 
-const growexample = Rect(width(600px), background("darkblue"),
-                      Rect(width(100px), height(100px), background("red")),
-                      Rect(width(min=150px, grow=GrowType.Grow), height(100px), background("yellow")),
-                      Rect(width(grow=GrowType.Grow), height(100px), background("yellow")),
-                      Rect(width(100px), height(100px), background("lightblue")))
+function alignchildren!(ui::ConcreteRect)
+  padtop = ismissing(ui.from.padding.top) ? 0px : ui.from.padding.top
+  bordertop = ismissing(ui.from.border.top) ? 0px : ui.from.border.top
+  mintop = padtop + bordertop
+  h = ui.height - mintop
+  for child in ui.children
+    alignment = ui.from.align
+    top = mintop
+    if alignment == Alignment.Center
+      top += (h - child.height)/2
+    elseif alignment == Alignment.End
+      top += h - child.height
+    end
+    child.top = top
+  end
+end
 
-const growmaxed = Rect(width(600px), background("darkblue"),
-                    Rect(width(100px), height(100px), background("red")),
-                    Rect(width(min=150px, grow=GrowType.Grow), height(100px), background("yellow")),
-                    Rect(width(grow=GrowType.Grow, max=150px), height(100px), background("yellow")),
-                    Rect(width(100px), height(100px), background("lightblue")))
-
-const shrinkexample = Rect(width(600px), background("darkblue"),
-                        Rect(width(min=350px,preferred=350px), height(100px), background("red")),
-                        Rect(width(min=50px, grow=GrowType.Grow, preferred=100px), height(100px), background("yellow")),
-                        Rect(width(min=100px, grow=GrowType.Grow), height(100px), background("yellow")),
-                        Rect(width(100px), height(100px), background("lightblue")))
-
-const textwrap_example = Rect(width(400px), background("darkblue"),
-                           Rect(width(min=100px, preferred=150px), height(100px), background("red")),
-                           Text("Wibz UIflibber jabberz devz n’ zany toolz setz to flibber flabber snazzy, zippy facez widda wacko eazy twisty"))
-
-# field"width".(resolve(growexample, (600px, 10px)).children)
-# field"width".(resolve(growmaxed, (600px, 10px)).children)
-# field"width".(resolve(shrinkexample, (600px, 10px)).children)
-resolve(textwrap_example, (600px, 10px))
+export resolve, ConcreteText, ConcreteRect

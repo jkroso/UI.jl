@@ -37,6 +37,8 @@ end
 
 @property Border.width = +(ismissing(self.left) ? 0px : self.left.width, ismissing(self.right) ? 0px : self.right.width)
 @property Border.height = +(ismissing(self.top) ? 0px : self.top.width, ismissing(self.bottom) ? 0px : self.bottom.width)
+Base.isempty(b::Border) = all(ismissing, values(b))
+Base.values(b::Border) = (b.top, b.right, b.bottom, b.left)
 
 Border(v::BorderSide; between_children=false) = Border(v, v, v, v, between_children ? v : missing)
 Border(a::BorderSide, b::BorderSide) = Border(a, b, a, b, missing)
@@ -91,7 +93,7 @@ border(width, style, color; between_children=false) = begin
                     parse_color(color)),
          between_children=between_children)
 end
-layout(s::Symbol) = s == :row ? LayoutDirection.row : LayoutDirection.column
+layout(s::Symbol) = s == :row ? LayoutDirection.Row : LayoutDirection.Column
 width(args...; kwargs...) = Width(args..., ; kwargs...)
 height(args...; kwargs...) = Height(args...; kwargs...)
 
@@ -110,7 +112,8 @@ parse_length(i) = i
 background(s) = Background(parse_color(s))
 rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
 
-@Enum LayoutDirection column row
+@Enum LayoutDirection Column Row
+@Enum Alignment Start Center End
 
 @def mutable struct Rect <: DescriptiveUI
   background::Background=Background()
@@ -119,8 +122,9 @@ rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
   padding::Padding=Padding()
   width::Width=Width()
   height::Height=Height()
-  layout_direction::LayoutDirection=LayoutDirection.column
+  layout_direction::LayoutDirection=LayoutDirection.Column
   child_gap::Length=0px
+  align::Alignment=Alignment.Center
 end
 
 mixin!(r::Rect, d::LayoutDirection) = r.layout_direction = d
@@ -129,4 +133,4 @@ mixin!(r::Rect, d::LayoutDirection) = r.layout_direction = d
   self.child_gap + (ismissing(self.border.between_children) ? 0px : self.border.between_children.width)
 end
 
-export padding, background, border, rgb, pt, mm, px, Rect, Text, layout, width, height, GrowType
+export padding, background, border, rgb, pt, mm, px, Rect, Text, layout, width, height, GrowType, Alignment
