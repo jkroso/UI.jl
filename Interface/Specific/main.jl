@@ -1,7 +1,9 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str
 @use "github.com/jkroso/Font.jl" Font widths! TTFont ["units" Length px FontUnit absolute relative]
 @use "../abstract" resolve ConcreteUI
-@use "../Descriptive"...
+@use "../Descriptive"... Width Height
+@use GeometryBasics: Vec2, Vec
+@use Colors...
 
 @def mutable struct ConcreteRect <: ConcreteUI
   top::px=0px
@@ -13,6 +15,35 @@ end
 
 @property ConcreteUI.firstchild = self.children[1]
 @property ConcreteUI.children = getfield(self, :children)
+@property ConcreteRect.origin = Vec2{px}(self.left, self.top)
+@property ConcreteRect.size = Vec2{px}(self.width, self.height)
+@property ConcreteRect.background_color = self.from.background.color
+@property ConcreteRect.corners = begin
+  tl = self.origin
+  tr = Vec2{px}(tl[1]+self.width, tl[2])
+  br = Vec2{px}(tl[1]+self.width, tl[2]+self.height)
+  bl = Vec2{px}(tl[1], tl[2]+self.height)
+  (tl, tr, br, bl)
+end
+
+const polarity = Vec{4,Vec2{Int}}(Vec2(1, 1), Vec2(-1, 1), Vec2(-1, -1), Vec2(1, -1))
+
+@property ConcreteRect.centers = Vec{4,Vec2{px}}((c+r*p for (c,r,p) in zip(self.corners, self.radii, polarity))...)
+
+@property ConcreteRect.border_colors = begin
+  b = self.from.border
+  (b.top.color, b.right.color, b.bottom.color, b.left.color)
+end
+
+@property ConcreteRect.border_widths = begin
+  b = self.from.border
+  Vec{4,px}(b.top.width, b.right.width, b.bottom.width, b.left.width)
+end
+
+@property ConcreteRect.radii = begin
+  r = self.from.radius
+  Vec{4,px}(r.tl, r.tr, r.br, r.bl)
+end
 
 @def mutable struct ConcreteText <: ConcreteUI
   font::Font
@@ -31,28 +62,32 @@ end
 3. Wrap Text
 4. Fit Sizing Heights
 5. Grow and Shrink Sizing Heights
-6. Positions
+6. Set Positions
 """
 function resolve(ui::Rect, (w, h))
-  cui = initialize(ui, ConcreteRect(width=w,height=h,from=Rect()))
-  if ui.width.grow == GrowType.Grow
-    cui.width = w
-  end
+  toplevel = ConcreteRect(width=w, height=h)
+  cui = initialize(ui, toplevel)
+  push!(toplevel.children, cui)
   if ui.height.grow == GrowType.Grow
     cui.height = h
   end
-  fitwidths!(cui)
+  resolve!(cui)
+  position!(cui)
   cui
 end
 
 "The initial pass creates the new tree and sets the width of all nodes to their natural value"
 function initialize(ui::Rect, parent)
-  children = [initialize(c, ui) for c in ui.children]
-  width = ui.width.preferred != 0px ? ui.width.preferred : sum(field"width", children, init=0px)
-  ConcreteRect(width=clamp(width, ui.width.min, ui.width.max),
-               children=children,
-               parent=parent,
-               from=ui)
+  rect = ConcreteRect(from=ui, parent=parent, width=parent.width)
+  rect.children = ConcreteUI[initialize(c, rect) for c in ui.children]
+  rect.width = clamp(if ui.width.preferred != 0px
+    ui.width.preferred
+  elseif is_width_growable(ui)
+    parent.width
+  else
+    sum(field"width", rect.children, init=0px)
+  end, ui.width.min, ui.width.max)
+  rect
 end
 
 is_width_growable(ui::ConcreteUI) = is_width_growable(ui.from)
@@ -70,11 +105,10 @@ function internalwidth((;width, from, children)::ConcreteUI)
 end
 
 internalheight(::Nothing) = 0px
-internalheight((;height, from, children)::ConcreteUI) = height - from.padding.height - from.border.height
+internalheight(ui::ConcreteUI) = ui.height - extra_height(ui)
 
 "Distribute the excess width accross all elements that can accept it"
-function fitwidths!(ui::ConcreteRect)
-  remainder = internalwidth(ui) - sum(field"width", ui.children, init=0px)
+function grow!(ui::ConcreteRect, remainder::Length)
   growable = sort!(filter(is_width_growable, ui.children), by=field"width")
   while !isempty(growable) && remainder > 0px # grow
     smallest, next_smallest = top(growable)
@@ -92,6 +126,10 @@ function fitwidths!(ui::ConcreteRect)
       end
     end
   end
+  remainder
+end
+
+function shrink!(ui::ConcreteRect, remainder::Length)
   shrinkable = sort!(filter(is_width_shrinkable, ui.children), by=field"width", rev=true)
   while !isempty(shrinkable) && remainder < 0px # shrink
     biggest, next_biggest = top(shrinkable, comp=isless)
@@ -110,19 +148,52 @@ function fitwidths!(ui::ConcreteRect)
       end
     end
   end
-  foreach(fitwidths!, ui.children)
-  if ui.from.height.grow == GrowType.FitContent
-    h = ui.from.height.preferred == 0px ? maximum(field"height", ui.children, init=0px) : ui.from.height.preferred
+  remainder
+end
+
+extra_height(ui::ConcreteRect) = begin
+  (;padding, border) = ui.from
+  +(padding.top, padding.bottom, border.bottom.width, border.top.width)
+end
+
+function resolve!(ui::ConcreteRect)
+  shrink!(ui, grow!(ui, internalwidth(ui) - sum(field"width", ui.children, init=0px)))
+  foreach(resolve!, ui.children)
+  (;height) = ui.from
+  if height.grow == GrowType.FitContent
+    h = height.preferred == 0px ? maximum(field"height", ui.children, init=0px) + extra_height(ui) : height.preferred
     ui.height = clamp(h, minheight(ui), maxheight(ui))
-  elseif ui.from.height.grow == GrowType.Grow
+  elseif height.grow == GrowType.Grow
     ui.height = internalheight(ui.parent)
   end
-  alignchildren!(ui)
+end
+
+function position!(ui)
+  (;padding,border) = ui.from
+  padtop = padding.top
+  bordertop = border.top.width
+  mintop = ui.top + padtop + bordertop
+  h = ui.height - padtop - bordertop
+  left = ui.left + padding.left + border.left.width
+  for child in ui.children
+    alignment = ui.from.align
+    top = mintop
+    if alignment == Alignment.Center
+      top += (h - child.height)/2
+    elseif alignment == Alignment.End
+      top += h - child.height
+    end
+    child.top = top
+    child.left = left
+    left += child.width + ui.from.between_width
+    position!(child)
+  end
 end
 
 minwidth(ui::ConcreteUI) = minwidth(ui.from)
 minwidth(ui::Rect) = ui.width.min
 minwidth(ui::ConcreteText) = minimum(word->textwidth(String(word), ui.font), split(ui.from.content), init=0px)
+maxwidth(ui::Rect) = min(ui.width.preferred, ui.width.max)
 minheight(ui::ConcreteText) = ui.height
 minheight(ui::ConcreteUI) = minheight(ui.from)
 minheight(ui::Rect) = ui.height.min
@@ -132,7 +203,7 @@ maxheight(ui::Rect) = ui.height.max
 
 # The width of the text element should already of been allocated so here we just wrap the text
 # and set the height accordingly
-function fitwidths!(ui::ConcreteText)
+function resolve!(ui::ConcreteText)
   ui.lines = wraptext(ui.from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
   ui.height = convert(px, length(ui.lines) * absolute(ui.from.lineheight, ui.from.size))
   nothing
@@ -183,23 +254,6 @@ function wraptext(s::String, face::TTFont{pem}, max_width::px; words=split(s),
   end
   offset == lastindex(s) && return lines
   push!(lines, @view s[offset:end])
-end
-
-function alignchildren!(ui::ConcreteRect)
-  padtop = ismissing(ui.from.padding.top) ? 0px : ui.from.padding.top
-  bordertop = ismissing(ui.from.border.top) ? 0px : ui.from.border.top
-  mintop = padtop + bordertop
-  h = ui.height - mintop
-  for child in ui.children
-    alignment = ui.from.align
-    top = mintop
-    if alignment == Alignment.Center
-      top += (h - child.height)/2
-    elseif alignment == Alignment.End
-      top += h - child.height
-    end
-    child.top = top
-  end
 end
 
 export resolve, ConcreteText, ConcreteRect

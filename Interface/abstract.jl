@@ -63,8 +63,13 @@ nsiblings(d::UITree) = nsiblings(d.nextsibling) + 1
 lastsibling(d::UITree) = isnothing(d.nextsibling) ? d : lastsibling(d.nextsibling)
 lastsibling(d::Nothing) = nothing
 
-mixin!(r::UITree, s::StyleNode) = setproperty!(r, propertyname(r, s), s)
+mixin!(r::UITree, s::StyleNode) = begin
+  field = propertyname(r, s)
+  old = getproperty(r, field)
+  setproperty!(r, field, mixin!(old, s))
+end
 mixin!(r::UITree, d::UITree) = add_child!(r, d)
+mixin!(old, new) = new
 propertyname(s::StyleNode) = Symbol(snake_case(string(nameof(typeof(s)))))
 propertyname(_, s) = propertyname(s)
 snake_case(s::AbstractString) = NamingConventions.convert(NamingConventions.PascalCase, NamingConventions.SnakeCase, s)

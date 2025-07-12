@@ -8,14 +8,14 @@ const transparent = parse(Colorant, "transparent")
 const black = parse(Colorant, "black")
 
 @def struct Padding <: StyleNode
-  top::Union{Missing,Length}=missing
-  right::Union{Missing,Length}=missing
-  bottom::Union{Missing,Length}=missing
-  left::Union{Missing,Length}=missing
+  top::Length=0px
+  right::Length=0px
+  bottom::Length=0px
+  left::Length=0px
 end
 
-@property Padding.width = +(ismissing(self.left) ? 0px : self.left, ismissing(self.right) ? 0px : self.right)
-@property Padding.height = +(ismissing(self.top) ? 0px : self.top, ismissing(self.bottom) ? 0px : self.bottom)
+@property Padding.width = self.left + self.right
+@property Padding.height = self.bottom + self.top
 
 @Enum BorderStyle none dotted dashed solid double inset grove ridge outset
 
@@ -28,26 +28,27 @@ end
 abstract type StyleGroup <: StyleNode end
 
 @def struct Border <: StyleGroup
-  top::Union{BorderSide,Missing}=missing
-  right::Union{BorderSide,Missing}=missing
-  bottom::Union{BorderSide,Missing}=missing
-  left::Union{BorderSide,Missing}=missing
-  between_children::Union{BorderSide,Missing}=missing
+  top::BorderSide=BorderSide()
+  right::BorderSide=BorderSide()
+  bottom::BorderSide=BorderSide()
+  left::BorderSide=BorderSide()
+  between::BorderSide=BorderSide()
 end
 
-@property Border.width = +(ismissing(self.left) ? 0px : self.left.width, ismissing(self.right) ? 0px : self.right.width)
-@property Border.height = +(ismissing(self.top) ? 0px : self.top.width, ismissing(self.bottom) ? 0px : self.bottom.width)
-Base.isempty(b::Border) = all(ismissing, values(b))
+@property Border.width = self.left.width + self.right.width
+@property Border.height = self.top.width + self.bottom.width
+Base.isempty(b::BorderSide) = b.width == 0px || b.style == BorderStyle.none
+Base.isempty(b::Border) = all(isempty, values(b))
 Base.values(b::Border) = (b.top, b.right, b.bottom, b.left)
 
-Border(v::BorderSide; between_children=false) = Border(v, v, v, v, between_children ? v : missing)
-Border(a::BorderSide, b::BorderSide) = Border(a, b, a, b, missing)
+Border(v::BorderSide; between=false) = Border(v, v, v, v, between ? v : BorderSide())
+Border(a::BorderSide, b::BorderSide) = Border(a, b, a, b, BorderSide())
 
 @def struct Radius <: StyleNode
-  tl::Union{Missing,Length}=missing
-  tr::Union{Missing,Length}=missing
-  br::Union{Missing,Length}=missing
-  bl::Union{Missing,Length}=missing
+  tl::Length=0px
+  tr::Length=0px
+  br::Length=0px
+  bl::Length=0px
 end
 
 Radius(r) = Radius(r, r, r, r)
@@ -87,11 +88,12 @@ end
 
 padding(x, y) = Padding(top=y,bottom=y,left=x,right=x)
 padding(x) = Padding(x, x, x, x)
-border(width, style, color; between_children=false) = begin
+radius(x...) = Radius(x...)
+border(width, style, color; between=false) = begin
   Border(BorderSide(parse_length(width),
                     parse_border_style(style),
                     parse_color(color)),
-         between_children=between_children)
+         between=between)
 end
 layout(s::Symbol) = s == :row ? LayoutDirection.Row : LayoutDirection.Column
 width(args...; kwargs...) = Width(args..., ; kwargs...)
@@ -128,9 +130,14 @@ rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
 end
 
 mixin!(r::Rect, d::LayoutDirection) = r.layout_direction = d
-
-@property Rect.between_width = begin
-  self.child_gap + (ismissing(self.border.between_children) ? 0px : self.border.between_children.width)
+mixin!(old::Border, new::Border) = begin
+  Border(top=isempty(new.top) ? old.top : new.top,
+         right=isempty(new.right) ? old.right : new.right,
+         bottom=isempty(new.bottom) ? old.bottom : new.bottom,
+         left=isempty(new.left) ? old.left : new.left,
+         between=isempty(new.between) ? old.between : new.between)
 end
 
-export padding, background, border, rgb, pt, mm, px, Rect, Text, layout, width, height, GrowType, Alignment
+@property Rect.between_width = self.child_gap + self.border.between.width
+
+export padding, background, border, rgb, pt, mm, px, Rect, Text, layout, width, height, GrowType, Alignment, radius
