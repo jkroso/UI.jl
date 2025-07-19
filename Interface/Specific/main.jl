@@ -4,6 +4,7 @@
 @use "../Descriptive"... Width Height
 @use GeometryBasics: Vec2, Vec
 @use Colors...
+@use "github.com/jkroso/MiniFB.jl"... int
 
 @def mutable struct ConcreteRect <: ConcreteUI
   top::px=0px
@@ -111,7 +112,7 @@ internalheight(ui::ConcreteUI) = ui.height - extra_height(ui)
 function grow!(ui::ConcreteRect, remainder::Length)
   growable = sort!(filter(is_width_growable, ui.children), by=field"width")
   while !isempty(growable) && remainder > 0px # grow
-    smallest, next_smallest = top(growable)
+    smallest, next_smallest = best(growable)
     diff = next_smallest == 0px ? remainder/length(smallest) : next_smallest - smallest[1].width
     togrow = min(remainder/length(smallest), diff)
     for child in smallest
@@ -132,7 +133,7 @@ end
 function shrink!(ui::ConcreteRect, remainder::Length)
   shrinkable = sort!(filter(is_width_shrinkable, ui.children), by=field"width", rev=true)
   while !isempty(shrinkable) && remainder < 0px # shrink
-    biggest, next_biggest = top(shrinkable, comp=isless)
+    biggest, next_biggest = best(shrinkable, comp=isless)
     diff = next_biggest == 0px ? remainder/length(biggest) : next_biggest - biggest[1].width
     toshrink = max(remainder/length(biggest), diff)
     for child in biggest
@@ -179,11 +180,12 @@ function position!(ui)
     alignment = ui.from.align
     top = mintop
     if alignment == Alignment.Center
-      top += (h - child.height)/2
+      space = h - child.height
+      top += space/2
     elseif alignment == Alignment.End
       top += h - child.height
     end
-    child.top = top
+    child.top = isapprox(int(mintop), int(top), atol=1) ? mintop : top
     child.left = left
     left += child.width + ui.from.between_width
     position!(child)
@@ -209,7 +211,7 @@ function resolve!(ui::ConcreteText)
   nothing
 end
 
-function top(growable; by=field"width", comp=(>))
+function best(growable; by=field"width", comp=(>))
   first = growable[1]
   smallest_val = getproperty(first, by)
   group = Any[first]
