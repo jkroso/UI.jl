@@ -1,4 +1,3 @@
 Project.toml
-.aider*
-
 **/.claude/settings.local.json
+/clay
