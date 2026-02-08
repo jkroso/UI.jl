@@ -95,7 +95,6 @@ border(width, style, color; between=false) = begin
                     parse_color(color)),
          between=between)
 end
-layout(s::Symbol) = s == :row ? LayoutDirection.Row : LayoutDirection.Column
 width(args...; kwargs...) = Width(args..., ; kwargs...)
 height(args...; kwargs...) = Height(args...; kwargs...)
 
@@ -114,22 +113,26 @@ parse_length(i) = i
 background(s) = Background(parse_color(s))
 rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
 
-@Enum LayoutDirection Column Row
 @Enum Alignment Start Center End
 
-@def mutable struct Rect <: DescriptiveUI
+@abstract struct Container <: DescriptiveUI
   background::Background=Background()
   border::Border=Border()
   radius::Radius=Radius()
   padding::Padding=Padding()
   width::Width=Width()
   height::Height=Height()
-  layout_direction::LayoutDirection=LayoutDirection.Column
   child_gap::Length=0px
   align::Alignment=Alignment.Center
 end
 
-mixin!(r::Rect, d::LayoutDirection) = r.layout_direction = d
+"A box around vertically arranged children"
+@def mutable struct Column <: Container end
+"A box around horizontally arranged children"
+@def mutable struct Row <: Container end
+"A box around a single child"
+@def mutable struct Box <: Container end
+
 mixin!(old::Border, new::Border) = begin
   Border(top=isempty(new.top) ? old.top : new.top,
          right=isempty(new.right) ? old.right : new.right,
@@ -138,6 +141,6 @@ mixin!(old::Border, new::Border) = begin
          between=isempty(new.between) ? old.between : new.between)
 end
 
-@property Rect.between_width = self.child_gap + self.border.between.width
+@property Container.between_width = self.child_gap + self.border.between.width
 
-export padding, background, border, rgb, pt, mm, px, Rect, Text, layout, width, height, GrowType, Alignment, radius
+export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Text, width, height, GrowType, Alignment, radius

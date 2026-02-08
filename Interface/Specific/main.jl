@@ -1,6 +1,6 @@
-@use "github.com/jkroso/Prospects.jl" @def @property @field_str ["Enum" @Enum]
+@use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
 @use "github.com/jkroso/Font.jl" Font widths! TTFont ["units" Length px FontUnit absolute relative]
-@use "../Descriptive"... Width Height LayoutDirection
+@use "../Descriptive"... Width Height
 @use "../abstract" resolve ConcreteUI
 @use GeometryBasics: Vec2, Vec
 @use Colors...
@@ -59,38 +59,30 @@ end
   widths::Vector{FontUnit}=Vector[]
 end
 
+@property ConcreteText.size = Vec2{px}(self.width, self.height)
+
 """
-1. Fit Sizing Widths
-2. Grow and Shrink Sizing Widths
+1. Instantiate a concrete UI with best guess at the sizing of each element
+2. Adjust sizing to distribute available space evenly
 3. Wrap Text
-4. Fit Sizing Heights
-5. Grow and Shrink Sizing Heights
-6. Set Positions
+4. Adjust heights
+6. Align positions of children within rows/columns
 """
-function resolve(ui::Rect, (w, h))
+function resolve(ui::Container, (w, h))
   toplevel = ConcreteRect(width=w, height=h)
   cui = initialize(ui, toplevel)
   push!(toplevel.children, cui)
-  if ui.height.grow == GrowType.Grow
-    cui.height = h
-  end
-  resolve!(cui)
-  position!(cui)
+  fit!(ui, cui)
+  position!(ui, cui)
   cui
 end
 
 "The initial pass creates the new tree and sets the width of all nodes to their natural value"
-function initialize(ui::Rect, parent)
-  rect = ConcreteRect(from=ui, parent=parent, width=parent.width)
-  rect.children = ConcreteUI[initialize(c, rect) for c in ui.children]
-  rect.width = clamp(if ui.width.preferred != 0px
-    ui.width.preferred
-  elseif isgrowable(ui, Axis.x)
-    parent.width
-  else
-    sum(field"width", rect.children, init=0px)
-  end, ui.width.min, ui.width.max)
-
+function initialize(ui::Row, parent::ConcreteRect)
+  rect = invoke(initialize, Tuple{Container, ConcreteRect}, ui, parent)
+  if !isgrowable(ui, Axis.x) && ui.width.preferred == 0px
+    rect.width = sum(field"width", rect.children, init=0px) + extra_width(rect)
+  end
   # Set initial height for children
   for child in rect.children
     h = if child.from.height.preferred != 0px
@@ -107,20 +99,51 @@ function initialize(ui::Rect, parent)
     end
     child.height = clamp(convert(px, h), minsize(child, field"height"), maxsize(child, field"height"))
   end
-
   rect
+end
+
+function initialize(ui::Column, parent::ConcreteRect)
+  rect = invoke(initialize, Tuple{Container, ConcreteRect}, ui, parent)
+  if !isgrowable(ui, Axis.y) && ui.height.preferred == 0px
+    height = sum(field"height", rect.children, init=0px) + extra_height(rect)
+    rect.height = height
+  end
+  rect
+end
+
+function initialize(ui::Container, parent::ConcreteRect)
+  initial_width = if ui.width.preferred != 0px
+    clamp(ui.width.preferred, ui.width.min, ui.width.max)
+  else
+    internalwidth(parent)
+  end
+  initial_height = if ui.height.preferred != 0px
+    clamp(ui.height.preferred, ui.height.min, ui.height.max)
+  else
+    internalheight(parent)
+  end
+  rect = ConcreteRect(from=ui, parent=parent, width=initial_width, height=initial_height)
+  rect.children = ConcreteUI[initialize(child, rect) for child in ui.children]
+  rect
+end
+
+extra_width((;from, children)::ConcreteUI) = begin
+  from.padding.width + from.border.width + from.between_width * max(0, length(children) - 1)
 end
 
 field(ui, d::Axis) = d == Axis.x ? field"width" : field"height"
 isgrowable(ui, d::Axis) = isgrowable(ui, field(ui, d))
+isgrowable(ui::ConcreteUI, f::Field) = isgrowable(ui.from, f)
+isgrowable(ui::Container, f::Field) = getproperty(ui, f).grow == GrowType.Grow
+isgrowable(ui::Union{ConcreteText,Text}, f::Field) = true
 isshrinkable(ui, d::Axis) = isshrinkable(ui, field(ui, d))
-isgrowable(ui::ConcreteUI, f) = getproperty(ui.from, f).grow == GrowType.grow
-isshrinkable(ui::ConcreteUI, f) = getproperty(ui.from, f).grow != GrowType.none
-isgrowable(ui::Union{ConcreteText,Text}, f) = true
-isshrinkable(ui::Union{ConcreteText,Text}, f) = true
+isshrinkable(ui::ConcreteUI, f::Field) = isshrinkable(ui.from, f)
+isshrinkable(ui::Container, f::Field) = getproperty(ui, f).grow != GrowType.None
+isshrinkable(ui::Union{ConcreteText,Text}, f::Field) = true
 
 "compute the width inside an element available for it's children to occupy"
 function internalwidth((;width, from, children)::ConcreteUI)
+  isnothing(from) && return width
   w = width - from.padding.width - from.border.width
   w - from.between_width * max(0, length(children) - 1)
 end
@@ -129,8 +152,9 @@ internalheight(::Nothing) = 0px
 internalheight(ui::ConcreteUI) = ui.height - extra_height(ui)
 
 "Distribute the excess width accross all elements that can accept it"
-function grow!(ui::ConcreteRect, remainder::Length, direction::Axis)
-  prop = field(direction)
+function grow!(ui::ConcreteRect, direction::Axis)
+  prop = field(ui, direction)
+  remainder = remaining_size(ui, prop)
   growable = sort!(filter(ui->isgrowable(ui, prop), ui.children), by=prop)
   while !isempty(growable) && remainder > 0px
     smallest, next_smallest = best(growable, by=prop)
@@ -153,7 +177,7 @@ function grow!(ui::ConcreteRect, remainder::Length, direction::Axis)
 end
 
 function shrink!(ui::ConcreteRect, remainder::Length, direction::Axis)
-  prop = field(direction)
+  prop = field(ui, direction)
   shrinkable = sort!(filter(ui->isshrinkable(ui, prop), ui.children), by=prop, rev=true)
   while !isempty(shrinkable) && remainder < 0px
     biggest, next_biggest = best(shrinkable, comp=isless)
@@ -176,106 +200,116 @@ function shrink!(ui::ConcreteRect, remainder::Length, direction::Axis)
   remainder
 end
 
-"Distribute the excess height across all elements that can accept it"
-function grow_height!(ui::ConcreteRect, remainder::Length)
-  growable = sort!(filter(is_height_growable, ui.children), by=field"height")
-  while !isempty(growable) && remainder > 0px # grow
-    smallest, next_smallest = best(growable, by=field"height")
-    diff = next_smallest == 0px ? remainder/length(smallest) : next_smallest - smallest[1].height
-    togrow = min(remainder/length(smallest), diff)
-    for child in smallest
-      child.height += togrow
-      remainder -= togrow
-      # When an item has reached it's max size it's no longer growable
-      if child.from.height.max <= child.height
-        deleteat!(growable, findfirst(==(child), growable))
-        x = child.height - child.from.height.max
-        child.height = child.from.height.max
-        remainder += x # correct for over subtraction
-      end
-    end
+extra_height((;from, children)::ConcreteRect) = begin
+  isnothing(from) && return 0px
+  (;padding, border) = from
+  h = +(padding.top, padding.bottom, border.bottom.width, border.top.width)
+  h + max((length(children)-1) * border.between.width, 0px)
+end
+
+sizing_axis(::Row) = Axis.x
+sizing_axis(::Column) = Axis.y
+
+function fit!(ui::Box, cui::ConcreteRect) end
+function fit!(ui::Union{Column,Row}, cui::ConcreteRect)
+  remaining = grow!(cui, sizing_axis(ui))
+  shrink!(cui, remaining, sizing_axis(ui))
+  for child in cui.children
+    fit!(child.from, child)
   end
-  remainder
 end
 
-function shrink_height!(ui::ConcreteRect, remainder::Length)
-  shrinkable = sort!(filter(is_height_shrinkable, ui.children), by=field"height", rev=true)
-  while !isempty(shrinkable) && remainder < 0px # shrink
-    biggest, next_biggest = best(shrinkable, by=field"height", comp=isless)
-    diff = next_biggest == 0px ? remainder/length(biggest) : next_biggest - biggest[1].height
-    toshrink = max(remainder/length(biggest), diff)
-    for child in biggest
-      child.height += toshrink
-      remainder -= toshrink
-      minh = minheight(child)
-      # When an item has reached it's min size it's no longer shrinkable
-      if child.height <= minh
-        deleteat!(shrinkable, findfirst(==(child), shrinkable))
-        x = child.height - minh
-        child.height = convert(px, minh)
-        remainder += x # correct for over subtraction
-      end
-    end
-  end
-  remainder
-end
+remaining_size(ui::ConcreteRect, f::Field{:height}) = internalheight(ui) - sum(f, ui.children, init=0px)
+remaining_size(ui::ConcreteRect, f::Field{:width}) = internalwidth(ui) - sum(f, ui.children, init=0px)
 
-extra_height(ui::ConcreteRect) = begin
-  (;padding, border) = ui.from
-  +(padding.top, padding.bottom, border.bottom.width, border.top.width)
-end
+function position!(::Text, ui::ConcreteText) end
 
-function resolve!(ui::ConcreteRect)
-  flow_direction = ui.from.layout_direction == LayoutDirection.Column ? Axis.y : Axis.x
-  remainder = remaining_size(ui, flow_direction)
-  shrink!(ui, grow!(ui, internalwidth(ui) - sum(field"width", ui.children, init=0px)))
-  shrink!(ui, grow_height!(ui, internalheight(ui) - sum(field"height", ui.children, init=0px)))
-  foreach(resolve!, ui.children)
-  # (;height) = ui.from
-  # if height.grow == GrowType.FitContent
-  #   h = height.preferred == 0px ? maximum(field"height", ui.children, init=0px) + extra_height(ui) : height.preferred
-  #   ui.height = clamp(h, minheight(ui), maxheight(ui))
-  # elseif height.grow == GrowType.Grow
-  #   ui.height = internalheight(ui.parent)
-  # end
-end
-
-function position!(ui)
-  (;padding,border) = ui.from
+# Align contents in both directions
+function position!((;padding,border,align, between_width)::Box, ui::ConcreteRect)
+  isempty(ui.children) && return
+  child = ui.children[1]
   padtop = padding.top
   bordertop = border.top.width
   mintop = ui.top + padtop + bordertop
-  h = ui.height - padtop - bordertop
+  h = ui.height - padtop - 2bordertop - padding.bottom
+  top = mintop
+  if align == Alignment.Center
+    space = h - child.height
+    top += space/2
+  elseif align == Alignment.End
+    top += h - child.height
+  end
+  padleft = padding.left
+  borderleft = border.left.width
+  minleft = ui.left + padleft + borderleft
+  w = ui.width - padleft - 2borderleft - padding.right
+  left = minleft
+  if align == Alignment.Center
+    space = w - child.width
+    left += space/2
+  elseif align == Alignment.End
+    left += w - child.width
+  end
+  child.top = isapprox(int(mintop), int(top), atol=1) ? mintop : top
+  child.left = isapprox(int(minleft), int(left), atol=1) ? minleft : left
+  position!(child.from, child)
+end
+
+function position!((;padding,border,align, between_width)::Row, ui::ConcreteRect)
+  padtop = padding.top
+  bordertop = border.top.width
+  mintop = ui.top + padtop + bordertop
+  h = ui.height - padtop - 2bordertop - padding.bottom
   left = ui.left + padding.left + border.left.width
   for child in ui.children
-    alignment = ui.from.align
     top = mintop
-    if alignment == Alignment.Center
+    if align == Alignment.Center
       space = h - child.height
       top += space/2
-    elseif alignment == Alignment.End
+    elseif align == Alignment.End
       top += h - child.height
     end
     child.top = isapprox(int(mintop), int(top), atol=1) ? mintop : top
     child.left = left
-    left += child.width + ui.from.between_width
-    position!(child)
+    left += child.width + between_width
+    position!(child.from, child)
   end
 end
 
-minsize(ui::Rect, prop::Field) = getproperty(ui, prop).min
+function position!((;padding,border,align,between_width)::Column, ui::ConcreteRect)
+  padleft = padding.left
+  borderleft = border.left.width
+  minleft = ui.left + padleft + borderleft
+  w = ui.width - padleft - 2borderleft - padding.right
+  top = ui.top + padding.top + border.top.width
+  for child in ui.children
+    left = minleft
+    if align == Alignment.Center
+      space = w - child.width
+      left += space/2
+    elseif align == Alignment.End
+      left += w - child.width
+    end
+    child.left = isapprox(int(minleft), int(left), atol=1) ? minleft : left
+    child.top = top
+    top += child.height + between_width
+    position!(child.from, child)
+  end
+end
+
+minsize(ui::Container, prop::Field) = getproperty(ui, prop).min
 minsize(ui::ConcreteUI, prop::Field) = minsize(ui.from, prop)
 minsize(ui::ConcreteText, ::Field{:width}) = minimum(word->textwidth(String(word), ui.font), split(ui.from.content), init=0px)
 
-maxsize(ui::Rect, prop::Field) = max(getproperty(ui, prop).preferred, getproperty(ui, prop).max)
+maxsize(ui::Container, prop::Field) = max(getproperty(ui, prop).preferred, getproperty(ui, prop).max)
 maxsize(ui::ConcreteText, ::Field{:height}) = ui.height
 maxsize(ui::ConcreteUI, prop::Field) = maxsize(ui.from, prop)
 
 # The width of the text element should already of been allocated so here we just wrap the text
 # and set the height accordingly
-function resolve!(ui::ConcreteText)
-  ui.lines = wraptext(ui.from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
-  ui.height = convert(px, length(ui.lines) * absolute(ui.from.lineheight, ui.from.size))
+function fit!(from::Text, ui::ConcreteText)
+  ui.lines = wraptext(from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
+  ui.height = convert(px, length(ui.lines) * absolute(from.lineheight, ui.from.size))
   nothing
 end
 
