@@ -6,8 +6,10 @@
 #   - GrowType.Grow:       expands to fill available space
 #   - GrowType.None:       fixed size, won't shrink
 
+@use "github.com/jkroso/Prospects.jl" @field_str
 @use "../Interface/Descriptive"...
 @use "../Interface/Specific"...
+@use Colors: @colorant_str
 
 # Growing: items with Grow expand to fill remaining space
 grow_example = Row(width(600px), background("darkblue"),
@@ -59,3 +61,32 @@ centered_box = Box(width(400px), height(200px),
 result = resolve(centered_box, (400px, 200px))
 child = result.children[1]
 println("Centered child at: left=$(child.left), top=$(child.top)")
+
+# Compose display versions into a scene
+# Expected result: four sections stacked vertically showing
+#   1. Grow: red | yellow (wide) | green (wide) | blue - growable items expand equally
+#   2. Grow maxed: same but green is capped, yellow gets extra
+#   3. Shrink: wide red | narrow yellow | green | narrow blue - items compressed to fit
+#   4. Centered: small white box centered in a dark blue rectangle
+scene = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), background(colorant"rgb(240,240,240)"),
+  Column(width(360px), height(grow=GrowType.Grow), padding(10px),
+    Row(width(350px), height(40px), background("darkblue"),
+      Row(width(50px), height(30px), background("red")),
+      Row(width(min=75px, grow=GrowType.Grow), height(30px), background("yellow")),
+      Row(width(grow=GrowType.Grow), height(30px), background("lightgreen")),
+      Row(width(50px), height(30px), background("lightblue"))),
+    Row(width(350px), height(40px), background("darkblue"),
+      Row(width(50px), height(30px), background("red")),
+      Row(width(min=75px, grow=GrowType.Grow), height(30px), background("yellow")),
+      Row(width(grow=GrowType.Grow, max=75px), height(30px), background("lightgreen")),
+      Row(width(50px), height(30px), background("lightblue"))),
+    Row(width(350px), height(40px), background("darkblue"),
+      Row(width(min=175px, preferred=175px), height(30px), background("red")),
+      Row(width(min=25px, grow=GrowType.Grow, preferred=50px), height(30px), background("yellow")),
+      Row(width(min=50px, grow=GrowType.Grow), height(30px), background("lightgreen")),
+      Row(width(50px), height(30px), background("lightblue"))),
+    Box(width(350px), height(80px), Alignment.Center, background("darkblue"),
+      Row(width(60px), height(30px), background("white")))))
+
+@use "../Interface/save" save_scene
+save_scene(@__DIR__()*"/03_flex_layout.png", scene, (380px, 260px))

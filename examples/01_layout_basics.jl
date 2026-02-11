@@ -14,9 +14,9 @@
 
 # A simple row with three colored boxes
 simple_row = Row(width(400px), height(80px), background("darkblue"),
-  Row(width(100px), height(60px), background("red")),
-  Row(width(100px), height(60px), background("yellow")),
-  Row(width(100px), height(60px), background("lightblue")))
+Row(width(100px), height(60px), background("red")),
+Row(width(100px), height(60px), background("yellow")),
+Row(width(100px), height(60px), background("lightblue")))
 
 result = resolve(simple_row, (400px, 80px))
 @assert field"width".(result.children) == px[100, 100, 100]
@@ -25,9 +25,9 @@ result = resolve(simple_row, (400px, 80px))
 
 # A column stacking items vertically
 simple_column = Column(width(200px), height(240px), background("darkblue"), padding(10px, 0px),
-  Row(width(180px), height(80px), background("coral")),
-  Row(width(180px), height(80px), background("gold")),
-  Row(width(180px), height(80px), background("mediumseagreen")))
+Row(width(180px), height(80px), background("coral")),
+Row(width(180px), height(80px), background("gold")),
+Row(width(180px), height(80px), background("mediumseagreen")))
 
 result = resolve(simple_column, (200px, 300px))
 @assert field"height".(result.children) == px[80, 80, 80]
@@ -37,12 +37,12 @@ result = resolve(simple_column, (200px, 300px))
 
 # Nested layout: a column containing rows
 nested = Column(width(400px), height(300px), background("white"),
-  Row(width(380px), height(50px), background("steelblue"),
-    Row(width(100px), height(40px), background("lightyellow")),
-    Row(width(100px), height(40px), background("lightcoral"))),
-  Row(width(380px), height(50px), background("darkseagreen"),
-    Row(width(150px), height(40px), background("lightyellow")),
-    Row(width(150px), height(40px), background("lightcoral"))))
+Row(width(380px), height(50px), background("steelblue"),
+Row(width(100px), height(40px), background("lightyellow")),
+Row(width(100px), height(40px), background("lightcoral"))),
+Row(width(380px), height(50px), background("darkseagreen"),
+Row(width(150px), height(40px), background("lightyellow")),
+Row(width(150px), height(40px), background("lightcoral"))))
 
 result = resolve(nested, (400px, 300px))
 @assert result.width == 400px
@@ -72,66 +72,29 @@ result = resolve(nested, (400px, 300px))
 #      vertically. The top row is steel blue with two small boxes (cream, pink)
 #      side by side. The bottom row is dark sea green with the same.
 display_row = Row(width(240px), height(50px), background("darkblue"),
-  Row(width(80px), height(40px), background("red")),
-  Row(width(80px), height(40px), background("yellow")),
-  Row(width(80px), height(40px), background("lightblue")))
+Row(width(80px), height(40px), background("red")),
+Row(width(80px), height(40px), background("yellow")),
+Row(width(80px), height(40px), background("lightblue")))
 
 display_column = Column(width(200px), height(120px), background("darkblue"),
-  Row(width(180px), height(40px), background("coral")),
-  Row(width(180px), height(40px), background("gold")),
-  Row(width(180px), height(40px), background("mediumseagreen")))
+Row(width(180px), height(40px), background("coral")),
+Row(width(180px), height(40px), background("gold")),
+Row(width(180px), height(40px), background("mediumseagreen")))
 
 display_nested = Column(width(300px), height(120px), background("white"), border(1px, :solid, colorant"rgb(200,200,200)"), padding(0px, 10px),
-  Row(width(280px), height(50px), background("steelblue"), padding(10px, 0px),
-    Row(width(100px), height(40px), background("lightyellow")),
-    Row(width(100px), height(40px), background("lightcoral"))),
-  Row(width(280px), height(50px), background("darkseagreen"), padding(10px, 0px),
-    Row(width(130px), height(40px), background("lightyellow")),
-    Row(width(130px), height(40px), background("lightcoral"))))
+Row(width(280px), height(50px), background("steelblue"), padding(10px, 0px),
+Row(width(100px), height(40px), background("lightyellow")),
+Row(width(100px), height(40px), background("lightcoral"))),
+Row(width(280px), height(50px), background("darkseagreen"), padding(10px, 0px),
+Row(width(130px), height(40px), background("lightyellow")),
+Row(width(130px), height(40px), background("lightcoral"))))
 
 scene = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), background(colorant"rgb(240,240,240)"),
-  Column(width(320px), height(grow=GrowType.Grow), padding(10px),
-    display_row,
-    display_column,
-    display_nested))
+Column(width(320px), height(grow=GrowType.Grow), padding(10px),
+display_row,
+display_column,
+display_nested))
 
-# --- Render in a window ---
-@use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont
-@use "github.com/jkroso/MiniFB.jl"... int
-@use "github.com/jkroso/Units.jl" mm
-@use GeometryBasics: Vec2
-
-window = Window(title="Layout Basics", size=(100mm, 120mm), animating=false)
-
-onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
-
-draw(ctx, size, ui::ConcreteRect) = begin
-  (;background, border, radius) = ui.from
-  bw = border.top.width
-  tl = ui.origin .+ bw/2
-  sz = ui.size .- bw
-  rounded_rectangle(ctx, tl, sz, radius.tl, background=background.color,
-                                             color=border.top.color,
-                                             stroke_width=bw)
-  if ui.from isa Row
-    for child in ui.children
-      draw(ctx, child.size, child)
-    end
-  else
-    for child in ui.children
-      draw(ctx, child.size, child)
-    end
-  end
-end
-
-draw(ctx, _, ui::ConcreteText) = begin
-  f = SkiaFont(ui.from.family, ui.from.size)
-  for (i, line) in enumerate(ui.lines)
-    y = ui.top + ui.from.size * i
-    text(ctx, (ui.left, y), f, ui.from.color, String(line))
-  end
-end
-
-frame(w::Window) = drawing(draw, w, resolve(scene, w.size))
-
-errormonitor(@async open(window))
+# --- Save as image ---
+@use "../Interface/save" save_scene
+save_scene(@__DIR__()*"/01_layout_basics.png", scene, (320px, 340px))

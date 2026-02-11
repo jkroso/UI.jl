@@ -88,7 +88,7 @@ function initialize(ui::Row, parent::ConcreteRect)
     h = if child.from.height.preferred != 0px
       child.from.height.preferred
     elseif isgrowable(child, Axis.y)
-      parent.height
+      internalheight(rect)
     else
       # Use child's natural height
       if child isa ConcreteText
@@ -115,12 +115,12 @@ function initialize(ui::Container, parent::ConcreteRect)
   initial_width = if ui.width.preferred != 0px
     clamp(ui.width.preferred, ui.width.min, ui.width.max)
   else
-    internalwidth(parent)
+    clamp(internalwidth(parent), ui.width.min, ui.width.max)
   end
   initial_height = if ui.height.preferred != 0px
     clamp(ui.height.preferred, ui.height.min, ui.height.max)
   else
-    internalheight(parent)
+    clamp(internalheight(parent), ui.height.min, ui.height.max)
   end
   rect = ConcreteRect(from=ui, parent=parent, width=initial_width, height=initial_height)
   rect.children = ConcreteUI[initialize(child, rect) for child in ui.children]
@@ -165,11 +165,11 @@ function grow!(ui::ConcreteRect, direction::Axis)
       setproperty!(child, prop, size)
       remainder -= togrow
       size = getproperty(child, prop)
-      max = getproperty(child.from, prop).max
-      if max <= size # When an item has reached it's max size it's no longer growable
+      m = maxsize(child, prop)
+      if m <= size # When an item has reached it's max size it's no longer growable
         deleteat!(growable, findfirst(==(child), growable))
-        setproperty!(child, prop, max)
-        remainder += (size - max) # correct for over subtraction
+        setproperty!(child, prop, m)
+        remainder += (size - m) # correct for over subtraction
       end
     end
   end
@@ -180,7 +180,7 @@ function shrink!(ui::ConcreteRect, remainder::Length, direction::Axis)
   prop = field(ui, direction)
   shrinkable = sort!(filter(ui->isshrinkable(ui, prop), ui.children), by=prop, rev=true)
   while !isempty(shrinkable) && remainder < 0px
-    biggest, next_biggest = best(shrinkable, comp=isless)
+    biggest, next_biggest = best(shrinkable, by=prop, comp=isless)
     diff = next_biggest == 0px ? remainder/length(biggest) : next_biggest - getproperty(biggest[1], prop)
     toshrink = max(remainder/length(biggest), diff)
     for child in biggest
@@ -210,10 +210,26 @@ end
 sizing_axis(::Row) = Axis.x
 sizing_axis(::Column) = Axis.y
 
-function fit!(ui::Box, cui::ConcreteRect) end
+function fit!(ui::Box, cui::ConcreteRect)
+  for axis in (Axis.x, Axis.y)
+    remaining = grow!(cui, axis)
+    shrink!(cui, remaining, axis)
+  end
+  for child in cui.children
+    fit!(child.from, child)
+  end
+end
 function fit!(ui::Union{Column,Row}, cui::ConcreteRect)
   remaining = grow!(cui, sizing_axis(ui))
   shrink!(cui, remaining, sizing_axis(ui))
+  # fit children along the cross axis
+  cross = sizing_axis(ui) == Axis.x ? Axis.y : Axis.x
+  cross_field = field(cui, cross)
+  available = cross == Axis.y ? internalheight(cui) : internalwidth(cui)
+  for child in cui.children
+    isgrowable(child, cross) || continue
+    setproperty!(child, cross_field, clamp(available, minsize(child, cross_field), maxsize(child, cross_field)))
+  end
   for child in cui.children
     fit!(child.from, child)
   end
@@ -303,6 +319,8 @@ minsize(ui::ConcreteText, ::Field{:width}) = minimum(word->textwidth(String(word
 
 maxsize(ui::Container, prop::Field) = max(getproperty(ui, prop).preferred, getproperty(ui, prop).max)
 maxsize(ui::ConcreteText, ::Field{:height}) = ui.height
+maxsize(ui::ConcreteText, ::Field{:width}) = px(Inf)
+minsize(ui::ConcreteText, ::Field{:height}) = 0px
 maxsize(ui::ConcreteUI, prop::Field) = maxsize(ui.from, prop)
 
 # The width of the text element should already of been allocated so here we just wrap the text
@@ -356,7 +374,7 @@ function wraptext(s::String, face::TTFont{pem}, max_width::px; words=split(s),
       lastword = word
     end
   end
-  offset == lastindex(s) && return lines
+  offset > lastindex(s) && return lines
   push!(lines, @view s[offset:end])
 end
 

@@ -43,9 +43,11 @@ card = Box(width(300px), height(150px),
   background("white"),
   border(1px, :solid, "#e5e7eb"),
   Column(width(276px), height(126px),
-    Text("Card Title", size=16pt, color=colorant"rgb(30,30,30)"),
-    Text("Some descriptive text that goes below the title.",
-         size=11pt, color=colorant"rgb(100,100,100)")))
+    Box(width(grow=GrowType.Grow), height(30px),
+      Text("Card Title", size=16pt, color=colorant"rgb(30,30,30)")),
+    Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
+      Text("Some descriptive text that goes below the title.",
+           size=11pt, color=colorant"rgb(100,100,100)"))))
 
 # Compose all examples into a single layout for display
 scene = Box(
@@ -59,50 +61,6 @@ scene = Box(
     rounded,
     card))
 
-# --- Render in a window ---
-@use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont
-@use "github.com/jkroso/MiniFB.jl"... int
-@use "github.com/jkroso/Units.jl" mm
-@use GeometryBasics: Vec2
-
-window = Window(title="Styling Example", size=(120mm, 200mm), animating=false)
-
-onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
-
-draw(ctx, size, ui::ConcreteRect) = begin
-  (;background, border, radius) = ui.from
-  bw = border.top.width
-  tl = ui.origin .+ bw/2
-  sz = ui.size .- bw
-  rounded_rectangle(ctx, tl, sz, radius.tl, background=background.color,
-                                             color=border.top.color,
-                                             stroke_width=bw)
-  isfirst = true
-  if ui.from isa Row
-    left = ui.left
-    for child in ui.children
-      draw(ctx, child.size, child)
-      isfirst = false
-      left += child.width + ui.from.between_width
-    end
-  else
-    top = ui.top
-    for child in ui.children
-      draw(ctx, child.size, child)
-      isfirst = false
-      top += child.height + ui.from.between_width
-    end
-  end
-end
-
-draw(ctx, _, ui::ConcreteText) = begin
-  f = SkiaFont(ui.from.family, ui.from.size)
-  for (i, line) in enumerate(ui.lines)
-    y = ui.top + ui.from.size * i
-    text(ctx, (ui.left, y), f, ui.from.color, String(line))
-  end
-end
-
-frame(w::Window) = drawing(draw, w, resolve(scene, w.size))
-
-errormonitor(@async open(window))
+# --- Save as image ---
+@use "../Interface/save" save_scene
+save_scene(@__DIR__()*"/02_styling.png", scene, (440px, 580px))

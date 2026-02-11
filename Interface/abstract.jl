@@ -39,6 +39,16 @@ Base.convert(::Type{UI}, s::AbstractString) = Text(s)
   state::Any=nothing
 end
 
+"Top-level node that connects the UI tree to a window"
+@def mutable struct Root <: ConceptualUI
+  window::Any=nothing
+end
+Root(child::UITree; window=nothing) = begin
+  root = Root(window=window)
+  add_child!(root, child)
+  root
+end
+
 @property Text.firstchild = nothing
 @property UITree.lastchild = lastsibling(self.firstchild)
 @property UITree.children = SiblingIterator(self.firstchild)
@@ -108,6 +118,7 @@ Converts a Conceptual UI Node into an abstract representation of just its visual
 point we are essentially stripping state from the UI so that we can enjoy way more code reuse
 """
 function describe end
+describe(d::DescriptiveUI) = d
 
 """
 Converts a declarative UI into a concrete one. At this point we are calculating the layout based
@@ -122,7 +133,13 @@ specialize this method on either the type of node or the type of event or both.
 function on(ui_node, event) end
 
 """
-Switches the target of future keyboard events to a given semantic node. Will trigger a focus out
-event on the old target and a focus in event on the new target.
+Switches the target of future keyboard events to a given semantic node
 """
-function focus end
+focus(node::UITree) = begin
+  root = node
+  while root.parent !== nothing
+    root = root.parent
+  end
+  root isa Root && (root.window.focus = node)
+  node
+end

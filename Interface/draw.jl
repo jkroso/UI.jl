@@ -1,45 +1,10 @@
-@use "github.com/jkroso/Prospects.jl" @property
+@use "github.com/jkroso/Prospects.jl" Field
 @use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont
 @use "github.com/jkroso/MiniFB.jl"... int
-@use "github.com/jkroso/Units.jl" mm ° Length
-@use GeometryBasics: Vec2, Vec
+@use GeometryBasics: Vec2
+@use "./abstract" describe Root UITree
 @use "./Descriptive"...
 @use "./Specific"...
-@use Colors...
-
-window = Window(title="test", size=(150mm, 150mm), animating=true)
-
-onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
-
-frame(window::Window) = drawing(draw, window, ui(window))
-
-# ui(window) = begin
-#   (w,h) = window.size
-#   grower = Rect(width(w),
-#                 height(h),
-#                 background(colorant"rgb(45,48,53)"),
-#                 border(6px, :solid, colorant"rgb(100,100,255)"),
-#     Rect(width(min=300px, grow=GrowType.Grow),
-#          background("transparent"),
-#          radius(2mm),
-#          border(2px, :solid, colorant"rgb(255,255,255)", between=true),
-#       Rect(width(grow=GrowType.Grow), height(50mm), background("yellow"), border(8px, :solid, colorant"rgb(0,200,30)"), radius(2mm)),
-#       Rect(width(grow=GrowType.Grow), height(50mm), background("white"), border(2px, :solid, colorant"rgb(70,30,200)"), LayoutDirection.Column,
-#         Rect(width(20mm), height(20mm), background("green")),
-#         Rect(width(20mm), height(20mm), background("yellow")),
-#         Rect(width(20mm), height(20mm), background("red"))),
-#       Rect(width(25mm), height(50mm), background("lightblue"), border(2px, :solid, colorant"rgb(155,30,30)"))))
-#   resolve(grower, window.size)
-# end
-
-ui(window) = begin
-  (w,h) = window.size
-  grower = Column(width(50mm), border(1px, :solid, colorant"rgb(150,150,150)", between=true), radius(3px),  background(colorant"white"),
-    Box(width(grow=GrowType.Grow), height(31px), Text("Copy", size=16px, family="Helvetica", color=colorant"rgb(80,80,80)")),
-    Box(width(grow=GrowType.Grow), height(31px), Text("Paste")),
-    Box(width(grow=GrowType.Grow), height(31px), Text("Edit")))
-  resolve(Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), Alignment.Center, background(colorant"white"), grower), window.size)
-end
 
 draw_between_row(ctx, ui, left) = begin
   border = ui.from.border.between
@@ -61,12 +26,10 @@ draw(ctx, size, ui::ConcreteRect) = begin
   (;background, border, radius) = ui.from
   bw = border.top.width
   tl = ui.origin .+ bw/2
-  size = ui.size.-bw
-
-  rounded_rectangle(ctx, tl, size, radius.tl, background=background.color,
-                                              color=border.top.color,
-                                              stroke_width=bw)
-
+  sz = ui.size .- bw
+  rounded_rectangle(ctx, tl, sz, radius.tl, background=background.color,
+                                             color=isempty(border.top) ? nothing : border.top.color,
+                                             stroke_width=bw)
   isfirst = true
   if ui.from isa Row
     left = ui.left
@@ -85,13 +48,32 @@ draw(ctx, size, ui::ConcreteRect) = begin
       top += child.height + ui.from.between_width
     end
   end
+  ui.from.from !== nothing && draw(ctx, size, ui, ui.from.from)
 end
+
+draw(ctx, size, ui::ConcreteRect, source) = nothing
 
 draw(ctx, _, ui::ConcreteText) = begin
-  (;size,family)=ui.from
-  font = SkiaFont(family, size)
-  text(ctx, (ui.left, ui.top+size/2), font, ui.from.color, ui.words[1])
+  f = SkiaFont(ui.from.family, ui.from.size)
+  for (i, line) in enumerate(ui.lines)
+    y = ui.top + ui.from.size * i
+    text(ctx, (ui.left, y), f, ui.from.color, String(line))
+  end
 end
 
-r = ui(window)
-errormonitor(@async open(window))
+Base.setproperty!(w::AbstractWindow, ::Field{:ui}, node::UITree) = begin
+  Root(node, window=w)
+  setfield!(w, :ui, node)
+end
+
+Window(child::UITree; kwargs...) = begin
+  w = Window(; kwargs...)
+  w.ui = child
+  w
+end
+
+ui(window) = window.ui
+frame(window::Window) = drawing(draw, window, resolve(describe(ui(window)), window.size))
+Base.display(w::Window) = errormonitor(@async open(w))
+
+export draw, ui
