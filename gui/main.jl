@@ -4,28 +4,28 @@
 @use "github.com/jkroso/DOM.jl" => DOM @dom @css_str
 @use "../types.jl" UINode Component TextNode @ui tree dom
 @use "../event.jl" onmousedown
-@use "./basic.jl" gui expand
+@use "./basic.jl" describe expand
 @use Atom: EvalError
 
 dom(t::TextNode) = DOM.Text(t.value)
 
 @use "./Symbol.jl" SymbolUI
-gui(d::Symbol, key) = SymbolUI(key=key)
+describe(d::Symbol, key) = SymbolUI(key=key)
 @use "./String.jl" StringUI
-gui(d::AbstractString, key) = StringUI(key=key)
+describe(d::AbstractString, key) = StringUI(key=key)
 @use "./Number.jl" NumberUI
-gui(d::Number, key) = NumberUI(key=key)
+describe(d::Number, key) = NumberUI(key=key)
 @use "./Pair.jl" PairUI
-gui(d::Pair, key) = PairUI(key=key)
+describe(d::Pair, key) = PairUI(key=key)
 @use "./Tuple.jl" TupleUI NamedTupleUI
-gui(d::Tuple, key) = TupleUI(key=key)
-gui(d::NamedTuple, key) = NamedTupleUI(key=key)
+describe(d::Tuple, key) = TupleUI(key=key)
+describe(d::NamedTuple, key) = NamedTupleUI(key=key)
 @use "./Dict.jl" DictUI
-gui(d::AbstractDict, key) = DictUI(key=key)
+describe(d::AbstractDict, key) = DictUI(key=key)
 @use "./Error.jl" ErrorUI
-gui(d::EvalError, key) = ErrorUI(key=key)
+describe(d::EvalError, key) = ErrorUI(key=key)
 # @use "./KeyCombo.jl" KeyComboUI
-# gui(kc::KeyCombo, key) = @ui[KeyComboUI key=key]
+# describe(kc::KeyCombo, key) = @ui[KeyComboUI key=key]
 
 # TODO: delete this
-gui(ui::UINode) = ui
+describe(ui::UINode) = ui

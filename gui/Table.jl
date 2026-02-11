@@ -1,7 +1,7 @@
 @use "github.com/jkroso/DOM.jl" @css_str @dom Container Node
 @use "github.com/jkroso/Prospects.jl" @mutable
 @use "../types.jl" UINode Component adopt @ui dom children add_child!
-@use "./basic.jl" VStack Expandable expansion gui
+@use "./basic.jl" VStack Expandable expansion describe
 
 table(attrs, children) = begin
   @dom[:div{css"""
@@ -86,7 +86,7 @@ end
 #     [row [:th colspan="4" "Tax"] raw"$400"]
 #     [row [:th colspan="4" "Total"] raw"$4,400"]]]
 #
-# gui(ui::Table) = ui
+# describe(ui::Table) = ui
 # @ui[Table
 #   [Header "Product Name" "Color" "Category" "Price"]
 #   [Row "Apple MacBook Pro 17" "Silver" "Laptop" "\$2999"]

@@ -5,7 +5,7 @@
 #   - Column: children arranged vertically
 #   - Box:    a single-child container
 #
-# The resolve() function converts these into ConcreteUI with absolute positions.
+# The describe() function converts these into ConcreteUI with absolute positions.
 
 @use "github.com/jkroso/Prospects.jl" @field_str
 @use "../Interface/Descriptive"...
@@ -18,7 +18,7 @@ Row(width(100px), height(60px), background("red")),
 Row(width(100px), height(60px), background("yellow")),
 Row(width(100px), height(60px), background("lightblue")))
 
-result = resolve(simple_row, (400px, 80px))
+result = describe(simple_row, (400px, 80px))
 @assert field"width".(result.children) == px[100, 100, 100]
 @assert field"height".(result.children) == px[60, 60, 60]
 @assert length(result.children) == 3
@@ -29,7 +29,7 @@ Row(width(180px), height(80px), background("coral")),
 Row(width(180px), height(80px), background("gold")),
 Row(width(180px), height(80px), background("mediumseagreen")))
 
-result = resolve(simple_column, (200px, 300px))
+result = describe(simple_column, (200px, 300px))
 @assert field"height".(result.children) == px[80, 80, 80]
 @assert field"width".(result.children) == px[180, 180, 180]
 # children stack vertically: each top = previous top + previous height
@@ -44,7 +44,7 @@ Row(width(380px), height(50px), background("darkseagreen"),
 Row(width(150px), height(40px), background("lightyellow")),
 Row(width(150px), height(40px), background("lightcoral"))))
 
-result = resolve(nested, (400px, 300px))
+result = describe(nested, (400px, 300px))
 @assert result.width == 400px
 @assert result.height == 300px
 # outer column has two rows

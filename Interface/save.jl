@@ -100,6 +100,6 @@ end
 
 "Resolve a DescriptiveUI scene at the given size and save it as a PNG"
 save_scene(path::AbstractString, scene::Container, size) =
-  save_png(draw_ui, path, size, resolve(scene, size))
+  save_png(draw_ui, path, size, describe(scene, size))
 
 export save_png, draw_ui, save_scene

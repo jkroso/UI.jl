@@ -108,23 +108,13 @@ end
 end
 
 """
-Create the semantic structure of the UI based on some input data and the conceptual context it's
-being rendered in
-"""
-function gui end
-
-"""
-Converts a Conceptual UI Node into an abstract representation of just its visual aspects. At this
-point we are essentially stripping state from the UI so that we can enjoy way more code reuse
+Converts a UI representation into a more specific one. Julia's dispatch routes by argument type:
+  - `describe(data, key)` creates the semantic UI (ConceptualUI) from data
+  - `describe(::ConceptualUI)` strips state to produce a visual description (DescriptiveUI)
+  - `describe(::DescriptiveUI, size)` resolves layout into concrete positions (ConcreteUI)
 """
 function describe end
 describe(d::DescriptiveUI) = d
-
-"""
-Converts a declarative UI into a concrete one. At this point we are calculating the layout based
-on the actual screen size and with a known set of constraints
-"""
-function resolve end
 
 """
 Used to notify the relevant semantic UI node of some user input. To respond to this input just

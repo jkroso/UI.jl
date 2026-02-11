@@ -27,7 +27,7 @@ d = describe(Button("Click here"))
 # describe(ButtonGroup(Button("Click here")))
 # describe(ButtonGroup(Button("Click here"), Button("Or here")))
 
-r = resolve(d, (width=800px, height=600px))
+r = describe(d, (width=800px, height=600px))
 
 
 

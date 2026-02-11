@@ -8,7 +8,7 @@
 @use "./event.jl" emit parse_event Tick tick FocusIn FocusOut Focus KeyboardEvent onsubmit
 @use "./types.jl" UINode TextNode dom focus onmount init
 @use "./gui/basic" brief
-@use "./gui" gui expand
+@use "./gui" describe expand
 @use Atom
 @use Juno
 
@@ -70,7 +70,7 @@ mutable struct InlineDisplay
   InlineDisplay(snippet, single) = begin
     data = evaluate(snippet)
     d = new(snippet, single, data isa Atom.EvalError, data, loading_gear)
-    d.ui = gui(data)
+    d.ui = describe(data)
     d.focused = d.ui
     setfield!(d.ui, :parent, TopNode(d, d.ui))
     single && expand(d.ui)

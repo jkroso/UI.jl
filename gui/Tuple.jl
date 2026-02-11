@@ -3,7 +3,7 @@
 @use "github.com/jkroso/DOM.jl" Node @css_str @dom
 @use "../types.jl" UINode Component adopt @ui dom children
 @use "../event.jl" onmousedown
-@use "./basic.jl" VStack Expandable expansion gui brief
+@use "./basic.jl" VStack Expandable expansion describe brief
 @use "../selector.jl" KeyKey
 @use "./Symbol.jl" SymbolUI
 @use "./Table.jl" Table Row Body Cell
@@ -20,7 +20,7 @@ expansion(t::Tuple) = begin
     (@ui[Row class=css"""
                    &:not(:last-child) {border-bottom: 1px solid #e5e7eb}
                    th {border-right: 1px solid #e5e7eb; text-align: right}
-                   """ gui(x, i)] for (i, x) in enumerate(t))...]
+                   """ describe(x, i)] for (i, x) in enumerate(t))...]
 end
 
 @mutable NamedTupleUI <: Expandable
@@ -39,7 +39,7 @@ expansion(t::NamedTuple) = begin
                     &:not(:last-child) {border-bottom: 1px solid #e5e7eb}
                     """
         FieldUI(key=i)
-        gui(v, i)] for (i,v) in enumerate(t))...]
+        describe(v, i)] for (i,v) in enumerate(t))...]
 end
 
 dom(ui::FieldUI) = begin

@@ -2,11 +2,11 @@
 @use "github.com/jkroso/DOM.jl" Node @css_str @dom
 @use "../types.jl" UINode Component adopt @ui dom children
 @use "../event.jl" onmousedown
-@use "./basic.jl" VStack gui
+@use "./basic.jl" VStack describe
 
 @mutable PairUI <: Component
 children(c::PairUI) = begin
-  UINode[gui(x, i) for (i,x) in enumerate(c.data)]
+  UINode[describe(x, i) for (i,x) in enumerate(c.data)]
 end
 
 dom(ui::PairUI) = begin

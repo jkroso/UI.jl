@@ -73,7 +73,7 @@ Window(child::UITree; kwargs...) = begin
 end
 
 ui(window) = window.ui
-frame(window::Window) = drawing(draw, window, resolve(describe(ui(window)), window.size))
+frame(window::Window) = drawing(draw, window, describe(describe(ui(window)), window.size))
 Base.display(w::Window) = errormonitor(@async open(w))
 
 export draw, ui

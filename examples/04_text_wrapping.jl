@@ -16,7 +16,7 @@ text_wrap = Column(width(400px), height(200px), background("darkblue"),
   Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
     Text("The quick brown fox jumps over the lazy dog. This text will automatically wrap to fit the available width.")))
 
-result = resolve(text_wrap, (400px, 200px))
+result = describe(text_wrap, (400px, 200px))
 text_result = result.children[2].children[1]
 println("Text wrapped into $(length(text_result.lines)) lines:")
 for (i, line) in enumerate(text_result.lines)
@@ -34,7 +34,7 @@ styled_text = Column(width(300px), height(200px),
     Text("Body text with different styling. Supports font family, size, color, and line height.",
          size=12pt, color=colorant"rgb(80,80,80)", family="Helvetica", lineheight=1.8em)))
 
-result = resolve(styled_text, (300px, 200px))
+result = describe(styled_text, (300px, 200px))
 println("\nStyled text layout resolved:")
 for (i, child) in enumerate(result.children)
   println("  Child $i: $(child.width) x $(child.height) at ($(child.left), $(child.top))")

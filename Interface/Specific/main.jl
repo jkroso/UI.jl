@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
 @use "github.com/jkroso/Font.jl" Font widths! TTFont ["units" Length px FontUnit absolute relative]
 @use "../Descriptive"... Width Height
-@use "../abstract" resolve ConcreteUI
+@use "../abstract" describe ConcreteUI
 @use GeometryBasics: Vec2, Vec
 @use Colors...
 @use "github.com/jkroso/MiniFB.jl"... int
@@ -68,7 +68,7 @@ end
 4. Adjust heights
 6. Align positions of children within rows/columns
 """
-function resolve(ui::Container, (w, h))
+function describe(ui::Container, (w, h))
   toplevel = ConcreteRect(width=w, height=h)
   cui = initialize(ui, toplevel)
   push!(toplevel.children, cui)
@@ -378,4 +378,4 @@ function wraptext(s::String, face::TTFont{pem}, max_width::px; words=split(s),
   push!(lines, @view s[offset:end])
 end
 
-export resolve, ConcreteText, ConcreteRect
+export describe, ConcreteText, ConcreteRect

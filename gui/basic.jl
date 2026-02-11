@@ -9,7 +9,7 @@
 @use "./Icon.jl" Icon
 
 "Takes some data and generates a user interface for viewing and manipulating it"
-gui(x) = gui(x, identitykey)
+describe(x) = describe(x, identitykey)
 
 dom_attrs(ui::UINode) = begin
   isnothing(ui.style) && return ui.attrs
