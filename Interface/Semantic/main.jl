@@ -9,9 +9,9 @@
 @use "./ProgressBar" ProgressBar
 @use "./RadioGroup" RadioGroup
 @use "./Select" Select
-@use "./Menu" Menu
+@use "./Menu" Item Menu
 @use "./Dropdown" Dropdown
 @use "./SVG" SVG SVGPath
 @use "./Icon" Icon
 
-export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Menu, Dropdown, SVG, SVGPath, Icon
+export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Item, Menu, Dropdown, SVG, SVGPath, Icon

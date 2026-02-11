@@ -2,7 +2,7 @@
 @use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont
 @use "github.com/jkroso/MiniFB.jl"... int
 @use GeometryBasics: Vec2
-@use Colors: @colorant_str, RGBA
+@use Colors: @colorant_str, RGBA, alpha
 @use "./abstract" describe Root UITree SemanticUI
 @use "./Geometric"...
 @use "./Specific"...
@@ -29,7 +29,8 @@ draw(ctx, size, ui::ConcreteRect) = begin
   bw = border.top.width
   tl = ui.origin .+ bw/2
   sz = ui.size .- bw
-  rounded_rectangle(ctx, tl, sz, radius.tl, background=background.color,
+  bg = alpha(background.color) > 0 ? background.color : nothing
+  rounded_rectangle(ctx, tl, sz, radius.tl, background=bg,
                                              color=isempty(border.top) ? nothing : border.top.color,
                                              stroke_width=bw)
   isfirst = true
@@ -65,6 +66,7 @@ end
 
 # Overlay system for floating menus
 @def mutable struct MenuOverlay
+  source::Any = nothing
   items::Vector{String} = String[]
   hover::Int = 0
   x::px = 0px
@@ -77,8 +79,8 @@ end
 const _overlay = Dict{UInt, MenuOverlay}()
 
 "Show a floating menu overlay on a window"
-show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing) = begin
-  _overlay[objectid(window)] = MenuOverlay(items=items, x=x, y=y, width=w, item_height=item_height, onselect=onselect)
+show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, source=nothing) = begin
+  _overlay[objectid(window)] = MenuOverlay(source=source, items=items, x=x, y=y, width=w, item_height=item_height, onselect=onselect)
 end
 
 "Hide the floating menu overlay"
@@ -86,16 +88,57 @@ hide_menu!(window) = delete!(_overlay, objectid(window))
 
 "Returns 1-based item index if pos is inside the menu, or 0 if outside"
 menu_hittest(ov::MenuOverlay, (x, y)) = begin
+  if ov.source !== nothing
+    n = length(ov.source.children)
+    pad_y = 5px
+  else
+    n = length(ov.items)
+    pad_y = 0px
+  end
   x < ov.x && return 0
   x > ov.x + ov.width && return 0
-  y < ov.y && return 0
-  total_height = ov.item_height * length(ov.items)
-  y > ov.y + total_height && return 0
-  clamp(Int(floor(int(y - ov.y) / int(ov.item_height))) + 1, 1, length(ov.items))
+  y < ov.y + pad_y && return 0
+  total_height = ov.item_height * n
+  y > ov.y + pad_y + total_height && return 0
+  clamp(Int(floor(int(y - ov.y - pad_y) / int(ov.item_height))) + 1, 1, n)
+end
+
+"Offset all positions in a ConcreteUI tree"
+offset!(ui::ConcreteRect, dx::px, dy::px) = begin
+  ui.left += dx
+  ui.top += dy
+  for child in ui.children
+    offset!(child, dx, dy)
+  end
+end
+offset!(ui::ConcreteText, dx::px, dy::px) = begin
+  ui.left += dx
+  ui.top += dy
+end
+
+"Draw a Menu component overlay"
+draw_menu_source(ctx, ov) = begin
+  # Update hover states on Items
+  for (i, item) in enumerate(ov.source.children)
+    item.hover = (i == ov.hover)
+  end
+  # Describe and resolve
+  geo = describe(ov.source)
+  geo.from = ov.source
+  concrete = describe(geo, (ov.width, 9999px))
+  offset!(concrete, ov.x, ov.y)
+  # Shadow
+  rounded_rectangle(ctx, ov.x + 2px, ov.y + 2px, concrete.width, concrete.height, 6px,
+                    background=RGBA(0,0,0,0.15))
+  # Draw the resolved component tree
+  draw(ctx, concrete.size, concrete)
 end
 
 "Draw the menu overlay"
 draw_menu(ctx, ov::MenuOverlay) = begin
+  if ov.source !== nothing
+    return draw_menu_source(ctx, ov)
+  end
   n = length(ov.items)
   n == 0 && return
   total_h = ov.item_height * n

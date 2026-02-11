@@ -1,12 +1,14 @@
 # Context Menu
 #
-# Right-click anywhere to show a context menu at the cursor position.
+# Right-click anywhere to show a context menu with icons at the cursor position.
 
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl"...
 @use "../Interface/Geometric"...
 @use "../Interface/draw" ui show_menu! hide_menu!
 @use "../Interface/abstract" SemanticUI describe
+@use "../Interface/Semantic/Menu" Item Menu onselect
+@use "../Interface/Semantic/Icon" Icon
 
 @def mutable struct ContextExample <: SemanticUI end
 
@@ -19,15 +21,15 @@ describe(::ContextExample) =
       Text("Right-click anywhere for context menu", size=13pt, color=rgb(120,120,120))))
 
 const example = ContextExample()
-const window = Window(example, title="Context Menu", size=(350px, 250px), animating=true)
 
+const menu = Menu(
+  Item(Icon("scissors"), "Cut"),
+  Item(Icon("copy"), "Copy"),
+  Item(Icon("clipboard"), "Paste"),
+  Item(Icon("check2-all"), "Select All"))
+
+onselect(::Menu, idx::Int) = idx > 0 && println("Selected: ", menu.children[idx].label)
+onkey(w::Window, ::KeyPress{Keys.mouse_right}) = show_menu!(w, menu, w.mouse..., 160px)
 onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
 
-const menu_items = ["Cut", "Copy", "Paste", "Select All"]
-
-onkey(w::Window, ::KeyPress{Keys.mouse_right}) = begin
-  show_menu!(w, menu_items, w.mouse[1], w.mouse[2], 150px,
-             onselect=idx -> idx > 0 && println("Selected: ", menu_items[idx]))
-end
-
-display(window)
+display(Window(example, title="Context Menu", size=(350px, 250px), animating=true))

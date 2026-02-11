@@ -76,13 +76,13 @@ end
 describe(svg::SVG) = Box(width(svg.width), height(svg.height))
 
 "Render SVG paths onto a Skia canvas, scaled from viewbox to target rect"
-render_svg(ctx, ui::ConcreteRect, paths::Vector{SVGPath}, viewbox::NTuple{4,Float32}, color::Colorant) = begin
+render_svg(ctx, x::px, y::px, w::px, h::px, paths::Vector{SVGPath}, viewbox::NTuple{4,Float32}, color::Colorant) = begin
   isempty(paths) && return
   (vx, vy, vw, vh) = viewbox
-  sx = Float32(int(ui.width)) / vw
-  sy = Float32(int(ui.height)) / vh
+  sx = Float32(int(w)) / vw
+  sy = Float32(int(h)) / vh
   Skia.sk_canvas_save(ctx)
-  Skia.sk_canvas_translate(ctx, Float32(int(ui.left)), Float32(int(ui.top)))
+  Skia.sk_canvas_translate(ctx, Float32(int(x)), Float32(int(y)))
   Skia.sk_canvas_scale(ctx, sx, sy)
   (vx != 0 || vy != 0) && Skia.sk_canvas_translate(ctx, -vx, -vy)
   c = to_skia_color(color)
@@ -100,6 +100,9 @@ render_svg(ctx, ui::ConcreteRect, paths::Vector{SVGPath}, viewbox::NTuple{4,Floa
   end
   Skia.sk_canvas_restore(ctx)
 end
+
+render_svg(ctx, ui::ConcreteRect, paths::Vector{SVGPath}, viewbox::NTuple{4,Float32}, color::Colorant) =
+  render_svg(ctx, ui.left, ui.top, ui.width, ui.height, paths, viewbox, color)
 
 draw(ctx, size, ui::ConcreteRect, svg::SVG) = render_svg(ctx, ui, svg.paths, svg.viewbox, svg.color)
 

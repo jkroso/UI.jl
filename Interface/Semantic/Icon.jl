@@ -21,6 +21,8 @@ end
   size::px = 16px
 end
 
+Icon(name::String; kwargs...) = Icon(;name=name, kwargs...)
+
 describe(icon::Icon) = Box(width(icon.size), height(icon.size))
 
 draw(ctx, size, ui::ConcreteRect, icon::Icon) = begin
