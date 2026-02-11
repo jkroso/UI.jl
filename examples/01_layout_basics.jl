@@ -1,6 +1,6 @@
 # Layout Basics
 #
-# The Descriptive layer provides three container types for layout:
+# The Geometric layer provides three container types for layout:
 #   - Row:    children arranged horizontally
 #   - Column: children arranged vertically
 #   - Box:    a single-child container
@@ -8,7 +8,7 @@
 # The describe() function converts these into ConcreteUI with absolute positions.
 
 @use "github.com/jkroso/Prospects.jl" @field_str
-@use "../Interface/Descriptive"...
+@use "../Interface/Geometric"...
 @use "../Interface/Specific"...
 @use Colors: @colorant_str
 

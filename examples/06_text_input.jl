@@ -5,12 +5,12 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl"...
 @use "github.com/jkroso/Font.jl/units" em
-@use "../Interface/Descriptive"...
+@use "../Interface/Geometric"...
 @use "../Interface/draw" ui
-@use "../Interface/abstract" ConceptualUI focus describe
-@use "../Interface/TextInput"...
+@use "../Interface/abstract" SemanticUI focus describe describe!
+@use "../Interface/Semantic/TextInput"...
 
-@def mutable struct Example <: ConceptualUI end
+@def mutable struct Example <: SemanticUI end
 
 describe(e::Example) =
   Box(width(grow=GrowType.Grow),
@@ -18,7 +18,7 @@ describe(e::Example) =
       padding(1em),
       Alignment.Center,
       background("white"),
-    describe(e.firstchild))
+    describe!(e.firstchild))
 
 const input = TextInput(placeholder="Type here...")
 const window = Window(Example(input), title="Text Input", size=(400px, 80px), animating=true)

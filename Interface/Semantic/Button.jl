@@ -1,14 +1,14 @@
 @use "github.com/jkroso/Prospects.jl" @def
-@use "../Descriptive"...
-@use "../abstract" ConceptualUI Text describe UI
+@use "../Geometric"...
+@use "../abstract" SemanticUI Text describe UI
 
 export Button, ButtonGroup
 
-@def mutable struct Button <: ConceptualUI
+@def mutable struct Button <: SemanticUI
   label::String
 end
 Button(label) = Button(label=label)
-@def mutable struct ButtonGroup <: ConceptualUI end
+@def mutable struct ButtonGroup <: SemanticUI end
 
 function describe(b::Button)
   Rect(padding(5mm, 8mm),
@@ -23,12 +23,3 @@ function describe(b::ButtonGroup)
     (describe(c) for c in b.children)...)
 end
 
-d = describe(Button("Click here"))
-# describe(ButtonGroup(Button("Click here")))
-# describe(ButtonGroup(Button("Click here"), Button("Or here")))
-
-r = describe(d, (width=800px, height=600px))
-
-
-
-display(r)

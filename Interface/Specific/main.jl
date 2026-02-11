@@ -1,6 +1,6 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
 @use "github.com/jkroso/Font.jl" Font widths! TTFont ["units" Length px FontUnit absolute relative]
-@use "../Descriptive"... Width Height
+@use "../Geometric"... Width Height
 @use "../abstract" describe ConcreteUI
 @use GeometryBasics: Vec2, Vec
 @use Colors...

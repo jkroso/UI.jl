@@ -3,14 +3,14 @@
 @use Skia
 @use "github.com/jkroso/MiniFB.jl" Window Keys KeyPress MouseMove onkey onmouse int
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
-@use "./Descriptive"...
-@use "./Specific"...
-@use "./abstract" ConceptualUI describe
-@use "./draw" draw
+@use "../Geometric"...
+@use "../Specific"...
+@use "../abstract" SemanticUI describe
+@use "../draw" draw
 @use Colors: @colorant_str, Colorant, RGBA
 @use GeometryBasics: Vec2
 
-@def mutable struct TextInput <: ConceptualUI
+@def mutable struct TextInput <: SemanticUI
   text::String = ""
   cursor::Int = 0         # 0-based: 0=before first char, n=after nth char
   anchor::Int = 0         # selection anchor; equals cursor when no selection
@@ -29,7 +29,7 @@ end
 
 describe(input::TextInput) = begin
   empty = isempty(input.text)
-  row = Row(width(grow=GrowType.Grow), height(36px),
+  Row(width(grow=GrowType.Grow), height(36px),
     padding(8px),
     border(1px, :solid, colorant"rgb(180,180,180)"),
     radius(4px),
@@ -37,8 +37,6 @@ describe(input::TextInput) = begin
       Text(empty ? input.placeholder : input.text,
            size=input.font_size, family=input.font_family,
            color=empty ? colorant"rgb(160,160,160)" : colorant"rgb(30,30,30)")))
-  row.from = input
-  row
 end
 
 has_selection(input::TextInput) = input.anchor != input.cursor

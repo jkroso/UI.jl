@@ -33,14 +33,14 @@ Text(content::String; kwargs...) = Text(;content=content, kwargs...)
 Base.convert(::Type{UI}, s::AbstractString) = Text(s)
 
 "Represents the UI as the user thinks of it"
-@abstract struct ConceptualUI <: UITree
+@abstract struct SemanticUI <: UITree
   firstchild::Union{UI,Nothing}=nothing
   stale::Bool=true
   state::Any=nothing
 end
 
 "Top-level node that connects the UI tree to a window"
-@def mutable struct Root <: ConceptualUI
+@def mutable struct Root <: SemanticUI
   window::Any=nothing
 end
 Root(child::UITree; window=nothing) = begin
@@ -54,7 +54,7 @@ end
 @property UITree.children = SiblingIterator(self.firstchild)
 
 "Represents the UI as a high level description of geometric shapes"
-@abstract struct DescriptiveUI <: UITree
+@abstract struct GeometricUI <: UITree
   firstchild::Union{UI,Nothing}=nothing
   from::Union{Nothing,UI}=nothing
 end
@@ -68,6 +68,32 @@ Base.iterate(i::SiblingIterator, state::Nothing) = nothing
 Base.iterate(i::SiblingIterator, state::UITree) = (state, state.nextsibling)
 Base.eltype(::SiblingIterator) = UI
 Base.length(i::SiblingIterator) = nsiblings(i.node)
+Base.lastindex(i::SiblingIterator) = length(i)
+Base.getindex(i::SiblingIterator, n::Int) = begin
+  n < 1 && throw(BoundsError(i, n))
+  node = i.node
+  for _ in 1:n-1
+    isnothing(node) && throw(BoundsError(i, n))
+    node = node.nextsibling
+  end
+  isnothing(node) && throw(BoundsError(i, n))
+  node
+end
+Base.getindex(i::SiblingIterator, r::AbstractUnitRange{Int}) = begin
+  first(r) < 1 && throw(BoundsError(i, r))
+  node = i.node
+  for _ in 1:first(r)-1
+    isnothing(node) && throw(BoundsError(i, r))
+    node = node.nextsibling
+  end
+  result = UI[]
+  for _ in first(r):last(r)
+    isnothing(node) && throw(BoundsError(i, r))
+    push!(result, node)
+    node = node.nextsibling
+  end
+  result
+end
 nsiblings(d::Nothing) = 0
 nsiblings(d::UITree) = nsiblings(d.nextsibling) + 1
 lastsibling(d::UITree) = isnothing(d.nextsibling) ? d : lastsibling(d.nextsibling)
@@ -109,12 +135,19 @@ end
 
 """
 Converts a UI representation into a more specific one. Julia's dispatch routes by argument type:
-  - `describe(data, key)` creates the semantic UI (ConceptualUI) from data
-  - `describe(::ConceptualUI)` strips state to produce a visual description (DescriptiveUI)
-  - `describe(::DescriptiveUI, size)` resolves layout into concrete positions (ConcreteUI)
+  - `describe(data, key)` creates the semantic UI (SemanticUI) from data
+  - `describe(::SemanticUI)` strips state to produce a visual description (GeometricUI)
+  - `describe(::GeometricUI, size)` resolves layout into concrete positions (ConcreteUI)
 """
 function describe end
-describe(d::DescriptiveUI) = d
+describe(d::GeometricUI) = d
+
+"Call describe(node) and set result.from = node, returning the GeometricUI"
+describe!(node::SemanticUI) = begin
+  result = describe(node)
+  result.from = node
+  result
+end
 
 """
 Used to notify the relevant semantic UI node of some user input. To respond to this input just

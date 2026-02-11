@@ -3,7 +3,7 @@
 @use GeometryBasics: Vec2
 @use Colors: RGBA, red, green, blue, alpha, Colorant, N0f8
 @use Skia
-@use "./Descriptive"...
+@use "./Geometric"...
 @use "./Specific"...
 
 # Convert color to Skia's ARGB format (0xAARRGGBB)
@@ -98,7 +98,7 @@ draw_ui(ctx, _, ui::ConcreteText) = begin
   end
 end
 
-"Resolve a DescriptiveUI scene at the given size and save it as a PNG"
+"Resolve a GeometricUI scene at the given size and save it as a PNG"
 save_scene(path::AbstractString, scene::Container, size) =
   save_png(draw_ui, path, size, describe(scene, size))
 

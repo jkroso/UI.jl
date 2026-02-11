@@ -1,6 +1,6 @@
 @use "github.com/jkroso/Rutherford.jl/test.jl" @test testset
 @use "github.com/jkroso/Prospects.jl" @field_str
-@use "../Descriptive"...
+@use "../Geometric"...
 @use "."... grow!
 
 const growexample = Box(width(600px), background("darkblue"),

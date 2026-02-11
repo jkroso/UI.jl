@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @property @abstract @def ["Enum.jl" @Enum] assoc
 @use "github.com/jkroso/Font.jl" ["units" pt px]
 @use "github.com/jkroso/Units.jl" Length mm
-@use "../abstract" DescriptiveUI mixin! StyleNode Text propertyname
+@use "../abstract" GeometricUI mixin! StyleNode Text propertyname
 @use Colors: Color, Colorant, RGB, hex
 
 const transparent = parse(Colorant, "transparent")
@@ -115,7 +115,7 @@ rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
 
 @Enum Alignment Start Center End
 
-@abstract struct Container <: DescriptiveUI
+@abstract struct Container <: GeometricUI
   background::Background=Background()
   border::Border=Border()
   radius::Radius=Radius()
