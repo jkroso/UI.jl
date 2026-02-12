@@ -88,6 +88,7 @@ end
 
 padding(x, y) = Padding(top=y,bottom=y,left=x,right=x)
 padding(x) = Padding(x, x, x, x)
+padding(t, r, b, l) = Padding(t, r, b, l)
 radius(x...) = Radius(x...)
 border(width, style, color; between=false) = begin
   Border(BorderSide(parse_length(width),

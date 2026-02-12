@@ -16,10 +16,9 @@ onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
 const white = colorant"rgb(240,240,240)"
 
 tip(icon, label) =
-  Row(height(20px), Alignment.Center,
+  Row(height(20px), Alignment.Center, padding(10px),
     describe!(Icon(icon, color=white, size=14px)),
-    Box(width(6px)),
-    Box(Text(label, size=12pt, color=white)))
+    Box(padding(10px), Text(label, size=12pt, color=white)))
 
 @def mutable struct TooltipDemo <: SemanticUI end
 

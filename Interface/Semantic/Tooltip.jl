@@ -9,6 +9,7 @@
 @use Colors: @colorant_str
 
 @def mutable struct Tooltip <: AbstractSatellite
+  label::String = ""
   content::Any = nothing
   cached_left::px = 0px
   cached_top::px = 0px
@@ -17,35 +18,30 @@
 end
 
 Tooltip(content; kwargs...) = Tooltip(;content=content, kwargs...)
+Tooltip(label::String, content; kwargs...) = Tooltip(;label=label, content=content, kwargs...)
 
-Tooltip(label::String, content; kwargs...) = begin
-  btn = Box(height(32px), padding(10px), radius(4px),
-            Alignment.Center,
-            border(1px, :solid, colorant"rgb(200,200,200)"),
-            background(colorant"white"),
-            Box(height(grow=GrowType.Grow), Alignment.Center, padding(10px),
-                Text(label, size=13pt, color=colorant"rgb(30,30,30)")))
-  tt = Tooltip(;content=content, kwargs...)
-  add_child!(tt, btn)
-  tt
-end
-
-describe_content(t::Tooltip) = begin
-  c = t.content
-  if c isa GeometricUI
-    Box(padding(8px, 6px), c)
-  elseif c isa SemanticUI
-    Box(padding(8px, 6px), describe!(c))
-  elseif c isa AbstractString
+describe_content((;content)::Tooltip) = begin
+  if content isa SemanticUI
+    Box(padding(8px, 6px), describe!(content))
+  elseif content isa GeometricUI
+    Box(padding(8px, 6px), content)
+  elseif content isa AbstractString
     Box(padding(8px, 6px),
-        Box(Text(c, size=12pt, color=colorant"rgb(240,240,240)")))
+        Box(Text(content, size=12pt, color=colorant"rgb(240,240,240)")))
   else
     Box(padding(8px, 6px),
-        Box(Text(string(c), size=12pt, color=colorant"rgb(240,240,240)")))
+        Box(Text(string(content), size=12pt, color=colorant"rgb(240,240,240)")))
   end
 end
 
-describe(t::Tooltip) = describe(t.firstchild)
+describe(t::Tooltip) = begin
+  isempty(t.label) && return describe(t.firstchild)
+  Box(padding(18px, 15px, 15px, 15px), radius(4px),
+      Alignment.Center,
+      border(1px, :solid, colorant"rgb(200,200,200)"),
+      background(colorant"white"),
+      Text(t.label, size=13pt, color=colorant"rgb(30,30,30)"))
+end
 
 onmouse(t::Tooltip, e::MouseMove) = begin
   t.cached_width > 0px && show_tooltip!(e.window, describe_content(t),
