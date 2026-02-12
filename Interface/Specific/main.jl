@@ -102,6 +102,17 @@ function initialize(ui::Row, parent::ConcreteRect)
   rect
 end
 
+function initialize(ui::Box, parent::ConcreteRect)
+  rect = invoke(initialize, Tuple{Container, ConcreteRect}, ui, parent)
+  if !isgrowable(ui, Axis.x) && ui.width.preferred == 0px
+    rect.width = maximum(field"width", rect.children, init=0px) + extra_width(rect)
+  end
+  if !isgrowable(ui, Axis.y) && ui.height.preferred == 0px
+    rect.height = maximum(field"height", rect.children, init=0px) + extra_height(rect)
+  end
+  rect
+end
+
 function initialize(ui::Column, parent::ConcreteRect)
   rect = invoke(initialize, Tuple{Container, ConcreteRect}, ui, parent)
   if !isgrowable(ui, Axis.y) && ui.height.preferred == 0px
@@ -365,7 +376,7 @@ function wraptext(s::String, face::TTFont{pem}, max_width::px; words=split(s),
   offset = 1
   for (width, word) in Iterators.drop(pairs, 1)
     w += space_width + width
-    if w >= limit
+    if w > limit
       push!(lines, @view s[offset:prevind(s, word.offset)])
       lastword = word
       offset = nextind(s, word.offset)

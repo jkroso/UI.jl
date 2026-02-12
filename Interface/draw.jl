@@ -173,6 +173,80 @@ draw_menu(ctx, ov::MenuOverlay) = begin
   end
 end
 
+# Tooltip overlay system
+@def mutable struct TooltipOverlay
+  content::Any = nothing
+  x::px = 0px
+  y::px = 0px
+  target_w::px = 0px
+  target_h::px = 0px
+  placement::Symbol = :bottom
+  gap::px = 4px
+end
+
+const _tooltip = Dict{UInt, TooltipOverlay}()
+
+show_tooltip!(window, content, x, y, w, h; placement=:bottom, gap=4px) = begin
+  _tooltip[objectid(window)] = TooltipOverlay(content=content, x=x, y=y, target_w=w, target_h=h, placement=placement, gap=gap)
+end
+
+hide_tooltip!(window) = delete!(_tooltip, objectid(window))
+
+"Draw the tooltip overlay"
+draw_tooltip(ctx, ov::TooltipOverlay) = begin
+  ov.content === nothing && return
+  # resolve content through normal pipeline
+  concrete = describe(ov.content, (9999px, 9999px))
+  tw = concrete.width
+  th = concrete.height
+  # position relative to target
+  if ov.placement == :bottom
+    tx = ov.x + ov.target_w/2 - tw/2
+    ty = ov.y + ov.target_h + ov.gap
+  elseif ov.placement == :top
+    tx = ov.x + ov.target_w/2 - tw/2
+    ty = ov.y - th - ov.gap
+  elseif ov.placement == :right
+    tx = ov.x + ov.target_w + ov.gap
+    ty = ov.y + ov.target_h/2 - th/2
+  else # :left
+    tx = ov.x - tw - ov.gap
+    ty = ov.y + ov.target_h/2 - th/2
+  end
+  bg = colorant"rgb(50,50,50)"
+  arrow_size = 5px
+  # shadow
+  rounded_rectangle(ctx, tx + 1px, ty + 1px, tw, th, 6px,
+                    background=RGBA(0,0,0,0.15))
+  # background
+  rounded_rectangle(ctx, tx, ty, tw, th, 6px, background=bg)
+  # arrow
+  cx = tx + tw/2
+  cy = ty + th/2
+  path(ctx, close=true, background=bg) do p
+    if ov.placement == :bottom
+      move_to(p, (cx - arrow_size, ty))
+      line_to(p, (cx, ty - arrow_size))
+      line_to(p, (cx + arrow_size, ty))
+    elseif ov.placement == :top
+      move_to(p, (cx - arrow_size, ty + th))
+      line_to(p, (cx, ty + th + arrow_size))
+      line_to(p, (cx + arrow_size, ty + th))
+    elseif ov.placement == :right
+      move_to(p, (tx, cy - arrow_size))
+      line_to(p, (tx - arrow_size, cy))
+      line_to(p, (tx, cy + arrow_size))
+    else # :left
+      move_to(p, (tx + tw, cy - arrow_size))
+      line_to(p, (tx + tw + arrow_size, cy))
+      line_to(p, (tx + tw, cy + arrow_size))
+    end
+  end
+  # draw resolved content at tooltip position
+  offset!(concrete, tx, ty)
+  draw(ctx, concrete.size, concrete)
+end
+
 Base.setproperty!(w::AbstractWindow, ::Field{:ui}, node::UITree) = begin
   Root(node, window=w)
   setfield!(w, :ui, node)
@@ -192,9 +266,11 @@ frame(window::Window) = begin
   scene = describe(describe(ui(window)), window.size)
   _scenes[objectid(window)] = scene
   ov = get(_overlay, objectid(window), nothing)
+  tt = get(_tooltip, objectid(window), nothing)
   drawing(window, scene) do ctx, size, scene
     draw(ctx, size, scene)
     ov !== nothing && draw_menu(ctx, ov)
+    tt !== nothing && draw_tooltip(ctx, tt)
   end
 end
 
@@ -287,6 +363,8 @@ onmouse(w::Window, e::MouseMove) = begin
     ov.hover = menu_hittest(ov, e.position)
     return
   end
+  # Hide tooltip before emit — if still hovered, Tooltip's onmouse will re-show it
+  haskey(_tooltip, id) && hide_tooltip!(w)
   captured = get(_captured, id, nothing)
   if captured !== nothing
     if Keys.mouse_left in w.keys || Keys.mouse_right in w.keys || Keys.mouse_middle in w.keys
@@ -303,4 +381,4 @@ onmouse(w::Window, e::MouseMove) = begin
   end
 end
 
-export draw, ui, hittest, emit, show_menu!, hide_menu!
+export draw, ui, hittest, emit, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!

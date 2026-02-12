@@ -13,5 +13,9 @@
 @use "./Dropdown" Dropdown
 @use "./SVG" SVG SVGPath
 @use "./Icon" Icon
+@use "./Satellite" AbstractSatellite
+@use "./Tooltip" Tooltip
+@use "./KeyCombo" KeyCombo
+@use "./Table" Table TableHeader TableRow TableCell
 
-export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Item, Menu, Dropdown, SVG, SVGPath, Icon
+export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Item, Menu, Dropdown, SVG, SVGPath, Icon, AbstractSatellite, Tooltip, KeyCombo, Table, TableHeader, TableRow, TableCell
