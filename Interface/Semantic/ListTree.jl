@@ -6,6 +6,7 @@
 @use "../Specific"...
 @use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus
 @use "../draw" draw
+@use "./Icon" Icon
 @use Colors: @colorant_str
 @use GeometryBasics: Vec2
 
@@ -20,7 +21,7 @@ Item(label::UITree) = begin
   add_child!(item, label)
   item
 end
-Item(label::String) = Item(Box(Text(label, size=13pt, color=colorant"rgb(30,30,30)")))
+Item(label::String) = Item(Box(Text(label, size=12pt, color=colorant"rgb(30,30,30)")))
 
 @def mutable struct ItemGroup <: TreeItem
   collapsed::Bool = true
@@ -35,7 +36,7 @@ ItemGroup(label::UITree, children::TreeItem...) = begin
   group
 end
 ItemGroup(label::String, children::TreeItem...) =
-  ItemGroup(Box(Text(label, size=13pt, color=colorant"rgb(30,30,30)")), children...)
+  ItemGroup(Box(Text(label, size=12pt, color=colorant"rgb(30,30,30)")), children...)
 
 @def mutable struct ListTree <: SemanticUI
   focused::Union{Nothing,TreeItem} = nothing
@@ -123,7 +124,7 @@ const LINE_COLOR = colorant"rgb(190,190,190)"
 const FOCUS_BG = colorant"rgb(210,222,240)"
 const ROW_HEIGHT = 28px
 const CHEVRON_WIDTH = 12px
-const CHEVRON_GAP = 4px
+const CHEVRON_GAP = 3px
 
 describe(tree::ListTree) = begin
   col = Column(width(grow=GrowType.Grow), padding(6px, 4px),
@@ -183,9 +184,12 @@ describe_item(item::TreeItem, focused) = begin
   # Self-connector spacer (L/T shape drawn by custom draw)
   d > 0 && mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT)))
 
-  # Chevron placeholder for ItemGroup (drawn by custom draw)
+  # Chevron for ItemGroup
   if item isa ItemGroup
-    mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT)))
+    name = item.collapsed ? "chevron-right" : "chevron-down"
+    mixin!(row, Box(width(CHEVRON_GAP)))
+    mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT), Alignment.Center,
+                    describe!(Icon(name, size=12px, color=colorant"rgb(150,150,150)"))))
     mixin!(row, Box(width(CHEVRON_GAP)))
   end
 
@@ -200,11 +204,11 @@ describe_item(item::TreeItem, focused) = begin
   row
 end
 
-# Draw (self-connector lines + chevron only — ancestor through-lines are GeometricUI)
+# Draw (self-connector lines only — ancestor through-lines and chevrons are GeometricUI)
 
 draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
   d = depth(item)
-  d == 0 && @goto chevron
+  d == 0 && return
 
   # Self connector (spacer at index d)
   spacer = ui.children[d]
@@ -229,29 +233,6 @@ draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
       line_to(p, Vec2{px}(cx + r * 0.5, mid_y - r * 0.1))
       line_to(p, Vec2{px}(cx + r, mid_y))
       line_to(p, Vec2{px}(right, mid_y))
-    end
-  end
-
-  @label chevron
-  if item isa ItemGroup
-    chevron_box = ui.children[d + 1]
-    cx = chevron_box.left + chevron_box.width / 2
-    cy = chevron_box.top + chevron_box.height / 2
-    s = 3px
-    l = 5px
-    color = colorant"rgb(150,150,150)"
-    if item.collapsed
-      path(ctx, color=color, width=1.5px) do p
-        move_to(p, Vec2{px}(cx - s, cy - l))
-        line_to(p, Vec2{px}(cx + s, cy))
-        line_to(p, Vec2{px}(cx - s, cy + l))
-      end
-    else
-      path(ctx, color=color, width=1.5px) do p
-        move_to(p, Vec2{px}(cx - l, cy - s))
-        line_to(p, Vec2{px}(cx, cy + s))
-        line_to(p, Vec2{px}(cx + l, cy - s))
-      end
     end
   end
 end

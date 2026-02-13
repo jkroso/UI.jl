@@ -106,6 +106,7 @@ mixin!(r::UITree, s::StyleNode) = begin
 end
 mixin!(r::UITree, d::UITree) = add_child!(r, d)
 mixin!(old, new) = new
+mixin!(old, new, extras...) = reduce(mixin!, extras, init=mixin!(old, new))
 propertyname(s::StyleNode) = Symbol(snake_case(string(nameof(typeof(s)))))
 propertyname(_, s) = propertyname(s)
 snake_case(s::AbstractString) = NamingConventions.convert(NamingConventions.PascalCase, NamingConventions.SnakeCase, s)
