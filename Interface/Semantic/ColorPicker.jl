@@ -5,7 +5,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! mixin! add_child! focus
+@use "../abstract" SemanticUI describe describe! add_child! focus
 @use "../draw" draw
 @use "./Button" Button
 @use "./Icon" Icon
@@ -42,24 +42,22 @@ const PICKER_PAD = 12px
 
 describe(cp::ColorPicker) = begin
   rgb = convert(RGB, cp.color)
-  col = Column(width(SHADE_SIZE + 2PICKER_PAD), padding(PICKER_PAD),
-               radius(8px), border(1px, :solid, colorant"rgb(200,200,200)"),
-               background(colorant"white"))
-  mixin!(col, Box(width(SHADE_SIZE), height(SHADE_SIZE)))
-  mixin!(col, Box(height(10px)))
-  mixin!(col, Box(width(SHADE_SIZE), height(HUE_HEIGHT)))
-  mixin!(col, Box(height(12px)))
-  preview = Row(width(SHADE_SIZE), height(28px), Alignment.Center)
-  mixin!(preview, Box(width(24px), height(24px), radius(4px),
-                      background(rgb), border(1px, :solid, colorant"rgb(180,180,180)")))
-  mixin!(preview, Box(width(8px)))
-  mixin!(preview, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                      Text("#" * hex(rgb), size=12pt, color=colorant"rgb(60,60,60)")))
   copy_btn = CopyButton(picker=cp)
   add_child!(copy_btn, Button(Icon("copy", size=14px, color=colorant"rgb(140,140,140)")))
-  mixin!(preview, describe!(copy_btn))
-  mixin!(col, preview)
-  col
+  Column(width(SHADE_SIZE + 2PICKER_PAD), padding(PICKER_PAD),
+         radius(8px), border(1px, :solid, colorant"rgb(200,200,200)"),
+         background(colorant"white"),
+    Box(width(SHADE_SIZE), height(SHADE_SIZE)),
+    Box(height(10px)),
+    Box(width(SHADE_SIZE), height(HUE_HEIGHT)),
+    Box(height(12px)),
+    Row(width(SHADE_SIZE), height(28px), Alignment.Center,
+      Box(width(24px), height(24px), radius(4px),
+          background(rgb), border(1px, :solid, colorant"rgb(180,180,180)")),
+      Box(width(8px)),
+      Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
+          Text("#" * hex(rgb), size=12pt, color=colorant"rgb(60,60,60)")),
+      describe!(copy_btn)))
 end
 
 draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
@@ -111,13 +109,10 @@ draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
 
   # Hue gradient — draw as a full-width pill, then overlay gradient strips inset from ends
   hr = hue_bar.height / 2
-  # Background pill with first hue color (covers left rounded end)
   rounded_rectangle(ctx, hue_bar.left, hue_bar.top, hue_bar.width, hue_bar.height,
                     hr, background=convert(RGB, HSV(0.0, 1.0, 1.0)))
-  # Last hue color pill on right end
   rounded_rectangle(ctx, hue_bar.left + hue_bar.width - hr * 2, hue_bar.top, hr * 2, hue_bar.height,
                     hr, background=convert(RGB, HSV(330.0, 1.0, 1.0)))
-  # Interior gradient strips (inset by radius to stay inside the pill)
   inner_left = hue_bar.left + hr
   inner_w = hue_bar.width - hr * 2
   hn = 48
@@ -128,7 +123,6 @@ draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
     rounded_rectangle(ctx, inner_left + i * hw, hue_bar.top, hw + 1px, hue_bar.height, 0px,
                       background=c)
   end
-  # Pill border
   rounded_rectangle(ctx, hue_bar.left, hue_bar.top, hue_bar.width, hue_bar.height,
                     hr, color=colorant"rgb(200,200,200)", stroke_width=1px)
 

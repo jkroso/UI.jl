@@ -67,18 +67,15 @@ end
 
 "Next visible item in depth-first order"
 next_visible(item::TreeItem) = begin
-  # If expanded group, go to first child
   if item isa ItemGroup && !item.collapsed
     sub = first_sub_item(item)
     sub !== nothing && return sub
   end
-  # Next sibling that is a TreeItem
   sib = item.nextsibling
   while sib !== nothing
     sib isa TreeItem && return sib
     sib = sib.nextsibling
   end
-  # Walk up to find ancestor's next sibling
   node = item.parent
   while node !== nothing && !(node isa ListTree)
     sib = node.nextsibling
@@ -93,15 +90,11 @@ end
 
 "Previous visible item in depth-first order"
 prev_visible(item::TreeItem) = begin
-  # Previous TreeItem sibling
   prev = item.prevsibling
   while prev !== nothing && !(prev isa TreeItem)
     prev = prev.prevsibling
   end
-  if prev !== nothing
-    return last_visible(prev)
-  end
-  # Go to parent (if it's a TreeItem, not the ListTree)
+  prev !== nothing && return last_visible(prev)
   p = item.parent
   p isa TreeItem ? p : nothing
 end
@@ -110,7 +103,6 @@ end
 last_visible(item::Item) = item
 last_visible(item::ItemGroup) = begin
   item.collapsed && return item
-  # Find last TreeItem child
   last = nothing
   for child in item.children
     child isa TreeItem && (last = child)
@@ -145,8 +137,7 @@ end
 flatten_items!(col, parent, focused) = begin
   for child in parent.children
     child isa TreeItem || continue
-    row = describe_item(child, focused)
-    mixin!(col, row)
+    mixin!(col, describe_item(child, focused))
     if child isa ItemGroup && !child.collapsed
       flatten_items!(col, child, focused)
     end
@@ -170,25 +161,29 @@ describe_label(t::Text) =
   Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
       Text(t.content, size=t.size, color=t.color, family=t.family, weight=t.weight))
 
-"Create a Row for a single item with spacers, connector, optional chevron, and label"
+"Create a Row for a single item"
 describe_item(item::TreeItem, focused) = begin
   d = depth(item)
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
   row.from = item
 
-  # Highlight focused item
-  if item === focused
-    mixin!(row, background(FOCUS_BG))
-    mixin!(row, radius(4px))
+  item === focused && mixin!(row, background(FOCUS_BG), radius(4px))
+
+  # Ancestor through-line spacers: render the line as a colored Box
+  for i in 1:d-1
+    anc = ancestor(item, d - i)
+    if !is_last_tree_item(anc)
+      mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT), Alignment.Center,
+                      Box(width(1.5px), height(ROW_HEIGHT), background(LINE_COLOR))))
+    else
+      mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT)))
+    end
   end
 
-  # Spacers: (d-1) ancestor through-line spacers + 1 self connector spacer = d total
-  # Top-level items (d==0) get no spacers
-  for i in 1:d
-    mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT)))
-  end
+  # Self-connector spacer (L/T shape drawn by custom draw)
+  d > 0 && mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT)))
 
-  # Chevron for ItemGroup
+  # Chevron placeholder for ItemGroup (drawn by custom draw)
   if item isa ItemGroup
     mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT)))
     mixin!(row, Box(width(CHEVRON_GAP)))
@@ -197,53 +192,36 @@ describe_item(item::TreeItem, focused) = begin
   # Label content
   label = item.firstchild
   if label isa SemanticUI
-    geo = describe!(label)
-    label_box = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow))
-    mixin!(label_box, geo)
-    mixin!(row, label_box)
+    mixin!(row, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), describe!(label)))
   else
-    # Label is a GeometricUI (e.g. Box with Text) — recreate to avoid mutating the semantic tree
     mixin!(row, describe_label(label))
   end
 
   row
 end
 
-# Draw (tree connector lines + chevron)
+# Draw (self-connector lines + chevron only — ancestor through-lines are GeometricUI)
 
 draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
   d = depth(item)
-  d == 0 && @goto chevron # top-level items have no connector lines
-
-  # Draw ancestor through-lines (spacers 1..d-1)
-  for i in 1:d-1
-    spacer = ui.children[i]
-    anc = ancestor(item, d - i)
-    if !is_last_tree_item(anc)
-      cx = spacer.left + spacer.width / 2
-      line(ctx, Vec2{px}(cx, spacer.top), Vec2{px}(cx, spacer.top + spacer.height), 1.5px, LINE_COLOR)
-    end
-  end
+  d == 0 && @goto chevron
 
   # Self connector (spacer at index d)
   spacer = ui.children[d]
   cx = spacer.left + spacer.width / 2
   right = spacer.left + spacer.width
   mid_y = spacer.top + spacer.height / 2
-  r = 4px # corner radius
+  r = 4px
   if is_last_tree_item(item)
-    # L-shape with rounded corner
     path(ctx, color=LINE_COLOR, width=1.5px) do p
       move_to(p, Vec2{px}(cx, spacer.top))
       line_to(p, Vec2{px}(cx, mid_y - r))
-      # approximate quarter-circle
       line_to(p, Vec2{px}(cx + r * 0.1, mid_y - r * 0.5))
       line_to(p, Vec2{px}(cx + r * 0.5, mid_y - r * 0.1))
       line_to(p, Vec2{px}(cx + r, mid_y))
       line_to(p, Vec2{px}(right, mid_y))
     end
   else
-    # T-shape with rounded corner on the horizontal arm
     line(ctx, Vec2{px}(cx, spacer.top), Vec2{px}(cx, spacer.top + spacer.height), 1.5px, LINE_COLOR)
     path(ctx, color=LINE_COLOR, width=1.5px) do p
       move_to(p, Vec2{px}(cx, mid_y - r))
@@ -255,24 +233,20 @@ draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
   end
 
   @label chevron
-  # Draw chevron for ItemGroup
   if item isa ItemGroup
-    chevron_idx = d + 1
-    chevron_box = ui.children[chevron_idx]
+    chevron_box = ui.children[d + 1]
     cx = chevron_box.left + chevron_box.width / 2
     cy = chevron_box.top + chevron_box.height / 2
-    s = 3px  # half-size of the short axis
-    l = 5px  # half-size of the long axis
+    s = 3px
+    l = 5px
     color = colorant"rgb(150,150,150)"
     if item.collapsed
-      # Right-pointing chevron
       path(ctx, color=color, width=1.5px) do p
         move_to(p, Vec2{px}(cx - s, cy - l))
         line_to(p, Vec2{px}(cx + s, cy))
         line_to(p, Vec2{px}(cx - s, cy + l))
       end
     else
-      # Down-pointing chevron
       path(ctx, color=color, width=1.5px) do p
         move_to(p, Vec2{px}(cx - l, cy - s))
         line_to(p, Vec2{px}(cx, cy + s))
