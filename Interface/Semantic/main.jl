@@ -18,5 +18,6 @@
 @use "./KeyCombo" KeyCombo
 @use "./Table" Table TableHeader TableRow TableCell
 @use "./ListTree" ListTree ItemGroup
+@use "./ColorPicker" ColorPicker
 
-export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Item, Menu, Dropdown, SVG, SVGPath, Icon, AbstractSatellite, Tooltip, KeyCombo, Table, TableHeader, TableRow, TableCell, ListTree, ItemGroup
+export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Item, Menu, Dropdown, SVG, SVGPath, Icon, AbstractSatellite, Tooltip, KeyCombo, Table, TableHeader, TableRow, TableCell, ListTree, ItemGroup, ColorPicker
