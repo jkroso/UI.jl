@@ -1,6 +1,6 @@
 @use "github.com/jkroso/Prospects.jl" Field @def
 @use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont
-@use "github.com/jkroso/MiniFB.jl"... int
+@use "github.com/jkroso/MiniFB.jl"... int KeyEvent
 @use GeometryBasics: Vec2
 @use Colors: @colorant_str, RGBA, alpha
 @use "./abstract" describe Root UITree SemanticUI
@@ -309,7 +309,7 @@ end
 emit(target::SemanticUI, event) = begin
   node = target
   while node !== nothing
-    onkey(node, event)
+    on(node, event)
     node = node.parent
     while node !== nothing && !(node isa SemanticUI)
       node = node.parent
@@ -317,16 +317,8 @@ emit(target::SemanticUI, event) = begin
   end
 end
 
-emit(target::SemanticUI, event::MouseMove) = begin
-  node = target
-  while node !== nothing
-    onmouse(node, event)
-    node = node.parent
-    while node !== nothing && !(node isa SemanticUI)
-      node = node.parent
-    end
-  end
-end
+on(target::SemanticUI, e::KeyEvent) = onkey(target, e)
+on(target::SemanticUI, e::MouseMove) = onmouse(target, e)
 
 const _captured = Dict{UInt, SemanticUI}()
 
