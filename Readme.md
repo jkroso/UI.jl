@@ -1,48 +1,34 @@
-# LUCID.jl
+# UI.jl
 
-UI programming is twice as hard as other types of programming. This is because the ladder of abstraction must be ascended as well as descended. While normally it need only be descended. What I mean by this is UI programming starts with a high level description of what should be shown to the user. This gets translated ultimately into pixels. A data transformation, like all programming tasks. However, the user interacts with these pixels and their interactions need to be mapped back up to the conceptual description of the interface. Hence in a hand wavy kind of way the earlier data transformation needs to be reversible and why I say UI programming is twice as hard.
+
+```
+Data -> SemanticUI -> GeometricUI -> ConcreteUI -> Pixels ───────┐
+  │                                                              │
+  └──── SemanticUI <- GeometricUI <- ConcreteUI <- User Interaction
+```
+
+In prose this is saying the UI pipeline starts with data, from there you define the semantic structure of the UI as the user will think of it: `Button`, `Menu`, `Image`. That kind of thing. You don't concern yourself with how it will actually look at this point. That's for the next step in the pipeline; GeometricUI. This is where you define from a high level how each UI element will look: `Rectangle`, `Line`, `Circle`, `Text` etc... You don't have to specify the size and position of everything though you can if you want. It's whatever level of specificity you prefer. Less specificity is better because it enables the UI to handle different screen sizes. The next step, ConcreteUI is where we pass in the screen size and resolve the geometric description into what is essentially a compressed image. The final step is generating the pixels which can be thought of as image decompression.
+
+The pixels are what the user actually interacts with and these interactions are mapped back up the pipeline to the SemanticUI where through even handlers they affect either the data the UI was derived from or the state of the UI.
 
 ## API
 
-When working with this library these are the kinds of objects you will be working with:
-
-```
-UI
-├── ConceptualUI
-│   ├── Button
-│   ├── Breadcrumb
-│   └── …
-├── DescriptiveUI
-│   ├── Rectangle
-│   ├── Text
-│   └── …
-└── LiteralUI
-    ├── Line
-    ├── Background
-    ├── Shadow
-    └── …
-```
-
-The order is deliberate. All UI will start with a Semantic UI node. And will likely have at least a few children though not necessarily. The Semantic UI nodes represent the UI as the user would describe it and it's where all state and event handlers are stored.
-
-From the Semantic UI we generate a Descriptive UI tree which represents the UI purely in terms of visual appearance without concern for state or user interactions. However it isn't completely concrete. Some dimensions might be defined as constraints rather than absolute values and a list might be generated within a scroll container without concern for which items will actually be in view.
-
-The final step is generating the Concrete UI from the Descriptive. This is where all constraints are resolved into something that could be considered a symbolic representation of an image. It can very easily be interpreted by a rendering engine and converted into pixels on the screen. In fact if you do a topological sort on the concrete UI you will have a list of draw commands which is something many rendering engines have already been written to interpret.
-
-### gui(data::Any, [context::UI])::ConceptualUI
+### `describe(data::Any, [parent::SemanticUI])::SemanticUI`
 
 Create the conceptual structure of the UI. It will be called with the data to be interacted with and the parent UI that the data is to be presented within. Sometimes context matters. For example a string might present differently based in if its the key or the value in a Dictionary. The key might be just a static object while the value might be a text input field.
 
-### visualize(ui::ConceptualUI)::DescriptiveUI
+### `describe(ui::SemanticUI)::GeometricUI`
 
-Here is where you convert all your Semantic nodes into Descriptive ones. No state or identity should be retained in the Descriptive UI such that it can be regenerated at any time and replace the old version of itself with no affect. If any step in the pipeline could be skipped it's this one but doing so would dramatically reduce the amount of code reuse you can do since so many Semanticly different UI are very similar at this stage. For example a context menu is almost identical to a normal menu at this stage of the pipeline. Likewise a button and a menu item are visually very similar in the sense that if you were looking at just the draw commands they generate you would struggle to tell them apart.
+Takes a semantic description of the UI and gives you a geometric one.
 
-### resolve(ui::DescriptiveUI, context)::ConcreteUI
+### `describe(ui::GeometricUI, size::Tuple{px,px})::ConcreteUI`
 
-This is where you produce a UI tree that represents directly what is to be rendered on screen. Every node should affect at least one pixel. The `context` argument provides information about the available screen space (for layout), and time (for animations)
+Resolves the geometric description into one of an image appropriate for a given screen size.
 
-### emit(event::Event)
+### `focus(ui::SemanticUI)`
 
-Mouse events are mapped back to the conceptual node relevant to them by determining which concrete node was under the cursor then tracing this node back to the conceptual node that generated it.
+Will set the UI element to receive keyboard events
 
-Keyboard events are simply delivered to the conceptual node that is currently configured to receive them via the `focus(ui)` method
+### `emit(ui::SemanticUI, event::Event)`
+
+Triggers the appropriate event handlers. Mouse and keyboard events are automatically emitted so you would only use this event for custom event types such as form submission. The default handler for `emit` will call `onmouse(ui, event)` or `onkey(ui, event)` so if you want to handle mouse and keyboard input then those should be your first choice rather than specialising the emit method. Though either option will work. Though specialising the emit method will prevent event bubbling which is where the even is progressively escalated up the UI tree.
