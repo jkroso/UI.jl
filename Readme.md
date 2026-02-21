@@ -9,7 +9,7 @@ Data -> SemanticUI -> GeometricUI -> ConcreteUI -> Pixels ───────�
 
 In prose this is saying the UI pipeline starts with data, from there you define the semantic structure of the UI as the user will think of it: `Button`, `Menu`, `Image`. That kind of thing. You don't concern yourself with how it will actually look at this point. That's for the next step in the pipeline; GeometricUI. This is where you define from a high level how each UI element will look: `Rectangle`, `Line`, `Circle`, `Text` etc... You don't have to specify the size and position of everything though you can if you want. It's whatever level of specificity you prefer. Less specificity is better because it enables the UI to handle different screen sizes. The next step, ConcreteUI is where we pass in the screen size and resolve the geometric description into what is essentially a compressed image. The final step is generating the pixels which can be thought of as image decompression.
 
-The pixels are what the user actually interacts with and these interactions are mapped back up the pipeline to the SemanticUI where through even handlers they affect either the data the UI was derived from or the state of the UI.
+The pixels are what the user actually interacts with and these interactions are mapped back up the pipeline to the SemanticUI where through event handlers they affect either the data the UI was derived from or the state of the UI.
 
 ## API
 
