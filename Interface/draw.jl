@@ -274,7 +274,7 @@ frame(window::Window) = begin
   end
 end
 
-Base.display(w::Window) = errormonitor(@async open(w))
+Base.display(w::Window) = open(w)
 
 "Walk the from chain to find the SemanticUI that produced this concrete node"
 semantic_source(ui::Union{ConcreteRect,ConcreteText}) = begin

@@ -77,9 +77,9 @@ draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
   sr = 6px
   Skia.sk_canvas_save(ctx)
   clip = Skia.sk_path_new()
-  shade_rect = Skia.sk_rect_t(Float32(int(shade.left)), Float32(int(shade.top)),
-                               Float32(int(shade.left + shade.width)), Float32(int(shade.top + shade.height)))
-  Skia.sk_path_add_rounded_rect(clip, Ptr{Skia.sk_rect_t}(pointer_from_objref(Ref(shade_rect))),
+  shade_rect_ref = Ref(Skia.sk_rect_t(Float32(int(shade.left)), Float32(int(shade.top)),
+                                       Float32(int(shade.left + shade.width)), Float32(int(shade.top + shade.height))))
+  Skia.sk_path_add_rounded_rect(clip, shade_rect_ref,
                                  Float32(int(sr)), Float32(int(sr)), Skia.SK_PATH_DIRECTION_CW)
   Skia.sk_canvas_clip_path_with_operation(ctx, clip, Skia.SK_CLIP_OP_INTERSECT, true)
   n = 64
