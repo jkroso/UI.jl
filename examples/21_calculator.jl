@@ -88,7 +88,7 @@ key_fg(kind) = kind == :clear || kind == :backspace || kind == :sign ? colorant"
 describe(k::CalcKey) =
   Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
       Alignment.Center, radius(28px), background(key_bg(k.kind)),
-    Text(k.label, size=22pt, weight=600, color=key_fg(k.kind)))
+    Box(Text(k.label, size=22pt, weight=600, color=key_fg(k.kind))))
 
 # A spacer that grows in one axis so rows/columns can use it for gaps
 spacer(w::px, h::px) = Box(width(w), height(h))
@@ -112,8 +112,8 @@ describe(c::Calc) = begin
     # Display
     Box(width(grow=GrowType.Grow), height(80px),
         Alignment.End, padding(12px),
-      Text(c.display, size=40pt, weight=300, family="Helvetica",
-           color=colorant"white")),
+      Box(Text(c.display, size=40pt, weight=300, family="Helvetica",
+               color=colorant"white"))),
     spacer(0px, 12px),
     row(1), spacer(0px, 8px),
     row(2), spacer(0px, 8px),
@@ -123,7 +123,7 @@ describe(c::Calc) = begin
 end
 
 const calc = Calc(
-  CalcKey("C", :clear),     CalcKey("Del", :backspace), CalcKey("+/-", :sign),   CalcKey("/", :op),
+  CalcKey("C", :clear),     CalcKey("<", :backspace),   CalcKey("+/-", :sign),   CalcKey("/", :op),
   CalcKey("7"),              CalcKey("8"),                CalcKey("9"),            CalcKey("*", :op),
   CalcKey("4"),              CalcKey("5"),                CalcKey("6"),            CalcKey("-", :op),
   CalcKey("1"),              CalcKey("2"),                CalcKey("3"),            CalcKey("+", :op),
