@@ -1,5 +1,5 @@
 @use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont
-@use "github.com/jkroso/MiniFB.jl"... int
+@use "github.com/jkroso/MiniFB.jl"... int flt
 @use GeometryBasics: Vec2
 @use Colors: RGBA, red, green, blue, alpha, Colorant, N0f8
 @use Skia
@@ -18,9 +18,9 @@ end
 # Draw a (possibly rounded) rectangle with fill and/or stroke
 function draw_rect(canvas, x, y, w, h, r; background=nothing, color=nothing, stroke_width=0)
   path = Skia.sk_path_new()
-  rect = Ref(Skia.sk_rect_t(Float32(int(x)), Float32(int(y)), Float32(int(x+w)), Float32(int(y+h))))
+  rect = Ref(Skia.sk_rect_t(flt(x), flt(y), flt(x+w), flt(y+h)))
   GC.@preserve rect begin
-    Skia.sk_path_add_rounded_rect(path, pointer_from_objref(rect), Float32(int(r)), Float32(int(r)), Skia.SK_PATH_DIRECTION_CW)
+    Skia.sk_path_add_rounded_rect(path, pointer_from_objref(rect), flt(r), flt(r), Skia.SK_PATH_DIRECTION_CW)
   end
   if !isnothing(background)
     paint = Skia.sk_paint_new()
@@ -33,7 +33,7 @@ function draw_rect(canvas, x, y, w, h, r; background=nothing, color=nothing, str
     paint = Skia.sk_paint_new()
     Skia.sk_paint_set_color(paint, skia_argb(color))
     Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(1)) # Stroke
-    Skia.sk_paint_set_stroke_width(paint, Float32(int(stroke_width)))
+    Skia.sk_paint_set_stroke_width(paint, flt(stroke_width))
     Skia.sk_canvas_draw_path(canvas, path, paint)
     Skia.sk_paint_delete(paint)
   end
@@ -47,7 +47,7 @@ function draw_text(canvas, x, y, font::SkiaFont, color::Colorant, str::String)
   Skia.sk_paint_set_color(paint, skia_argb(color))
   Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(0))
   blob = Skia.sk_textblob_make_from_string(str, font.raw, Skia.SK_TEXT_ENCODING_UTF8)
-  Skia.sk_canvas_draw_text_blob(canvas, blob, Float32(int(x)), Float32(int(y)), paint)
+  Skia.sk_canvas_draw_text_blob(canvas, blob, flt(x), flt(y), paint)
   Skia.sk_paint_delete(paint)
 end
 

@@ -1,5 +1,5 @@
 @use "github.com/jkroso/Prospects.jl" @def
-@use "github.com/jkroso/MiniFB.jl" int
+@use "github.com/jkroso/MiniFB.jl" int flt
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
@@ -79,10 +79,10 @@ describe(svg::SVG) = Box(width(svg.width), height(svg.height))
 render_svg(ctx, x::px, y::px, w::px, h::px, paths::Vector{SVGPath}, viewbox::NTuple{4,Float32}, color::Colorant) = begin
   isempty(paths) && return
   (vx, vy, vw, vh) = viewbox
-  sx = Float32(int(w)) / vw
-  sy = Float32(int(h)) / vh
+  sx = flt(w) / vw
+  sy = flt(h) / vh
   Skia.sk_canvas_save(ctx)
-  Skia.sk_canvas_translate(ctx, Float32(int(x)), Float32(int(y)))
+  Skia.sk_canvas_translate(ctx, flt(x), flt(y))
   Skia.sk_canvas_scale(ctx, sx, sy)
   (vx != 0 || vy != 0) && Skia.sk_canvas_translate(ctx, -vx, -vy)
   c = to_skia_color(color)
