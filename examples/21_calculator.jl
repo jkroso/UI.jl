@@ -4,7 +4,6 @@
 # entry; C clears everything. Equals (=) finalises the pending operation.
 
 @use "github.com/jkroso/Prospects.jl" @def
-@use "github.com/jkroso/Font.jl/units" em
 @use "github.com/jkroso/MiniFB.jl"...
 @use "../Interface/Geometric"...
 @use "../Interface/draw" ui
@@ -89,7 +88,7 @@ key_fg(kind) = kind == :clear || kind == :backspace || kind == :sign ? colorant"
 describe(k::CalcKey) =
   Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
       Alignment.Center, radius(28px), background(key_bg(k.kind)),
-    Box(Text(k.label, size=22pt, weight=600, lineheight=1em, color=key_fg(k.kind))))
+    Box(Text(k.label, size=22pt, weight=600, color=key_fg(k.kind))))
 
 # A spacer that grows in one axis so rows/columns can use it for gaps
 spacer(w::px, h::px) = Box(width(w), height(h))
@@ -113,7 +112,7 @@ describe(c::Calc) = begin
     # Display
     Box(width(grow=GrowType.Grow), height(80px), padding(12px),
       Text(c.display, size=40pt, weight=300, family="Helvetica",
-           lineheight=1em, color=colorant"white")),
+           color=colorant"white")),
     spacer(0px, 12px),
     row(1), spacer(0px, 8px),
     row(2), spacer(0px, 8px),

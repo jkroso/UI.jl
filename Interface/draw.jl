@@ -1,6 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" Field @def
 @use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont
 @use "github.com/jkroso/MiniFB.jl"... int KeyEvent
+@use "github.com/jkroso/Font.jl" ascent ["units" absolute]
 @use GeometryBasics: Vec2
 @use Colors: @colorant_str, RGBA, alpha
 @use "./abstract" describe Root UITree SemanticUI
@@ -58,8 +59,10 @@ draw(ctx, size, ui::ConcreteRect, source) = nothing
 
 draw(ctx, _, ui::ConcreteText) = begin
   f = SkiaFont(ui.from.family, ui.from.size)
+  asc = ascent(ui.font)                                  # baseline of first line
+  leading = absolute(ui.from.lineheight, ui.from.size)   # spacing between lines
   for (i, line) in enumerate(ui.lines)
-    y = ui.top + ui.from.size * i
+    y = ui.top + asc + (i - 1) * leading
     text(ctx, (ui.left, y), f, ui.from.color, String(line))
   end
 end
