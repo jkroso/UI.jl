@@ -1,5 +1,5 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
-@use "github.com/jkroso/Font.jl" Font widths! TTFont ascent descent ["units" Length px FontUnit absolute relative]
+@use "github.com/jkroso/Font.jl" Font widths! TTFont ascent descent cap_height ["units" Length px FontUnit absolute relative]
 @use "../Geometric"... Width Height
 @use "../abstract" describe ConcreteUI
 @use GeometryBasics: Vec2, Vec
@@ -338,14 +338,15 @@ maxsize(ui::ConcreteUI, prop::Field) = maxsize(ui.from, prop)
 # and set the height accordingly
 function fit!(from::Text, ui::ConcreteText)
   ui.lines = wraptext(from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
-  # Height = first line takes the font's natural line height (ascent+descent),
-  # subsequent lines add `lineheight*size` of leading. This makes a single-line
-  # Text exactly tall enough for the rendered glyphs — wrapping it in a Box and
-  # centering produces the expected result.
-  asc = ascent(ui.font)
-  desc = descent(ui.font)
+  # Height tracks visible glyph bounds, NOT the font's full line box.
+  # A single line is exactly cap_height tall — placing the baseline at the box
+  # bottom — so wrapping a Text in a centred Box visually centres the cap area
+  # of digits and capitals. Descenders (g, y, p) extend below the box; for
+  # multi-line text we add full lineheight per extra line so descenders of one
+  # line never collide with caps of the next.
+  caph = cap_height(ui.font)
   leading = absolute(from.lineheight, ui.from.size)
-  ui.height = convert(px, asc + desc + (length(ui.lines) - 1) * leading)
+  ui.height = convert(px, caph + (length(ui.lines) - 1) * leading)
   nothing
 end
 
