@@ -1,4 +1,4 @@
-@use "github.com/jkroso/Prospects.jl" @abstract @def @property Field group assoc mixin_constructor ["Enum" @Enum]
+@use "github.com/jkroso/Prospects.jl" @abstract @def @property Field group assoc mixin_constructor mixin! ["Enum" @Enum]
 @use "github.com/jkroso/Sequences.jl" ["collections/Map" Map]
 @use "github.com/jkroso/Font.jl" Font ["units" pt px inch em]
 @use "github.com/jkroso/Units.jl" Length mm cm m
@@ -116,8 +116,6 @@ mixin!(r::UITree, s::StyleNode) = begin
   setproperty!(r, field, mixin!(old, s))
 end
 mixin!(r::UITree, d::UITree) = add_child!(r, d)
-mixin!(old, new) = new
-mixin!(old, new, extras...) = reduce(mixin!, extras, init=mixin!(old, new))
 propertyname(s::StyleNode) = Symbol(snake_case(string(nameof(typeof(s)))))
 propertyname(_, s) = propertyname(s)
 snake_case(s::AbstractString) = NamingConventions.convert(NamingConventions.PascalCase, NamingConventions.SnakeCase, s)
