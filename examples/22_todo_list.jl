@@ -1,8 +1,14 @@
 # Todo List
 #
-# A classic TodoMVC-style list. Type a task and press Enter to add it.
-# Click the checkbox to toggle done; click × to delete. Filter tabs at the
-# bottom narrow the visible items to All / Active / Done.
+# Demonstrates the library's progressive-describe pipeline:
+#
+#     Data            → SemanticUI       → GeometricUI    → ConcreteUI
+#     Vector{TodoItem}  TodoApp/TodoRow/…  Column/Row/Box…  positioned rects
+#
+# Each level only knows how to translate to the next. Drawing primitives
+# fall out at the end. Keeping the bridges as `describe` methods means the
+# raw data type is the entry point — no hand-assembling a tree at the call
+# site, just `describe(todos)`.
 
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl"...
@@ -14,18 +20,20 @@
 @use "../Interface/Semantic/Checkbox" Checkbox
 @use Colors: @colorant_str
 
+# --- data layer ---
+
 mutable struct TodoItem
   text::String
   done::Bool
 end
+
+# --- semantic layer (domain UI types) ---
 
 @def mutable struct TodoApp <: SemanticUI
   todos::Vector{TodoItem} = TodoItem[]
   input::TextInput = TextInput(placeholder="What needs to be done?")
   filter::Symbol = :all  # :all, :active, :done
 end
-
-# --- per-row pieces ---
 
 @def mutable struct TodoRow <: SemanticUI
   item::TodoItem = TodoItem("", false)
@@ -35,8 +43,6 @@ end
 @def mutable struct DeleteBtn <: SemanticUI
   row::Any = nothing
 end
-
-# --- top-level layout pieces ---
 
 @def mutable struct TodoTitle <: SemanticUI end
 
@@ -62,7 +68,19 @@ end
   app::Any = nothing
 end
 
-# --- visual descriptions ---
+# --- describe: data → SemanticUI ---
+
+# A bare list of items has enough info to produce a fully-functional app:
+# the input field, default :all filter, etc. all come from the TodoApp
+# constructor's defaults. Parenting the TextInput here makes focus()
+# walkable from the input back up to the eventual Root.
+describe(items::Vector{TodoItem}) = begin
+  app = TodoApp(todos=items)
+  add_child!(app, app.input)
+  app
+end
+
+# --- describe: SemanticUI → GeometricUI ---
 
 describe(b::DeleteBtn) =
   Box(width(22px), height(22px), Alignment.Center, radius(11px),
@@ -115,7 +133,7 @@ end
 
 describe(l::TodoList) = begin
   app = l.app
-  visible = filter_items(app)
+  visible = visible_items(app)
   rows = []
   for (i, it) in enumerate(visible)
     i > 1 && push!(rows, Box(height(6px)))
@@ -142,12 +160,12 @@ describe(app::TodoApp) =
     describe!(TodoList(app=app)),
     describe!(TodoFooter(app=app)))
 
-filter_items(app::TodoApp) =
+# --- helpers / behaviour ---
+
+visible_items(app::TodoApp) =
   app.filter == :all ? app.todos :
   app.filter == :active ? filter(t -> !t.done, app.todos) :
   filter(t -> t.done, app.todos)
-
-# --- behaviour ---
 
 add_from_input!(app::TodoApp) = begin
   text = strip(app.input.text)
@@ -168,15 +186,15 @@ onkey(t::FilterTab, ::KeyPress{Keys.mouse_left}) = (t.app.filter = t.mode)
 # not Enter, so the event bubbles up to the TodoApp.
 onkey(app::TodoApp, ::KeyPress{Keys.enter}) = add_from_input!(app)
 
-const app = TodoApp()
-add_child!(app, app.input)  # parent the TextInput so focus() can walk up to the Root
-push!(app.todos, TodoItem("Buy milk", false))
-push!(app.todos, TodoItem("Read the UI.jl docs", true))
-push!(app.todos, TodoItem("Ship 22_todo_list.jl", false))
+# --- entry: data → SemanticUI → Window ---
 
-const window = Window(app, title="Todos", size=(420px, 480px), animating=true)
-focus(app.input)
+const todos = [TodoItem("Buy milk", false),
+               TodoItem("Read the UI.jl docs", true),
+               TodoItem("Ship 22_todo_list.jl", false)]
 
+const todoui = describe(todos)
+const window = Window(todoui, title="Todos", size=(420px, 480px), animating=true)
 onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
+focus(todoui.firstchild)  # input
 
 display(window)
