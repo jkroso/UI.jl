@@ -1,6 +1,5 @@
 @use "github.com/jkroso/Prospects.jl" @def @property
-@use "github.com/jkroso/MiniFB.jl/skia" SkiaFont measure_text rectangle line
-@use Skia
+@use "github.com/jkroso/MiniFB.jl/skia" SkiaFont measure_text rectangle line font_metrics
 @use "github.com/jkroso/MiniFB.jl" Window Keys KeyPress MouseMove onkey onmouse int
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
 @use "../Geometric"...
@@ -22,8 +21,9 @@
   # cached layout (updated each frame for mouse hit-testing)
   cached_left::px = 0px
   cached_top::px = 0px
-  cached_ascent::px = 0px   # negative (above baseline)
-  cached_descent::px = 0px  # positive (below baseline)
+  cached_ascent::px = 0px    # negative (above baseline)
+  cached_descent::px = 0px   # positive (below baseline)
+  cached_capheight::px = 0px # baseline = ct.top + capHeight (matches the renderer)
   cached_font::Union{Nothing,SkiaFont} = nothing
 end
 
@@ -188,7 +188,7 @@ draw_cursor(ctx, input::TextInput, ct::ConcreteText, offsets) = begin
   visible = elapsed < 0.5 || mod(elapsed - 0.5, 1.0) < 0.5
   visible || return
   x = ct.left + offsets[input.cursor + 1]
-  baseline = ct.top + ct.from.size
+  baseline = ct.top + input.cached_capheight
   top = baseline + input.cached_ascent
   bot = baseline + input.cached_descent
   line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, colorant"rgb(30,30,30)")
@@ -199,7 +199,7 @@ draw_selection(ctx, input::TextInput, ct::ConcreteText, offsets) = begin
   lo, hi = selection_range(input)
   x1 = ct.left + offsets[lo + 1]
   x2 = ct.left + offsets[hi + 1]
-  baseline = ct.top + ct.from.size
+  baseline = ct.top + input.cached_capheight
   top = baseline + input.cached_ascent
   h = input.cached_descent - input.cached_ascent
   rectangle(ctx, x1, top, x2 - x1, h, background=RGBA(0.26, 0.52, 0.96, 0.3), border=0px)
@@ -219,7 +219,7 @@ draw_empty_cursor(ctx, input::TextInput, ct::ConcreteText) = begin
   visible = elapsed < 0.5 || mod(elapsed - 0.5, 1.0) < 0.5
   visible || return
   x = ct.left
-  baseline = ct.top + ct.from.size
+  baseline = ct.top + input.cached_capheight
   top = baseline + input.cached_ascent
   bot = baseline + input.cached_descent
   line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, colorant"rgb(30,30,30)")
@@ -239,10 +239,10 @@ update_cache!(input::TextInput, ct::ConcreteText) = begin
   input.cached_top = ct.top
   font = SkiaFont(input.font_family, input.font_size)
   input.cached_font = font
-  metrics = Ref{Skia.sk_font_metrics_t}()
-  Skia.sk_font_get_metrics(font.raw, metrics)
-  input.cached_ascent = px(metrics[].ascent)
-  input.cached_descent = px(metrics[].descent)
+  m = font_metrics(font)
+  input.cached_ascent = px(m.ascent)
+  input.cached_descent = px(m.descent)
+  input.cached_capheight = px(m.capHeight)
 end
 
 draw(ctx, size, ui::ConcreteRect, input::TextInput) = begin
