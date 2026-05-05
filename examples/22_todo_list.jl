@@ -113,13 +113,8 @@ describe(app::TodoApp) = begin
       Box(width(8px)),
       describe!(FilterTab(app=app, mode=:done,   label="Done ($(length(app.todos)-remaining))"))),
     Box(height(12px)),
-    # List — built via add_child! to dodge Julia picking the typed
-    # all-fields Column constructor when `rows...` happens to splat into
-    # exactly 13 args (= field count of Container).
-    let list = Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow))
-      for r in rows; add_child!(list, r) end
-      list
-    end,
+    # List
+    Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), rows...),
     # Footer
     Box(width(grow=GrowType.Grow), height(20px),
       Text("$remaining left", size=11pt, color=colorant"rgb(140,140,140)")))

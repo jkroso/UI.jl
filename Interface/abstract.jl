@@ -1,4 +1,4 @@
-@use "github.com/jkroso/Prospects.jl" @abstract @def @property Field group assoc ["Enum" @Enum]
+@use "github.com/jkroso/Prospects.jl" @abstract @def @property Field group assoc mixin_constructor ["Enum" @Enum]
 @use "github.com/jkroso/Sequences.jl" ["collections/Map" Map]
 @use "github.com/jkroso/Font.jl" Font ["units" pt px inch em]
 @use "github.com/jkroso/Units.jl" Length mm cm m
@@ -15,6 +15,15 @@ abstract type StyleNode end
   prevsibling::Union{Nothing,UITree}=nothing
   nextsibling::Union{Nothing,UITree}=nothing
 end
+
+# Opt UITree into Prospects' explicit-typed-inner emission so the abstract
+# variadic `(::Type{T})(attrs...) where T <: UITree` defined below isn't
+# shadowed by Julia's auto-generated convert outer when a call's arity
+# happens to equal the field count of the concrete subtype (e.g.
+# `Column(width, height, padding, background, ...11 children)` hitting the
+# 13-field Container layout). Has to be declared *before* @def types that
+# subtype UITree are defined, because deftype reads the trait at expansion.
+mixin_constructor(::Type{<:UITree}) = true
 
 @Enum WrapMode words newlines none
 @Enum TextAlign Left Center Right
