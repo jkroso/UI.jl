@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe
+@use "../abstract" SemanticUI describe add_child!
 @use "../draw" draw
 @use Colors: @colorant_str, RGBA
 @use GeometryBasics: Vec2
@@ -12,22 +12,33 @@
 @def mutable struct Checkbox <: SemanticUI
   checked::Bool = false
   label::String = ""
+  # Called after a click toggles `checked`. Use this to mirror the value
+  # into an external source of truth so the Checkbox can be driven as a
+  # controlled component (e.g. `Checkbox(checked=item.done,
+  # onchange=c -> item.done = c.checked)`).
+  onchange::Function = c -> nothing
 end
 
 describe(c::Checkbox) = begin
   box_color = c.checked ? colorant"rgb(59,130,246)" : colorant"rgb(255,255,255)"
   border_color = c.checked ? colorant"rgb(59,130,246)" : colorant"rgb(180,180,180)"
-  Row(width(grow=GrowType.Grow), height(24px), padding(2px),
+  inner = Row(width(grow=GrowType.Grow), height(24px), padding(2px),
     Box(width(20px), height(20px),
       border(2px, :solid, border_color),
       radius(3px),
-      background(box_color)),
-    Box(width(8px), height(20px)),
-    Box(height(20px),
+      background(box_color)))
+  if !isempty(c.label)
+    add_child!(inner, Box(width(8px), height(20px)))
+    add_child!(inner, Box(height(20px),
       Text(c.label, size=13pt, color=colorant"rgb(30,30,30)")))
+  end
+  inner
 end
 
-onkey(c::Checkbox, ::KeyPress{Keys.mouse_left}) = (c.checked = !c.checked)
+onkey(c::Checkbox, ::KeyPress{Keys.mouse_left}) = begin
+  c.checked = !c.checked
+  c.onchange(c)
+end
 
 draw(ctx, size, ui::ConcreteRect, c::Checkbox) = begin
   c.checked || return

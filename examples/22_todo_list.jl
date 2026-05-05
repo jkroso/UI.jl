@@ -11,6 +11,7 @@
 @use "../Interface/draw" ui draw
 @use "../Interface/abstract" SemanticUI describe describe! focus add_child!
 @use "../Interface/Semantic/TextInput" TextInput
+@use "../Interface/Semantic/Checkbox" Checkbox
 @use Colors: @colorant_str
 
 mutable struct TodoItem
@@ -24,19 +25,23 @@ end
   filter::Symbol = :all  # :all, :active, :done
 end
 
-# --- a row that represents one todo, lets us hang onkey handlers off it
+# --- per-row pieces ---
+
 @def mutable struct TodoRow <: SemanticUI
   item::TodoItem = TodoItem("", false)
   app::Any = nothing  # back-reference so we can remove ourselves
 end
 
-# --- buttons
-@def mutable struct CheckBtn <: SemanticUI
+@def mutable struct DeleteBtn <: SemanticUI
   row::Any = nothing
 end
 
-@def mutable struct DeleteBtn <: SemanticUI
-  row::Any = nothing
+# --- top-level layout pieces ---
+
+@def mutable struct TodoTitle <: SemanticUI end
+
+@def mutable struct TodoInputRow <: SemanticUI
+  input::TextInput = TextInput()
 end
 
 @def mutable struct FilterTab <: SemanticUI
@@ -45,17 +50,19 @@ end
   label::String = "All"
 end
 
-# --- visual descriptions
-
-describe(b::CheckBtn) = begin
-  done = b.row.item.done
-  bg = done ? colorant"rgb(74,222,128)" : colorant"white"
-  bd = done ? colorant"rgb(74,222,128)" : colorant"rgb(200,200,200)"
-  box = Box(width(22px), height(22px), radius(11px),
-            background(bg), border(2px, :solid, bd), Alignment.Center)
-  done && add_child!(box, Text("v", size=12pt, weight=700, color=colorant"white"))
-  box
+@def mutable struct TodoFilters <: SemanticUI
+  app::Any = nothing
 end
+
+@def mutable struct TodoList <: SemanticUI
+  app::Any = nothing
+end
+
+@def mutable struct TodoFooter <: SemanticUI
+  app::Any = nothing
+end
+
+# --- visual descriptions ---
 
 describe(b::DeleteBtn) =
   Box(width(22px), height(22px), Alignment.Center, radius(11px),
@@ -72,60 +79,75 @@ describe(t::FilterTab) = begin
 end
 
 describe(r::TodoRow) = begin
-  done = r.item.done
+  item = r.item
+  done = item.done
   Row(width(grow=GrowType.Grow), height(36px), padding(8px),
       radius(6px), background(colorant"white"),
       border(1px, :solid, colorant"rgb(232,232,232)"),
-    describe!(CheckBtn(row=r)),
+    describe!(Checkbox(checked=done, onchange=c -> item.done = c.checked)),
     Box(width(10px), height(20px)),
     Box(width(grow=GrowType.Grow), height(20px),
-      Text(r.item.text, size=13pt,
+      Text(item.text, size=13pt,
            color=done ? colorant"rgb(160,160,160)" : colorant"rgb(30,30,30)")),
     describe!(DeleteBtn(row=r)))
 end
 
-describe(app::TodoApp) = begin
-  visible = filter_items(app)
+describe(::TodoTitle) =
+  Box(width(grow=GrowType.Grow), height(36px),
+    Text("Todos", size=22pt, weight=700, color=colorant"rgb(30,30,30)"))
+
+describe(r::TodoInputRow) =
+  Row(width(grow=GrowType.Grow), height(40px),
+    Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
+      describe!(r.input)),
+    Box(width(8px)))
+
+describe(f::TodoFilters) = begin
+  app = f.app
   remaining = count(t -> !t.done, app.todos)
+  Row(width(grow=GrowType.Grow), height(28px),
+    describe!(FilterTab(app=app, mode=:all,    label="All ($(length(app.todos)))")),
+    Box(width(8px)),
+    describe!(FilterTab(app=app, mode=:active, label="Active ($remaining)")),
+    Box(width(8px)),
+    describe!(FilterTab(app=app, mode=:done,   label="Done ($(length(app.todos)-remaining))")))
+end
+
+describe(l::TodoList) = begin
+  app = l.app
+  visible = filter_items(app)
   rows = []
-  for it in visible
+  for (i, it) in enumerate(visible)
+    i > 1 && push!(rows, Box(height(6px)))
     push!(rows, describe!(TodoRow(item=it, app=app)))
-    push!(rows, Box(height(6px)))
   end
-  isempty(rows) || pop!(rows)  # drop trailing spacer
+  Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), rows...)
+end
+
+describe(f::TodoFooter) = begin
+  remaining = count(t -> !t.done, f.app.todos)
+  Box(width(grow=GrowType.Grow), height(20px),
+    Text("$remaining left", size=11pt, color=colorant"rgb(140,140,140)"))
+end
+
+describe(app::TodoApp) =
   Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
          padding(20px), background(colorant"rgb(248,248,250)"),
-    # Title
-    Box(width(grow=GrowType.Grow), height(36px),
-      Text("Todos", size=22pt, weight=700, color=colorant"rgb(30,30,30)")),
+    describe!(TodoTitle()),
     Box(height(12px)),
-    # Input row
-    Row(width(grow=GrowType.Grow), height(40px),
-      Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-        describe!(app.input)),
-      Box(width(8px))),
+    describe!(TodoInputRow(input=app.input)),
     Box(height(16px)),
-    # Filter tabs
-    Row(width(grow=GrowType.Grow), height(28px),
-      describe!(FilterTab(app=app, mode=:all,    label="All ($(length(app.todos)))")),
-      Box(width(8px)),
-      describe!(FilterTab(app=app, mode=:active, label="Active ($(remaining))")),
-      Box(width(8px)),
-      describe!(FilterTab(app=app, mode=:done,   label="Done ($(length(app.todos)-remaining))"))),
+    describe!(TodoFilters(app=app)),
     Box(height(12px)),
-    # List
-    Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), rows...),
-    # Footer
-    Box(width(grow=GrowType.Grow), height(20px),
-      Text("$remaining left", size=11pt, color=colorant"rgb(140,140,140)")))
-end
+    describe!(TodoList(app=app)),
+    describe!(TodoFooter(app=app)))
 
 filter_items(app::TodoApp) =
   app.filter == :all ? app.todos :
   app.filter == :active ? filter(t -> !t.done, app.todos) :
   filter(t -> t.done, app.todos)
 
-# --- behaviour
+# --- behaviour ---
 
 add_from_input!(app::TodoApp) = begin
   text = strip(app.input.text)
@@ -136,7 +158,6 @@ add_from_input!(app::TodoApp) = begin
   app.input.anchor = 0
 end
 
-onkey(b::CheckBtn, ::KeyPress{Keys.mouse_left}) = (b.row.item.done = !b.row.item.done)
 onkey(b::DeleteBtn, ::KeyPress{Keys.mouse_left}) = begin
   app = b.row.app::TodoApp
   filter!(t -> t !== b.row.item, app.todos)
