@@ -130,14 +130,6 @@ add_child!(r::UITree, child::UITree) = begin
   child.parent = r
 end
 
-function (::Type{T})(attrs...) where T <: UITree
-  out = T()
-  for s in attrs
-    mixin!(out, s)
-  end
-  out
-end
-
 "A symbolic representation of an image which just happens to be a UI"
 @abstract struct ConcreteUI <: UITree
   from::Union{Nothing,UI}=nothing
