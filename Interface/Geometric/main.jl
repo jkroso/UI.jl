@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @property @abstract @def ["Enum.jl" @Enum] assoc
 @use "github.com/jkroso/Font.jl" ["units" pt px]
 @use "github.com/jkroso/Units.jl" Length mm
-@use "../abstract" GeometricUI mixin! StyleNode Text propertyname
+@use "../abstract" GeometricUI mixin! StyleNode Text TextAlign propertyname
 @use Colors: Color, Colorant, RGB, hex
 
 const transparent = parse(Colorant, "transparent")
@@ -144,4 +144,4 @@ end
 
 @property Container.between_width = self.child_gap + self.border.between.width
 
-export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Text, width, height, GrowType, Alignment, radius
+export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Text, TextAlign, width, height, GrowType, Alignment, radius

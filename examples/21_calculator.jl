@@ -88,7 +88,7 @@ key_fg(kind) = kind == :clear || kind == :backspace || kind == :sign ? colorant"
 describe(k::CalcKey) =
   Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
       Alignment.Center, radius(28px), background(key_bg(k.kind)),
-    Box(Text(k.label, size=22pt, weight=600, color=key_fg(k.kind))))
+    Text(k.label, size=22pt, weight=600, color=key_fg(k.kind), align=TextAlign.Center))
 
 # A spacer that grows in one axis so rows/columns can use it for gaps
 spacer(w::px, h::px) = Box(width(w), height(h))
@@ -110,7 +110,7 @@ describe(c::Calc) = begin
   Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
          padding(12px), background(colorant"black"),
     # Display
-    Box(width(grow=GrowType.Grow), height(80px), padding(12px),
+    Box(width(grow=GrowType.Grow), height(80px), padding(12px), Alignment.Center,
       Text(c.display, size=40pt, weight=300, family="Helvetica",
            color=colorant"white")),
     spacer(0px, 12px),

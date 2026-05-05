@@ -22,8 +22,7 @@ function describe(b::Button)
   content = if b.firstchild isa SemanticUI
     describe!(b.firstchild)
   else
-    Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-        Text(b.label, size=12pt, weight=600, color=colorant"rgb(17,24,39)"))
+    Text(b.label, size=12pt, weight=600, color=colorant"rgb(17,24,39)", align=TextAlign.Center)
   end
   Box(padding(6px, 4px), radius(6px),
       background(colorant"white"),

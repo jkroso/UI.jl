@@ -17,6 +17,7 @@ abstract type StyleNode end
 end
 
 @Enum WrapMode words newlines none
+@Enum TextAlign Left Center Right
 
 @def mutable struct Text <: UITree
   content::String=""
@@ -27,6 +28,7 @@ end
   lineheight::Length=1.5em
   weight::Int16=600
   wrap::WrapMode=WrapMode.words
+  align::TextAlign=TextAlign.Left
 end
 
 Text(content::String; kwargs...) = Text(;content=content, kwargs...)

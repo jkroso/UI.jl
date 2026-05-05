@@ -5,6 +5,7 @@
 @use GeometryBasics: Vec2, Vec
 @use Colors...
 @use "github.com/jkroso/MiniFB.jl"... int
+@use "github.com/jkroso/MiniFB.jl/skia" SkiaFont font_metrics
 
 @Enum Axis x y
 
@@ -344,9 +345,12 @@ function fit!(from::Text, ui::ConcreteText)
   # of digits and capitals. Descenders (g, y, p) extend below the box; for
   # multi-line text we add full lineheight per extra line so descenders of one
   # line never collide with caps of the next.
-  caph = cap_height(ui.font)
+  # We use Skia's actual `capHeight` (varies by font, ~0.72–0.79 × em) instead
+  # of Font.jl's 0.72 approximation so the reserved height matches what the
+  # renderer will actually draw — otherwise glyphs appear high in their box.
+  caph = skia_cap_height(ui.font)
   leading = absolute(from.lineheight, ui.from.size)
-  ui.height = convert(px, caph + (length(ui.lines) - 1) * leading)
+  ui.height = caph + convert(px, (length(ui.lines) - 1) * leading)
   nothing
 end
 
@@ -363,15 +367,24 @@ function best(growable; by=field"width", comp=(>))
 end
 
 function initialize(ui::Text, parent)
-  f = Font(ui.family*':'*ui.subfamily)
+  f = Font(ui.family*':'*ui.subfamily, ui.size)
   words = split(ui.content)
   ConcreteText(from=ui,
                width=textwidth(ui.content, f),
-               height=cap_height(f),  # natural height = visible glyph height (single line)
+               height=skia_cap_height(f),  # natural height = visible glyph height (single line)
                font=f,
                words=words,
                widths=widths!(words, f.face),
                parent=parent)
+end
+
+"Look up Skia's actual cap-height for a Font, in px. Cached by (family, style, size)."
+const _skia_cap_height_cache = Dict{Tuple{String,Any,Any},px}()
+function skia_cap_height(f::Font)
+  key = (f.family, f.style, f.size)
+  get!(_skia_cap_height_cache, key) do
+    px(font_metrics(SkiaFont(f.family, f.size)).capHeight)
+  end
 end
 
 function wraptext(s::String, face::TTFont{pem}, max_width::px; words=split(s),
