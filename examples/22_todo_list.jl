@@ -148,6 +148,7 @@ onkey(t::FilterTab, ::KeyPress{Keys.mouse_left}) = (t.app.filter = t.mode)
 onkey(app::TodoApp, ::KeyPress{Keys.enter}) = add_from_input!(app)
 
 const app = TodoApp()
+add_child!(app, app.input)  # parent the TextInput so focus() can walk up to the Root
 push!(app.todos, TodoItem("Buy milk", false))
 push!(app.todos, TodoItem("Read the UI.jl docs", true))
 push!(app.todos, TodoItem("Ship 22_todo_list.jl", false))
