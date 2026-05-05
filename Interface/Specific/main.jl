@@ -367,6 +367,7 @@ function initialize(ui::Text, parent)
   words = split(ui.content)
   ConcreteText(from=ui,
                width=textwidth(ui.content, f),
+               height=cap_height(f),  # natural height = visible glyph height (single line)
                font=f,
                words=words,
                widths=widths!(words, f.face),
