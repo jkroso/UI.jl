@@ -75,7 +75,7 @@ adopt!(parent::UITree, children::Nothing) = parent
 adopt!(parent::UITree, children) = begin
   lastchild = nothing
   for child in children
-    setfield!(child, :parent, ui)
+    setfield!(child, :parent, parent)
     if isnothing(lastchild)
       setfield!(parent, :firstchild, child)
     else
@@ -84,7 +84,7 @@ adopt!(parent::UITree, children) = begin
     end
     lastchild = child
   end
-  ui
+  parent
 end
 
 "Define this method if you want to generate the children of a SemanticUI node lazily"
@@ -94,6 +94,12 @@ describe_children(ui) = nothing
 @abstract struct GeometricUI <: UITree
   firstchild::Union{UI,Nothing}=nothing
   from::Union{Nothing,UI}=nothing
+end
+Base.convert(::Type{GeometricUI}, node::GeometricUI) = node
+Base.convert(::Type{GeometricUI}, node::SemanticUI) = begin
+  result = describe(node)
+  result.from = node
+  result
 end
 
 @def struct SiblingIterator
@@ -142,6 +148,8 @@ mixin!(r::UITree, s::StyleNode) = begin
   setproperty!(r, field, mixin!(old, s))
 end
 mixin!(r::UITree, d::UITree) = add_child!(r, d)
+mixin!(r::GeometricUI, d::SemanticUI) =
+  add_child!(r, convert(GeometricUI, d))
 propertyname(s::StyleNode) = Symbol(snake_case(string(nameof(typeof(s)))))
 propertyname(_, s) = propertyname(s)
 snake_case(s::AbstractString) = NamingConventions.convert(NamingConventions.PascalCase, NamingConventions.SnakeCase, s)
@@ -171,11 +179,7 @@ function describe end
 describe(d::GeometricUI) = d
 
 "Call describe(node) and set result.from = node, returning the GeometricUI"
-describe!(node::SemanticUI) = begin
-  result = describe(node)
-  result.from = node
-  result
-end
+describe!(node::SemanticUI) = convert(GeometricUI, node)
 
 """
 Used to notify the relevant semantic UI node of some user input. To respond to this input just
