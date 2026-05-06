@@ -2,20 +2,19 @@
 #
 # Demonstrates the library's progressive-describe pipeline:
 #
-#     Data            → SemanticUI       → GeometricUI    → ConcreteUI
-#     Vector{TodoItem}  TodoApp/TodoRow/…  Column/Row/Box…  positioned rects
+#     Data            -> SemanticUI       -> GeometricUI    -> ConcreteUI
+#     Vector{TodoItem}  TodoApp/TodoRow/... Column/Row/Box... positioned rects
 #
-# Each level only knows how to translate to the next. Drawing primitives
-# fall out at the end. Keeping the bridges as `describe` methods means the
-# raw data type is the entry point — no hand-assembling a tree at the call
-# site, just `describe(todos)`.
+# Semantic nodes are created only in the data-to-semantic stage. Later
+# `describe(::SemanticUI)` methods consume that semantic tree and lower it to
+# geometry. That keeps the raw data type as the entry point: `describe(data)`.
 
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl"...
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
 @use "../Interface/draw" ui draw
-@use "../Interface/abstract" SemanticUI describe describe_children describe! focus add_child!
+@use "../Interface/abstract" SemanticUI describe describe_children focus
 @use "../Interface/Semantic/TextInput" TextInput
 @use "../Interface/Semantic/Checkbox" Checkbox
 @use Colors: @colorant_str
@@ -30,155 +29,209 @@ end
 const data = [
   TodoItem("Buy milk", false),
   TodoItem("Read the UI.jl docs", true),
-  TodoItem("Ship 22_todo_list.jl", false)]
+  TodoItem("Ship the staged todo example", false)]
 
-# --- semantic layer (domain UI types) ---
-@def mutable struct DeleteBtn <: SemanticUI
-  row::Any = nothing
+# --- semantic layer ---
+
+@def mutable struct TodoApp <: SemanticUI
+  todos::Vector{TodoItem} = TodoItem[]
+  filter::Symbol = :all
 end
 
 @def mutable struct TodoTitle <: SemanticUI end
-
-@def mutable struct TodoInputRow <: SemanticUI
-  input::TextInput = TextInput()
-end
+@def mutable struct TodoComposer <: SemanticUI end
+@def mutable struct TodoFilters <: SemanticUI end
 
 @def mutable struct FilterTab <: SemanticUI
   mode::Symbol = :all
-  label::String = "All"
 end
-@def mutable struct TodoFilters <: SemanticUI end
+
 @def mutable struct TodoList <: SemanticUI end
+
 @def mutable struct TodoRow <: SemanticUI
-  index::Int8
+  index::Int
 end
+
+@def mutable struct DeleteBtn <: SemanticUI end
 @def mutable struct TodoFooter <: SemanticUI end
 
-describe_children(ui::TodoList) = begin
-  map(i->TodoRow(index=i), 1:length(ui.parent.todos))
+# --- semantic context helpers ---
+
+todo_app(node::SemanticUI) = begin
+  current = node
+  while current !== nothing
+    current isa TodoApp && return current
+    current = current.parent
+  end
+  error("node is not inside a TodoApp")
 end
 
-# --- describe: data → SemanticUI ---
-describe(items::Vector{TodoItem}) = begin
+todo_item(row::TodoRow) = todo_app(row).todos[row.index]
+todo_list(app::TodoApp) = app.children[4]::TodoList
+refresh_rows!(app::TodoApp) = setfield!(todo_list(app), :firstchild, nothing)
+
+visible_indexes(app::TodoApp) =
+  app.filter == :all ? collect(eachindex(app.todos)) :
+  app.filter == :active ? filter(i -> !app.todos[i].done, eachindex(app.todos)) :
+  filter(i -> app.todos[i].done, eachindex(app.todos))
+
+filter_label(app::TodoApp, mode::Symbol) = begin
+  total = length(app.todos)
+  remaining = count(t -> !t.done, app.todos)
+  mode == :all && return "All ($total)"
+  mode == :active && return "Active ($remaining)"
+  "Done ($(total - remaining))"
+end
+
+# --- describe: data -> SemanticUI ---
+
+describe(items::Vector{TodoItem}) =
   TodoApp(todos=items,
-    TextInput(placeholder="What needs to be done?"),
+    TodoTitle(),
+    TodoComposer(TextInput(placeholder="What needs to be done?")),
     TodoFilters(),
     TodoList(),
     TodoFooter())
+
+describe_children(::TodoFilters) =
+  [FilterTab(mode=:all), FilterTab(mode=:active), FilterTab(mode=:done)]
+
+describe_children(list::TodoList) =
+  map(i -> TodoRow(index=i), visible_indexes(todo_app(list)))
+
+describe_children(row::TodoRow) = begin
+  item = todo_item(row)
+  [
+    Checkbox(checked=item.done, onchange=c -> begin
+      item.done = c.checked
+      refresh_rows!(todo_app(row))
+    end),
+    DeleteBtn()
+  ]
 end
 
-# --- describe: SemanticUI → GeometricUI ---
-describe(b::DeleteBtn) =
-  Box(width(22px), height(22px), Alignment.Center, radius(11px),
-      background(colorant"rgb(245,245,245)"),
-    Text("x", size=12pt, weight=700, color=colorant"rgb(160,80,80)"))
-
-describe(t::FilterTab) = begin
-  active = t.app.filter == t.mode
-  Box(padding(6px, 12px), radius(6px),
-      background(active ? colorant"rgb(59,130,246)" : colorant"white"),
-      border(1px, :solid, active ? colorant"rgb(59,130,246)" : colorant"rgb(220,220,220)"),
-    Text(t.label, size=12pt, weight=600,
-         color=active ? colorant"white" : colorant"rgb(60,60,60)"))
-end
-
-describe(r::TodoRow) = begin
-  item = r.item
-  done = item.done
-  Row(width(grow=GrowType.Grow), height(36px), padding(8px),
-      radius(6px), background(colorant"white"),
-      border(1px, :solid, colorant"rgb(232,232,232)"),
-    describe!(Checkbox(checked=done, onchange=c -> item.done = c.checked)),
-    Box(width(10px), height(20px)),
-    Box(width(grow=GrowType.Grow), height(20px),
-      Text(item.text, size=13pt,
-           color=done ? colorant"rgb(160,160,160)" : colorant"rgb(30,30,30)")),
-    describe!(DeleteBtn(row=r)))
-end
+# --- describe: SemanticUI -> GeometricUI ---
 
 describe(::TodoTitle) =
-  Box(width(grow=GrowType.Grow), height(36px),
-    Text("Todos", size=22pt, weight=700, color=colorant"rgb(30,30,30)"))
+  Row(width(grow=GrowType.Grow), height(42px),
+    Box(width(grow=GrowType.Grow), height(34px),
+      Text("Todos", size=24pt, weight=700, color=colorant"rgb(15,23,42)")),
+    Box(width(94px), height(26px), Alignment.Center, radius(13px),
+      background(colorant"rgb(226,232,240)"),
+      Text("staged UI", size=10pt, weight=700, color=colorant"rgb(71,85,105)")))
 
-describe(r::TodoInputRow) =
-  Row(width(grow=GrowType.Grow), height(40px),
+describe(c::TodoComposer) = begin
+  input = c.firstchild
+  Row(width(grow=GrowType.Grow), height(44px),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      describe!(r.input)),
-    Box(width(8px)))
-
-describe(f::TodoFilters) = begin
-  app = f.app
-  remaining = count(t -> !t.done, app.todos)
-  Row(width(grow=GrowType.Grow), height(28px),
-    describe!(FilterTab(app=app, mode=:all,    label="All ($(length(app.todos)))")),
-    Box(width(8px)),
-    describe!(FilterTab(app=app, mode=:active, label="Active ($remaining)")),
-    Box(width(8px)),
-    describe!(FilterTab(app=app, mode=:done,   label="Done ($(length(app.todos)-remaining))")))
+      input))
 end
 
-describe(l::TodoList) = begin
-  app = l.app
-  visible = visible_items(app)
+describe(f::TodoFilters) = begin
+  all, active, done = f.children
+  Row(width(grow=GrowType.Grow), height(32px),
+    all,
+    Box(width(8px)),
+    active,
+    Box(width(8px)),
+    done)
+end
+
+describe(tab::FilterTab) = begin
+  app = todo_app(tab)
+  active = app.filter == tab.mode
+  Box(padding(7px, 12px), radius(7px),
+      background(active ? colorant"rgb(37,99,235)" : colorant"white"),
+      border(1px, :solid, active ? colorant"rgb(37,99,235)" : colorant"rgb(203,213,225)"),
+    Text(filter_label(app, tab.mode), size=12pt, weight=700,
+      color=active ? colorant"white" : colorant"rgb(51,65,85)"))
+end
+
+describe(list::TodoList) = begin
   rows = []
-  for (i, it) in enumerate(visible)
-    i > 1 && push!(rows, Box(height(6px)))
-    push!(rows, describe!(TodoRow(item=it, app=app)))
+  for (i, row) in enumerate(list.children)
+    i > 1 && push!(rows, Box(height(8px)))
+    push!(rows, row)
   end
   Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), rows...)
 end
 
-describe(f::TodoFooter) = begin
-  remaining = count(t -> !t.done, f.parent.todos)
-  Box(width(grow=GrowType.Grow), height(20px),
-    Text("$remaining left", size=11pt, color=colorant"rgb(140,140,140)"))
+describe(row::TodoRow) = begin
+  checkbox, delete = row.children
+  item = todo_item(row)
+  Row(width(grow=GrowType.Grow), height(44px), padding(10px),
+      radius(8px), background(colorant"white"),
+      border(1px, :solid, colorant"rgb(226,232,240)"),
+    checkbox,
+    Box(width(12px)),
+    Box(width(grow=GrowType.Grow), height(22px),
+      Text(item.text, size=13pt,
+      color=item.done ? colorant"rgb(148,163,184)" : colorant"rgb(30,41,59)")),
+    delete)
+end
+
+describe(::DeleteBtn) =
+  Box(width(24px), height(24px), Alignment.Center, radius(12px),
+      background(colorant"rgb(241,245,249)"),
+    Text("x", size=12pt, weight=700, color=colorant"rgb(148,163,184)"))
+
+describe(footer::TodoFooter) = begin
+  app = todo_app(footer)
+  remaining = count(t -> !t.done, app.todos)
+  label = remaining == 1 ? "1 item left" : "$remaining items left"
+  Box(width(grow=GrowType.Grow), height(24px),
+    Text(label, size=11pt, weight=600, color=colorant"rgb(100,116,139)"))
 end
 
 describe(app::TodoApp) = begin
-  (title, input, filters, list, footer) = app.children
+  title, composer, filters, list, footer = app.children
   Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-         padding(20px), background(colorant"rgb(248,248,250)"),
-    describe!(title),
-    Box(height(12px)),
-    describe!(input),
-    Box(height(16px)),
-    describe!(filters),
-    Box(height(12px)),
-    describe!(list),
-    describe!(footer))
+    padding(24px), background(colorant"rgb(246,247,251)"),
+    title,
+    Box(height(14px)),
+    composer,
+    Box(height(18px)),
+    filters,
+    Box(height(14px)),
+    list,
+    footer)
 end
 
-# --- helpers / behaviour ---
+# --- behaviour ---
 
-visible_items(app::TodoApp) =
-  app.filter == :all ? app.todos :
-  app.filter == :active ? filter(t -> !t.done, app.todos) :
-  filter(t -> t.done, app.todos)
+composer_input(app::TodoApp) = (app.children[2]::TodoComposer).firstchild::TextInput
 
 add_from_input!(app::TodoApp) = begin
-  text = strip(app.input.text)
+  input = composer_input(app)
+  text = strip(input.text)
   isempty(text) && return
   push!(app.todos, TodoItem(String(text), false))
-  app.input.text = ""
-  app.input.cursor = 0
-  app.input.anchor = 0
+  refresh_rows!(app)
+  input.text = ""
+  input.cursor = 0
+  input.anchor = 0
 end
 
 onkey(b::DeleteBtn, ::KeyPress{Keys.mouse_left}) = begin
-  app = b.row.app::TodoApp
-  filter!(t -> t !== b.row.item, app.todos)
+  row = b.parent::TodoRow
+  app = todo_app(row)
+  deleteat!(app.todos, row.index)
+  refresh_rows!(app)
 end
-onkey(t::FilterTab, ::KeyPress{Keys.mouse_left}) = (t.app.filter = t.mode)
 
-# Enter in the input adds a todo. The TextInput consumes character keys but
-# not Enter, so the event bubbles up to the TodoApp.
+onkey(t::FilterTab, ::KeyPress{Keys.mouse_left}) = begin
+  app = todo_app(t)
+  app.filter = t.mode
+  refresh_rows!(app)
+end
+
 onkey(app::TodoApp, ::KeyPress{Keys.enter}) = add_from_input!(app)
 
-# --- entry: data → SemanticUI → Window ---
+# --- entry: data -> SemanticUI -> Window ---
 
 const todoui = describe(data)
-const window = Window(todoui, title="Todos", size=(420px, 480px), animating=true)
+const window = Window(todoui, title="Todos", size=(440px, 500px), animating=true)
 onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
-focus(todoui.firstchild)  # input
+focus(composer_input(todoui))
 
 display(window)
