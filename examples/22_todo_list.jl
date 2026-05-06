@@ -68,7 +68,18 @@ end
 
 todo_item(row::TodoRow) = todo_app(row).todos[row.index]
 todo_list(app::TodoApp) = app.children[4]::TodoList
-refresh_rows!(app::TodoApp) = setfield!(todo_list(app), :firstchild, nothing)
+refresh_rows!(app::TodoApp) = begin
+  list = todo_list(app)
+  node = getfield(list, :firstchild)
+  while node !== nothing
+    next = node.nextsibling
+    node.parent = nothing
+    node.prevsibling = nothing
+    node.nextsibling = nothing
+    node = next
+  end
+  setfield!(list, :firstchild, nothing)
+end
 
 visible_indexes(app::TodoApp) =
   app.filter == :all ? collect(eachindex(app.todos)) :
