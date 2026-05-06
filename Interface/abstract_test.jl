@@ -17,9 +17,13 @@ const child = root.firstchild
 @test root.firstchild === child
 
 const geo = convert(GeometricUI, child)
+@test geo isa Box
 @test geo isa GeometricUI
+@test geo.width.preferred == 10px
+@test geo.height.preferred == 10px
 @test geo.from === child
 
 const parent = Box(width(20px), height(20px), child)
 @test parent.firstchild isa GeometricUI
 @test parent.firstchild.from === child
+@test parent.firstchild.parent === parent
