@@ -225,8 +225,10 @@ end
 
 onkey(b::DeleteBtn, ::KeyPress{Keys.mouse_left}) = begin
   row = b.parent::TodoRow
-  app = todo_app(row)
-  row.parent === todo_list(app) || return
+  row.parent isa TodoList || return
+  list = row.parent::TodoList
+  app = todo_app(list)
+  list === todo_list(app) || return
   row.index in eachindex(app.todos) || return
   deleteat!(app.todos, row.index)
   refresh_rows!(app)
