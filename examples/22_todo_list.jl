@@ -15,7 +15,7 @@
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
 @use "../Interface/draw" ui draw
-@use "../Interface/abstract" SemanticUI describe describe! focus add_child!
+@use "../Interface/abstract" SemanticUI describe describe_children describe! focus add_child!
 @use "../Interface/Semantic/TextInput" TextInput
 @use "../Interface/Semantic/Checkbox" Checkbox
 @use Colors: @colorant_str
@@ -27,19 +27,12 @@ mutable struct TodoItem
   done::Bool
 end
 
+const data = [
+  TodoItem("Buy milk", false),
+  TodoItem("Read the UI.jl docs", true),
+  TodoItem("Ship 22_todo_list.jl", false)]
+
 # --- semantic layer (domain UI types) ---
-
-@def mutable struct TodoApp <: SemanticUI
-  todos::Vector{TodoItem} = TodoItem[]
-  input::TextInput = TextInput(placeholder="What needs to be done?")
-  filter::Symbol = :all  # :all, :active, :done
-end
-
-@def mutable struct TodoRow <: SemanticUI
-  item::TodoItem = TodoItem("", false)
-  app::Any = nothing  # back-reference so we can remove ourselves
-end
-
 @def mutable struct DeleteBtn <: SemanticUI
   row::Any = nothing
 end
@@ -51,37 +44,30 @@ end
 end
 
 @def mutable struct FilterTab <: SemanticUI
-  app::Any = nothing
   mode::Symbol = :all
   label::String = "All"
 end
-
-@def mutable struct TodoFilters <: SemanticUI
-  app::Any = nothing
+@def mutable struct TodoFilters <: SemanticUI end
+@def mutable struct TodoList <: SemanticUI end
+@def mutable struct TodoRow <: SemanticUI
+  index::Int8
 end
+@def mutable struct TodoFooter <: SemanticUI end
 
-@def mutable struct TodoList <: SemanticUI
-  app::Any = nothing
-end
-
-@def mutable struct TodoFooter <: SemanticUI
-  app::Any = nothing
+describe_children(ui::TodoList) = begin
+  map(i->TodoRow(index=i), 1:length(ui.parent.todos))
 end
 
 # --- describe: data → SemanticUI ---
-
-# A bare list of items has enough info to produce a fully-functional app:
-# the input field, default :all filter, etc. all come from the TodoApp
-# constructor's defaults. Parenting the TextInput here makes focus()
-# walkable from the input back up to the eventual Root.
 describe(items::Vector{TodoItem}) = begin
-  app = TodoApp(todos=items)
-  add_child!(app, app.input)
-  app
+  TodoApp(todos=items,
+    TextInput(placeholder="What needs to be done?"),
+    TodoFilters(),
+    TodoList(),
+    TodoFooter())
 end
 
 # --- describe: SemanticUI → GeometricUI ---
-
 describe(b::DeleteBtn) =
   Box(width(22px), height(22px), Alignment.Center, radius(11px),
       background(colorant"rgb(245,245,245)"),
@@ -143,22 +129,24 @@ describe(l::TodoList) = begin
 end
 
 describe(f::TodoFooter) = begin
-  remaining = count(t -> !t.done, f.app.todos)
+  remaining = count(t -> !t.done, f.parent.todos)
   Box(width(grow=GrowType.Grow), height(20px),
     Text("$remaining left", size=11pt, color=colorant"rgb(140,140,140)"))
 end
 
-describe(app::TodoApp) =
+describe(app::TodoApp) = begin
+  (title, input, filters, list, footer) = app.children
   Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
          padding(20px), background(colorant"rgb(248,248,250)"),
-    describe!(TodoTitle()),
+    describe!(title),
     Box(height(12px)),
-    describe!(TodoInputRow(input=app.input)),
+    describe!(input),
     Box(height(16px)),
-    describe!(TodoFilters(app=app)),
+    describe!(filters),
     Box(height(12px)),
-    describe!(TodoList(app=app)),
-    describe!(TodoFooter(app=app)))
+    describe!(list),
+    describe!(footer))
+end
 
 # --- helpers / behaviour ---
 
@@ -188,11 +176,7 @@ onkey(app::TodoApp, ::KeyPress{Keys.enter}) = add_from_input!(app)
 
 # --- entry: data → SemanticUI → Window ---
 
-const todos = [TodoItem("Buy milk", false),
-               TodoItem("Read the UI.jl docs", true),
-               TodoItem("Ship 22_todo_list.jl", false)]
-
-const todoui = describe(todos)
+const todoui = describe(data)
 const window = Window(todoui, title="Todos", size=(420px, 480px), animating=true)
 onkey(w::Window, ::KeyPress{Keys.escape}) = close(w)
 focus(todoui.firstchild)  # input

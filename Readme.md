@@ -11,6 +11,8 @@ In prose this is saying the UI pipeline starts with data, from there you define 
 
 The pixels are what the user actually interacts with and these interactions are mapped back up the pipeline to the SemanticUI where through event handlers they affect either the data the UI was derived from or the state of the UI.
 
+To put it another way, you `describe()` you way down the ladder of abstraction from data to pixels, then `interpret()` user input back up to the data. i.e. Going from data to visuals is a chain of describe calls. Responding to user input is a chain of interpret calls.
+
 ## API
 
 ### `describe(data::Any, [parent::SemanticUI])::SemanticUI`

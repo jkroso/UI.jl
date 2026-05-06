@@ -63,6 +63,32 @@ end
 @property Text.firstchild = nothing
 @property UITree.lastchild = lastsibling(self.firstchild)
 @property UITree.children = SiblingIterator(self.firstchild)
+# Enable lazy generation of children for semantic nodes
+@property SemanticUI.firstchild = begin
+  fc = getfield(self, :firstchild)
+  isnothing(fc) || return fc
+  adopt!(self, describe_children(self))
+  getfield(self, :firstchild)
+end
+
+adopt!(parent::UITree, children::Nothing) = parent
+adopt!(parent::UITree, children) = begin
+  lastchild = nothing
+  for child in children
+    setfield!(child, :parent, ui)
+    if isnothing(lastchild)
+      setfield!(parent, :firstchild, child)
+    else
+      setfield!(lastchild, :nextsibling, child)
+      setfield!(child, :prevsibling, lastchild)
+    end
+    lastchild = child
+  end
+  ui
+end
+
+"Define this method if you want to generate the children of a SemanticUI node lazily"
+describe_children(ui) = nothing
 
 "Represents the UI as a high level description of geometric shapes"
 @abstract struct GeometricUI <: UITree
