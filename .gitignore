@@ -1,3 +1,4 @@
 Project.toml
 **/.claude/settings.local.json
 /clay
+.worktrees/
