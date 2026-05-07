@@ -14,7 +14,7 @@
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
 @use "../Interface/draw" ui draw
-@use "../Interface/abstract" SemanticUI describe describe_children focus
+@use "../Interface/abstract" SemanticUI SiblingIterator describe focus add_child!
 @use "../Interface/Semantic/TextInput" TextInput
 @use "../Interface/Semantic/Checkbox" Checkbox
 @use Colors: @colorant_str
@@ -57,6 +57,8 @@ end
 
 # --- semantic context helpers ---
 
+existing_children(ui::SemanticUI) = SiblingIterator(getfield(ui, :firstchild))
+
 todo_app(node::SemanticUI) = begin
   current = node
   while current !== nothing
@@ -67,10 +69,9 @@ todo_app(node::SemanticUI) = begin
 end
 
 todo_item(row::TodoRow) = todo_app(row).todos[row.index]
-todo_list(app::TodoApp) = app.children[4]::TodoList
-refresh_rows!(app::TodoApp) = begin
-  list = todo_list(app)
-  node = getfield(list, :firstchild)
+todo_list(app::TodoApp) = existing_children(app)[4]::TodoList
+detach_children!(parent::SemanticUI) = begin
+  node = getfield(parent, :firstchild)
   while node !== nothing
     next = node.nextsibling
     node.parent = nothing
@@ -78,7 +79,33 @@ refresh_rows!(app::TodoApp) = begin
     node.nextsibling = nothing
     node = next
   end
-  setfield!(list, :firstchild, nothing)
+  setfield!(parent, :firstchild, nothing)
+end
+
+row_checked!(c::Checkbox) = begin
+  row = c.parent
+  row isa TodoRow || return
+  row.parent isa TodoList || return
+  list = row.parent::TodoList
+  app = todo_app(list)
+  list === todo_list(app) || return
+  row.index in eachindex(app.todos) || return
+  app.todos[row.index].done = c.checked
+  refresh_rows!(app)
+end
+
+todo_row(app::TodoApp, index::Int) =
+  TodoRow(index=index,
+    Checkbox(checked=app.todos[index].done, onchange=row_checked!),
+    DeleteBtn())
+
+refresh_rows!(app::TodoApp) = begin
+  list = todo_list(app)
+  detach_children!(list)
+  for index in visible_indexes(app)
+    add_child!(list, todo_row(app, index))
+  end
+  list
 end
 
 visible_indexes(app::TodoApp) =
@@ -96,29 +123,18 @@ end
 
 # --- describe: data -> SemanticUI ---
 
-describe(items::Vector{TodoItem}) =
-  TodoApp(todos=items,
+describe(items::Vector{TodoItem}) = begin
+  app = TodoApp(todos=items,
     TodoTitle(),
     TodoComposer(TextInput(placeholder="What needs to be done?")),
-    TodoFilters(),
+    TodoFilters(
+      FilterTab(mode=:all),
+      FilterTab(mode=:active),
+      FilterTab(mode=:done)),
     TodoList(),
     TodoFooter())
-
-describe_children(::TodoFilters) =
-  [FilterTab(mode=:all), FilterTab(mode=:active), FilterTab(mode=:done)]
-
-describe_children(list::TodoList) =
-  map(i -> TodoRow(index=i), visible_indexes(todo_app(list)))
-
-describe_children(row::TodoRow) = begin
-  item = todo_item(row)
-  [
-    Checkbox(checked=item.done, onchange=c -> begin
-      item.done = c.checked
-      refresh_rows!(todo_app(row))
-    end),
-    DeleteBtn()
-  ]
+  refresh_rows!(app)
+  app
 end
 
 # --- describe: SemanticUI -> GeometricUI ---
@@ -132,14 +148,14 @@ describe(::TodoTitle) =
       Text("staged UI", size=10pt, weight=700, color=colorant"rgb(71,85,105)")))
 
 describe(c::TodoComposer) = begin
-  input = c.firstchild
+  input = getfield(c, :firstchild)
   Row(width(grow=GrowType.Grow), height(44px),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
       input))
 end
 
 describe(f::TodoFilters) = begin
-  all, active, done = f.children
+  all, active, done = existing_children(f)
   Row(width(grow=GrowType.Grow), height(32px),
     all,
     Box(width(8px)),
@@ -160,7 +176,7 @@ end
 
 describe(list::TodoList) = begin
   rows = []
-  for (i, row) in enumerate(list.children)
+  for (i, row) in enumerate(existing_children(list))
     i > 1 && push!(rows, Box(height(8px)))
     push!(rows, row)
   end
@@ -168,7 +184,7 @@ describe(list::TodoList) = begin
 end
 
 describe(row::TodoRow) = begin
-  checkbox, delete = row.children
+  checkbox, delete = existing_children(row)
   item = todo_item(row)
   Row(width(grow=GrowType.Grow), height(44px), padding(10px),
       radius(8px), background(colorant"white"),
@@ -195,7 +211,7 @@ describe(footer::TodoFooter) = begin
 end
 
 describe(app::TodoApp) = begin
-  title, composer, filters, list, footer = app.children
+  title, composer, filters, list, footer = existing_children(app)
   Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
     padding(24px), background(colorant"rgb(246,247,251)"),
     title,
@@ -210,7 +226,7 @@ end
 
 # --- behaviour ---
 
-composer_input(app::TodoApp) = (app.children[2]::TodoComposer).firstchild::TextInput
+composer_input(app::TodoApp) = getfield(existing_children(app)[2]::TodoComposer, :firstchild)::TextInput
 
 add_from_input!(app::TodoApp) = begin
   input = composer_input(app)
