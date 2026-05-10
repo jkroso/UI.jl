@@ -163,6 +163,18 @@ add_child!(r::UITree, child::UITree) = begin
   end
   child.parent = r
 end
+detach!(node::UITree) = begin
+  parent = node.parent
+  isnothing(parent) && return node
+  prev = node.prevsibling
+  next = node.nextsibling
+  isnothing(prev) ? setfield!(parent, :firstchild, next) : (prev.nextsibling = next)
+  isnothing(next) || (next.prevsibling = prev)
+  node.parent = nothing
+  node.prevsibling = nothing
+  node.nextsibling = nothing
+  node
+end
 
 "A symbolic representation of an image which just happens to be a UI"
 @abstract struct ConcreteUI <: UITree
@@ -180,6 +192,11 @@ describe(d::GeometricUI) = d
 
 "Call describe(node) and set result.from = node, returning the GeometricUI"
 describe!(node::SemanticUI) = convert(GeometricUI, node)
+
+"""
+Extracts the domain data currently represented by a UI node.
+"""
+function integrate end
 
 """
 Used to notify the relevant semantic UI node of some user input. To respond to this input just

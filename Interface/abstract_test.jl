@@ -1,13 +1,17 @@
-@use "github.com/jkroso/Rutherford.jl/test.jl" @test
+@use Test: @test
 @use "github.com/jkroso/Prospects.jl" @def
-@use "./abstract" SemanticUI GeometricUI describe describe_children
+@use "./abstract" SemanticUI GeometricUI describe describe_children integrate detach!
 @use "./Geometric" Box width height px
 
 @def mutable struct TestRoot <: SemanticUI end
 @def mutable struct TestChild <: SemanticUI end
+@def mutable struct TestState <: SemanticUI
+  label::String = ""
+end
 
 describe_children(::TestRoot) = [TestChild()]
 describe(::TestChild) = Box(width(10px), height(10px))
+integrate(::TestChild) = :child
 
 const root = TestRoot()
 const child = root.firstchild
@@ -27,3 +31,13 @@ const parent = Box(width(20px), height(20px), child)
 @test parent.firstchild isa GeometricUI
 @test parent.firstchild.from === child
 @test parent.firstchild.parent === parent
+@test integrate(child) == :child
+
+const state = TestState(TestChild(); label="ready")
+@test state.label == "ready"
+@test state.firstchild isa TestChild
+@test state.firstchild.parent === state
+
+const detached = detach!(state.firstchild)
+@test detached.parent === nothing
+@test state.firstchild === nothing

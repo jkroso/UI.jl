@@ -125,6 +125,8 @@ rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
   height::Height=Height()
   child_gap::Length=0px
   align::Alignment=Alignment.Center
+  offset_x::px=0px
+  offset_y::px=0px
 end
 
 "A box around vertically arranged children"
@@ -133,6 +135,23 @@ end
 @def mutable struct Row <: Container end
 "A box around a single child"
 @def mutable struct Box <: Container end
+
+"""
+Vertical scroll viewport. Sizes itself like a Box in the cross axis but
+lays its single child out at its natural height in the scroll axis,
+translating it by `offset` at position-time. State (`offset`,
+`content_height`, `hover`) lives on the geometric node so it survives
+across frames — keep the Scroll instance alive (e.g. as a `const`) and
+do not re-construct it inside a `describe(::SemanticUI)` body, or the
+scroll position will reset every frame.
+"""
+@def mutable struct Scroll <: Container
+  offset::px=0px
+  content_height::px=0px
+  hover::Bool=false
+end
+
+mixin!(r::Container, a::Alignment) = (r.align = a; r)
 
 mixin!(old::Border, new::Border) = begin
   Border(top=isempty(new.top) ? old.top : new.top,
@@ -144,4 +163,4 @@ end
 
 @property Container.between_width = self.child_gap + self.border.between.width
 
-export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Text, TextAlign, width, height, GrowType, Alignment, radius
+export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Scroll, Text, TextAlign, width, height, GrowType, Alignment, radius

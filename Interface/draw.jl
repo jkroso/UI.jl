@@ -1,12 +1,13 @@
 @use "github.com/jkroso/Prospects.jl" Field @def
 @use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont font_metrics text_bounds
-@use "github.com/jkroso/MiniFB.jl"... int KeyEvent
+@use "github.com/jkroso/MiniFB.jl"... int KeyEvent flt onscroll
 @use "github.com/jkroso/Font.jl" cap_height ["units" px absolute]
 @use GeometryBasics: Vec2
 @use Colors: @colorant_str, RGBA, alpha
-@use "./abstract" describe Root UITree SemanticUI
+@use Skia
+@use "./abstract" describe Root UITree SemanticUI ConcreteUI
 @use "./Geometric"...
-@use "./Specific"...
+@use "./Specific"... position!
 
 draw_between_row(ctx, ui, left) = begin
   border = ui.from.border.between
@@ -25,6 +26,46 @@ draw_between_column(ctx, ui, top) = begin
   line(ctx, start, finish, border.width, border.color)
 end
 
+"Run `f` with the canvas clipped to the given rect, then restore."
+function with_clip(f, ctx, left::px, top::px, w::px, h::px)
+  Skia.sk_canvas_save(ctx)
+  rect = Ref(Skia.sk_rect_t(flt(left), flt(top), flt(left + w), flt(top + h)))
+  Skia.sk_canvas_clip_rect_with_operation(ctx, rect, Skia.SK_CLIP_OP_INTERSECT, false)
+  try
+    f()
+  finally
+    Skia.sk_canvas_restore(ctx)
+  end
+end
+
+"True iff drawing `ui` is a no-op given the canvas's current clip. Lets us
+skip the entire subtree of an off-screen child without any rasterization
+work. Outside a clip context this always returns false."
+@inline function quick_reject(ctx, ui::ConcreteUI)
+  rect = Ref(Skia.sk_rect_t(flt(ui.left), flt(ui.top),
+                             flt(ui.left + ui.width), flt(ui.top + ui.height)))
+  Skia.sk_canvas_quick_reject_rect(ctx, rect)
+end
+
+function draw_scrollbar(ctx, ui::ConcreteRect, scroll::Scroll)
+  viewport = ui.height
+  content = scroll.content_height
+  content > viewport || return
+  track_w = 6px
+  margin = 4px
+  track_x = ui.left + ui.width - track_w - margin
+  track_y = ui.top + margin
+  track_h = ui.height - 2margin
+  thumb_h = max(24px, track_h * (viewport / content))
+  range = max(1px, content - viewport)
+  ratio = clamp(scroll.offset / range, 0.0, 1.0)
+  thumb_y = track_y + (track_h - thumb_h) * ratio
+  rounded_rectangle(ctx, track_x, track_y, track_w, track_h, track_w/2,
+                    background=RGBA(0, 0, 0, 0.06))
+  rounded_rectangle(ctx, track_x, thumb_y, track_w, thumb_h, track_w/2,
+                    background=RGBA(0, 0, 0, 0.38))
+end
+
 draw(ctx, size, ui::ConcreteRect) = begin
   (;background, border, radius) = ui.from
   bw = border.top.width
@@ -35,21 +76,39 @@ draw(ctx, size, ui::ConcreteRect) = begin
                                              color=isempty(border.top) ? nothing : border.top.color,
                                              stroke_width=bw)
   isfirst = true
-  if ui.from isa Row
+  if ui.from isa Scroll
+    with_clip(ctx, ui.left, ui.top, ui.width, ui.height) do
+      for child in ui.children
+        quick_reject(ctx, child) && continue
+        draw(ctx, child.size, child)
+      end
+    end
+    ui.from.hover && draw_scrollbar(ctx, ui, ui.from)
+  elseif ui.from isa Row
     left = ui.left
     for child in ui.children
+      step = child.width + ui.from.between_width
+      if quick_reject(ctx, child)
+        left += step
+        continue
+      end
       draw(ctx, child.size, child)
       isfirst || draw_between_row(ctx, ui, left)
       isfirst = false
-      left += child.width + ui.from.between_width
+      left += step
     end
   else
     top = ui.top
     for child in ui.children
+      step = child.height + ui.from.between_width
+      if quick_reject(ctx, child)
+        top += step
+        continue
+      end
       draw(ctx, child.size, child)
       isfirst || draw_between_column(ctx, ui, top)
       isfirst = false
-      top += child.height + ui.from.between_width
+      top += step
     end
   end
   ui.from.from !== nothing && draw(ctx, size, ui, ui.from.from)
@@ -277,8 +336,33 @@ ui(window) = window.ui
 
 const _scenes = Dict{UInt, ConcreteRect}()
 
+# Per-window memo of (geometric-tree id, size, ConcreteRect tree).
+# `frame` reuses the cached tree whenever the geometric input is the same
+# instance and the window hasn't been resized — `initialize` and `fit!`
+# produce identical output in that case, so we skip them and just rerun
+# `position!` to pick up scroll-offset changes (and any other state that
+# only affects coordinates). `describe(::SemanticUI)` that produces a
+# fresh geometric tree each frame will always miss the cache and hit the
+# full pipeline, which is correct.
+const _layout_cache = Dict{UInt, Tuple{UInt, Vec2{px}, ConcreteRect}}()
+
+invalidate_layout!(w::AbstractWindow) = (delete!(_layout_cache, objectid(w)); nothing)
+
+resolve_layout(geo::Container, size, window_id::UInt) = begin
+  cached = get(_layout_cache, window_id, nothing)
+  if cached !== nothing && cached[1] == objectid(geo) && cached[2] == size
+    cui = cached[3]
+    position!(geo, cui)
+    return cui
+  end
+  cui = describe(geo, size)
+  _layout_cache[window_id] = (objectid(geo), size, cui)
+  cui
+end
+
 frame(window::Window) = begin
-  scene = describe(describe(ui(window)), window.size)
+  geo = describe(ui(window))
+  scene = resolve_layout(geo, window.size, objectid(window))
   _scenes[objectid(window)] = scene
   ov = get(_overlay, objectid(window), nothing)
   tt = get(_tooltip, objectid(window), nothing)
@@ -363,8 +447,58 @@ onkey(w::Window, e) = begin
   end
 end
 
+"Walk a concrete tree and return the deepest ConcreteRect whose
+geometric source is a Scroll and that contains `pos`. Returns nothing
+if the cursor isn't inside any scroll viewport. Bails on each
+out-of-bounds rect immediately, so cost is O(depth + matching siblings)
+not O(tree size)."
+find_scroll_at(::Any, _) = nothing
+find_scroll_at(rect::ConcreteRect, pos) = begin
+  (rect.left <= pos[1] <= rect.left + rect.width &&
+   rect.top  <= pos[2] <= rect.top  + rect.height) || return nothing
+  for child in rect.children
+    found = find_scroll_at(child, pos)
+    found === nothing || return found
+  end
+  rect.from isa Scroll ? rect : nothing
+end
+
+# Per-window memo of which Scroll is currently hovered. Lets the
+# mouse-move handler bail on the common case (cursor stays inside the
+# same scroll, or stays outside all scrolls) without ever touching the
+# tree past the find_scroll_at walk.
+const _hovered_scroll = Dict{UInt, Scroll}()
+
+update_scroll_hover!(w, scene::ConcreteRect, pos) = begin
+  id = objectid(w)
+  rect = find_scroll_at(scene, pos)
+  current = rect === nothing ? nothing : rect.from::Scroll
+  prev = get(_hovered_scroll, id, nothing)
+  current === prev && return
+  prev === nothing || (prev.hover = false)
+  if current === nothing
+    delete!(_hovered_scroll, id)
+  else
+    current.hover = true
+    _hovered_scroll[id] = current
+  end
+end
+
+onscroll(w::Window, delta::Vec2{px}) = begin
+  scene = get(_scenes, objectid(w), nothing)
+  scene === nothing && return
+  rect = find_scroll_at(scene, w.mouse)
+  rect === nothing && return
+  scroll = rect.from::Scroll
+  max_offset = max(0px, scroll.content_height - rect.height)
+  step = -delta[2] * 30
+  scroll.offset = clamp(scroll.offset + step, 0px, max_offset)
+end
+
 onmouse(w::Window, e::MouseMove) = begin
   id = objectid(w)
+  scene = get(_scenes, id, nothing)
+  scene === nothing || update_scroll_hover!(w, scene, e.position)
   ov = get(_overlay, id, nothing)
   if ov !== nothing
     ov.hover = menu_hittest(ov, e.position)

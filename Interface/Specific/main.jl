@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
 @use "github.com/jkroso/Font.jl" Font widths! TTFont ascent descent cap_height ["units" Length px FontUnit absolute relative]
 @use "../Geometric"... Width Height
-@use "../abstract" describe ConcreteUI
+@use "../abstract" describe ConcreteUI WrapMode
 @use GeometryBasics: Vec2, Vec
 @use Colors...
 @use "github.com/jkroso/MiniFB.jl"... int
@@ -84,19 +84,16 @@ function initialize(ui::Row, parent::ConcreteRect)
   if !isgrowable(ui, Axis.x) && ui.width.preferred == 0px
     rect.width = sum(field"width", rect.children, init=0px) + extra_width(rect)
   end
-  # Set initial height for children
+  # Set initial height for children. Children whose own `initialize` already
+  # computed a natural height (Box=max, Column=sum, Text=caph) keep it; only
+  # growable children with no preferred height get stretched to fill the row.
   for child in rect.children
     h = if child.from.height.preferred != 0px
       child.from.height.preferred
     elseif isgrowable(child, Axis.y)
       internalheight(rect)
     else
-      # Use child's natural height
-      if child isa ConcreteText
-        child.height  # Already set by initialize(::Text)
-      else
-        maximum(field"height", child.children, init=0px) + extra_height(child)
-      end
+      child.height
     end
     child.height = clamp(convert(px, h), minsize(child, field"height"), maxsize(child, field"height"))
   end
@@ -222,6 +219,16 @@ end
 sizing_axis(::Row) = Axis.x
 sizing_axis(::Column) = Axis.y
 
+function fit!(ui::Scroll, cui::ConcreteRect)
+  # Cross axis: grow/shrink width like a Box. Scroll axis (y): never
+  # shrink — the content is allowed to overflow the viewport.
+  remaining = grow!(cui, Axis.x)
+  shrink!(cui, remaining, Axis.x)
+  for child in cui.children
+    fit!(child.from, child)
+  end
+end
+
 function fit!(ui::Box, cui::ConcreteRect)
   for axis in (Axis.x, Axis.y)
     remaining = grow!(cui, axis)
@@ -253,6 +260,31 @@ remaining_size(ui::ConcreteRect, f::Field{:width}) = internalwidth(ui) - sum(f, 
 function position!(::Text, ui::ConcreteText) end
 
 # Align contents in both directions
+# Visual translation offset baked onto Container nodes (animations, etc.).
+# Applied to each child immediately before recursing into its position!,
+# so the offset propagates through the whole subtree without affecting
+# how siblings flow.
+apply_translate!(child::ConcreteRect) = begin
+  c = child.from
+  if c isa Container
+    child.left += c.offset_x
+    child.top  += c.offset_y
+  end
+end
+apply_translate!(_::ConcreteUI) = nothing
+
+function position!(scroll::Scroll, ui::ConcreteRect)
+  isempty(ui.children) && return
+  child = ui.children[1]
+  pad = scroll.padding
+  bord = scroll.border
+  child.left = ui.left + pad.left + bord.left.width
+  child.top  = ui.top  + pad.top  + bord.top.width - scroll.offset
+  scroll.content_height = child.height + pad.top + pad.bottom + bord.top.width + bord.bottom.width
+  apply_translate!(child)
+  position!(child.from, child)
+end
+
 function position!((;padding,border,align, between_width)::Box, ui::ConcreteRect)
   isempty(ui.children) && return
   child = ui.children[1]
@@ -280,6 +312,7 @@ function position!((;padding,border,align, between_width)::Box, ui::ConcreteRect
   end
   child.top = isapprox(int(mintop), int(top), atol=1) ? mintop : top
   child.left = isapprox(int(minleft), int(left), atol=1) ? minleft : left
+  apply_translate!(child)
   position!(child.from, child)
 end
 
@@ -300,6 +333,7 @@ function position!((;padding,border,align, between_width)::Row, ui::ConcreteRect
     child.top = isapprox(int(mintop), int(top), atol=1) ? mintop : top
     child.left = left
     left += child.width + between_width
+    apply_translate!(child)
     position!(child.from, child)
   end
 end
@@ -321,6 +355,7 @@ function position!((;padding,border,align,between_width)::Column, ui::ConcreteRe
     child.left = isapprox(int(minleft), int(left), atol=1) ? minleft : left
     child.top = top
     top += child.height + between_width
+    apply_translate!(child)
     position!(child.from, child)
   end
 end
@@ -338,7 +373,9 @@ maxsize(ui::ConcreteUI, prop::Field) = maxsize(ui.from, prop)
 # The width of the text element should already of been allocated so here we just wrap the text
 # and set the height accordingly
 function fit!(from::Text, ui::ConcreteText)
-  ui.lines = wraptext(from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
+  ui.lines = from.wrap == WrapMode.none ?
+    SubString{String}[SubString(from.content)] :
+    wraptext(from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
   # Height tracks visible glyph bounds, NOT the font's full line box.
   # A single line is exactly cap_height tall — placing the baseline at the box
   # bottom — so wrapping a Text in a centred Box visually centres the cap area

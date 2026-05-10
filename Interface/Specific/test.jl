@@ -1,4 +1,4 @@
-@use "github.com/jkroso/Rutherford.jl/test.jl" @test testset
+@use Test: @test
 @use "github.com/jkroso/Prospects.jl" @field_str
 @use "../Geometric"...
 @use "."... grow!
