@@ -33,22 +33,33 @@ Invalid place to create semantic nodes:
 
 ```julia
 describe(items::Vector{TodoItem}) =
-  TodoApp(todos=items,
+  TodoApp(
     TodoTitle(),
     TodoComposer(TextInput(placeholder="What needs to be done?")),
     TodoFilters(),
-    TodoList(),
+    TodoList(items),
     TodoFooter())
 ```
 
-`TodoList` may lazily create row nodes because rows are semantic children:
+`TodoList` should generate one persistent row node per todo item:
 
 ```julia
-describe_children(list::TodoList) =
-  map(i -> TodoRow(index=i), visible_indexes(app(list)))
+TodoList(items::Vector{TodoItem})
 ```
 
-Rows should use indexes for now, not direct `TodoItem` references. A row resolves its item from `app.todos[row.index]` when it is lowered.
+Rows should copy the data they render into editable semantic state, not hold indexes back into the source vector. `describe(data)` creates that editable tree; event handlers mutate the tree; `integrate(ui)` extracts fresh domain data from the current tree.
+
+Filtering should not destroy and rebuild row nodes. Each `TodoRow` carries visibility state, and filter changes update that state on existing rows. Adds append one row and deletes detach one row. This preserves semantic identity for later animation work.
+
+The upward data extraction path is explicit:
+
+```julia
+integrate(row::TodoRow)::TodoItem
+integrate(list::TodoList)::Vector{TodoItem}
+integrate(app::TodoApp)::Vector{TodoItem}
+```
+
+`integrate(app)` should only integrate the todo list. Filters and composer input are UI state and are not part of the returned domain data.
 
 ## Semantic To Geometric Lowering
 

@@ -9,9 +9,9 @@ Data -> SemanticUI -> GeometricUI -> ConcreteUI -> Pixels ───────�
 
 In prose this is saying the UI pipeline starts with data, from there you define the semantic structure of the UI as the user will think of it: `Button`, `Menu`, `Image`. That kind of thing. You don't concern yourself with how it will actually look at this point. That's for the next step in the pipeline; GeometricUI. This is where you define from a high level how each UI element will look: `Rectangle`, `Line`, `Circle`, `Text` etc... You don't have to specify the size and position of everything though you can if you want. It's whatever level of specificity you prefer. Less specificity is better because it enables the UI to handle different screen sizes. The next step, ConcreteUI is where we pass in the screen size and resolve the geometric description into what is essentially a compressed image. The final step is generating the pixels which can be thought of as image decompression.
 
-The pixels are what the user actually interacts with and these interactions are mapped back up the pipeline to the SemanticUI where through event handlers they affect either the data the UI was derived from or the state of the UI.
+The pixels are what the user actually interacts with and these interactions are mapped back up the pipeline to the SemanticUI where event handlers update semantic UI state. When you want the edited domain value, call `integrate(ui)` on the semantic tree. This keeps interaction local to the UI until the program explicitly asks for updated data.
 
-To put it another way, you `describe()` you way down the ladder of abstraction from data to pixels, then `interpret()` user input back up to the data. i.e. Going from data to visuals is a chain of describe calls. Responding to user input is a chain of interpret calls.
+To put it another way, you `describe()` your way down the ladder of abstraction from data to pixels, event handlers mutate the semantic UI tree, and `integrate()` extracts domain data back out of that tree. Going from data to visuals is a chain of describe calls. Going from edited semantic UI back to domain values is an integrate call.
 
 ## API
 
@@ -26,6 +26,10 @@ Takes a semantic description of the UI and gives you a geometric one.
 ### `describe(ui::GeometricUI, size::Tuple{px,px})::ConcreteUI`
 
 Resolves the geometric description into one of an image appropriate for a given screen size.
+
+### `integrate(ui::SemanticUI)`
+
+Extracts the domain data currently represented by a semantic UI tree. This pairs with `describe(data)`: `describe` creates editable semantic state from data, while `integrate` collects that edited state back into domain values.
 
 ### `focus(ui::SemanticUI)`
 
