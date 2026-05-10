@@ -282,7 +282,7 @@ tick_animations!(app::TodoApp) = begin
         # Height changes can't be picked up by `position!` alone — the
         # ConcreteRect's height was set during fit!, so we need a fresh
         # layout pass for the collapse phase.
-        r.geo.height = Height(preferred=44px * (1 - prog.collapse))
+        r.geo.height = height(preferred=44px * (1 - prog.collapse))
         needs_relayout = true
       end
     end
