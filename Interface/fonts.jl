@@ -64,6 +64,11 @@ end
 
 const _skia_fonts = Dict{Tuple{String,String,Float32},SkiaFont}()
 
+# Typefaces and fonts point into Skia's memory, which only lasts as long as the
+# process. A compiled app starts with whatever was cached when it was built, so
+# throw those away.
+__init__() = (empty!(_typefaces); empty!(_skia_fonts))
+
 """
 A Skia font for `family` at `size`, cached so drawing every frame doesn't
 rebuild it. Families added with `register_font` win over installed ones. For

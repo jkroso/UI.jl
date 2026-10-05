@@ -9,6 +9,10 @@ end
 
 const _images = Dict{String,ImageSource}()
 
+# Decoded images live in Skia's memory, so a compiled app can't reuse the ones
+# cached when it was built
+__init__() = empty!(_images)
+
 """
 Decode the image at `path` with Skia. The decoded image is cached for the life of
 the process, so layout and drawing can ask for it every frame. Images added with

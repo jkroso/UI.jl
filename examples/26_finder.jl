@@ -282,6 +282,7 @@ is_image(e::Entry) = !e.folder && lowercase(splitext(e.path)[2]) in IMAGE_TYPES 
   quicklook::Bool = false
   appearance::Symbol = :system         # :system follows the Mac. :light and :dark don't.
   dark::Union{Nothing,Bool} = nothing  # what the window was last set to
+  us::Bool = false                     # Finder says "Favorites" and "Trash" in the US
   last_click::Tuple{String,Float64} = ("", 0.0)
   # A mouse press that may become a drag: what was pressed, and where
   press::Any = nothing
@@ -390,26 +391,24 @@ end
 own!(f, node) = (node.parent === nothing && setfield!(node, :parent, f); node)
 item!(f, key, make) = get!(() -> own!(f, make()), f.items, key)
 
-const HOME = homedir()
-# Finder says "Favourites" and "Bin" outside the US
-const US = endswith(locale(), "_US")
 
-build_finder(path=HOME) = begin
-  f = Finder(path=abspath(expanduser(path)))
-  for (dir, icon) in (("/Applications", "grid"), (joinpath(HOME, "Desktop"), "display"),
-                      (joinpath(HOME, "Documents"), "file-earmark"), (joinpath(HOME, "Downloads"), "arrow-down-circle"),
-                      (HOME, "house"))
+build_finder(path=homedir()) = begin
+  home = homedir()
+  f = Finder(path=abspath(expanduser(path)), us=endswith(locale(), "_US"))
+  for (dir, icon) in (("/Applications", "grid"), (joinpath(home, "Desktop"), "display"),
+                      (joinpath(home, "Documents"), "file-earmark"), (joinpath(home, "Downloads"), "arrow-down-circle"),
+                      (home, "house"))
     isdir(dir) && push!(f.places, Place(path=dir, icon=icon))
   end
   push!(f.places, :locations)
-  icloud = joinpath(HOME, "Library", "Mobile Documents", "com~apple~CloudDocs")
+  icloud = joinpath(home, "Library", "Mobile Documents", "com~apple~CloudDocs")
   isdir(icloud) && push!(f.places, Place(path=icloud, name="iCloud Drive", icon="cloud"))
   push!(f.places, Place(path="/", icon="hdd"))
   for v in (isdir("/Volumes") ? readdir("/Volumes", join=true) : String[])
     !islink(v) && sidebar_volume(v) && push!(f.places, Place(path=v, icon="hdd"))
   end
-  bin = joinpath(HOME, ".Trash")
-  isdir(bin) && push!(f.places, Place(path=bin, name=US ? "Trash" : "Bin", icon="trash3"))
+  bin = joinpath(home, ".Trash")
+  isdir(bin) && push!(f.places, Place(path=bin, name=f.us ? "Trash" : "Bin", icon="trash3"))
   for p in f.places
     p isa Place && add_child!(f, p)
   end
@@ -518,7 +517,7 @@ section(title) = Box(width(grow=grow), height(30px), padding(0px, 10px, 4px, 10p
   Row(width(grow=grow), label(title, 11px, color=colours.section, weight="Semibold")))
 
 sidebar(f) = begin
-  parts = Any[f.traffic_lights, section(US ? "Favorites" : "Favourites")]
+  parts = Any[f.traffic_lights, section(f.us ? "Favorites" : "Favourites")]
   for p in f.places
     push!(parts, p === :locations ? section("Locations") : p)
   end
@@ -1372,12 +1371,22 @@ end
 
 # --- window ------------------------------------------------------------------
 
-if abspath(PROGRAM_FILE) == @__FILE__
-  const folders = filter(a -> !startswith(a, "--"), ARGS)
-  const browser = build_finder(isempty(folders) ? HOME : folders[1])
-  browser.appearance = "--dark" in ARGS ? :dark : "--light" in ARGS ? :light : :system
-  const window = Window(browser, title="UI.jl Finder", size=(1100px, 680px))
-  onopen(w::Window) = hide_titlebar!(w)
+"""
+Open a Finder window and run it until it closes. `args` can name a folder to
+start in, and `--dark` or `--light` to choose an appearance.
+"""
+open_finder(args) = begin
+  # macOS can pass its own -options to an app it opens, so skip anything with a dash
+  folders = filter(a -> !startswith(a, "-"), args)
+  browser = build_finder(isempty(folders) ? homedir() : folders[1])
+  browser.appearance = "--dark" in args ? :dark : "--light" in args ? :light : :system
+  window = Window(browser, title="UI.jl Finder", size=(1100px, 680px))
   focus(browser)
   display(window)
+end
+
+onopen(w::Window) = hide_titlebar!(w)
+
+if abspath(PROGRAM_FILE) == @__FILE__
+  open_finder(ARGS)
 end

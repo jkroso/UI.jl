@@ -11,7 +11,7 @@ const macos = Sys.isapple()
 
 # AppKit holds NSWorkspace and NSBitmapImageRep. GLFW loads it for its window,
 # but a PNG-only run has no window, so load it here too.
-macos && Libdl.dlopen("/System/Library/Frameworks/AppKit.framework/AppKit")
+__init__() = macos && Libdl.dlopen("/System/Library/Frameworks/AppKit.framework/AppKit")
 
 fileurl(path) = msg(cls("NSURL"), "fileURLWithPath:", nsstring(path))
 
@@ -125,8 +125,9 @@ file_icon(path::AbstractString, isdir::Bool, package::Bool; px=128, fetch=true) 
   register_image(key, bytes)
 end
 
-const special = Set(joinpath(homedir(), d) for d in ("Desktop", "Documents", "Downloads", "Movies", "Music",
-                                                      "Pictures", "Public", "Library", "Applications"))
-special_folder(path) = path in special || path == homedir() || dirname(path) == "/" || path == "/Applications"
+const special = ("Desktop", "Documents", "Downloads", "Movies", "Music", "Pictures", "Public", "Library", "Applications")
+"True for folders with their own icon, like ~/Downloads"
+special_folder(path) = dirname(path) == homedir() && basename(path) in special ||
+                       path == homedir() || dirname(path) == "/" || path == "/Applications"
 
 export FileInfo, file_info, file_icon, available_space, sidebar_volume, locale
