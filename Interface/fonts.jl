@@ -15,6 +15,13 @@ const weight_names = [100 => "Thin", 200 => "ExtraLight", 300 => "Light", 400 =>
 "The conventional style name for a numeric font weight"
 weight_name(weight::Integer) = last(argmin(((w, _),) -> abs(w - weight), weight_names))
 
+"The numeric weight for a style name like \"Bold\" or \"Semi Bold\", or 400 if it isn't one"
+weight_of(style::AbstractString) = begin
+  key = lowercase(replace(style, r"[\s_-]" => ""))
+  i = findfirst(((_, name),) -> lowercase(name) == key, weight_names)
+  i === nothing ? 400 : first(weight_names[i])
+end
+
 """
 Make the font file at `path` usable by its family name, without installing it.
 Layout measures text through Fontconfig and drawing goes through Skia, so the
@@ -59,13 +66,14 @@ const _skia_fonts = Dict{Tuple{String,String,Float32},SkiaFont}()
 
 """
 A Skia font for `family` at `size`, cached so drawing every frame doesn't
-rebuild it. Families added with `register_font` win over installed ones.
+rebuild it. Families added with `register_font` win over installed ones. For
+an installed family, `subfamily` picks the weight by name, e.g. "Semibold".
 """
 skia_font(family::AbstractString, size, subfamily::AbstractString="") = begin
   sz = flt(size)
   get!(_skia_fonts, (String(family), String(subfamily), sz)) do
     typeface = get(_typefaces, "$family:$subfamily", get(_typefaces, family, nothing))
-    typeface === nothing && return SkiaFont(String(family), size)
+    typeface === nothing && return SkiaFont(String(family), size, Skia.sk_font_style_weight_t(weight_of(subfamily)))
     raw = Skia.sk_font_new_with_values(typeface, sz, 1f0, 0f0)
     SkiaFont(String(family), Skia.SK_FONT_STYLE_WEIGHT_NORMAL, Skia.SK_FONT_STYLE_SLANT_UPRIGHT, sz, raw)
   end

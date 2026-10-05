@@ -152,6 +152,12 @@ end
 @def mutable struct Row <: Container end
 "A box around a single child"
 @def mutable struct Box <: Container end
+"""
+Children placed on top of each other. Each one is sized and aligned against the
+whole Stack, and later children draw over earlier ones and get the first click.
+Use it to float a panel, like a dialog, over the rest of a layout.
+"""
+@def mutable struct Stack <: Container end
 
 @Enum ScrollbarMode hover always never
 
@@ -159,7 +165,7 @@ end
 Vertical scroll viewport. Sizes itself like a Box in the cross axis but
 lays its single child out at its natural height in the scroll axis,
 translating it by `offset` at position-time. State (`offset`,
-`content_height`, `hover`) lives on the geometric node so it survives
+`content_height`, `viewport`, `hover`) lives on the geometric node so it survives
 across frames — keep the Scroll instance alive (e.g. as a `const`) and
 do not re-construct it inside a `describe(::SemanticUI)` body, or the
 scroll position will reset every frame.
@@ -177,6 +183,22 @@ The scrollbar thumb can be dragged. `scrollbar` says when it shows:
   scrollbar_track::Colorant=RGBA(0, 0, 0, 0.06)
   thumb_hover::Bool=false
   dragging::Bool=false
+  viewport::px=0px
+end
+
+"""
+Scroll the shortest distance that shows the content from `top` to `bottom`,
+both measured from the top of the content. It needs one layout first, to learn
+how tall the Scroll is.
+"""
+scroll_into_view!(s::Scroll, top, bottom) = begin
+  s.viewport > 0px || return s
+  if top < s.offset
+    s.offset = top
+  elseif bottom > s.offset + s.viewport
+    s.offset = bottom - s.viewport
+  end
+  s
 end
 
 """
@@ -202,4 +224,4 @@ end
 
 @property Container.between_width = self.child_gap + self.border.between.width
 
-export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Scroll, ScrollbarMode, Image, Text, TextAlign, width, height, GrowType, Alignment, radius
+export padding, background, border, rgb, pt, mm, px, Container, Box, Stack, Column, Row, Scroll, ScrollbarMode, scroll_into_view!, Image, Text, TextAlign, width, height, GrowType, Alignment, radius

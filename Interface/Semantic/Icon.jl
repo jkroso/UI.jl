@@ -23,7 +23,8 @@ end
 
 Icon(name::String; kwargs...) = Icon(;name=name, kwargs...)
 
-describe(icon::Icon) = Box(width(icon.size), height(icon.size))
+# An icon keeps its size when its row runs out of room. Squeezed, it would vanish.
+describe(icon::Icon) = Box(width(min=icon.size, preferred=icon.size), height(min=icon.size, preferred=icon.size))
 
 draw(ctx, size, ui::ConcreteRect, icon::Icon) = begin
   data = load_icon(icon.name)

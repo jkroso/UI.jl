@@ -6,7 +6,7 @@
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
 @use GLFW
-@use "./abstract" describe Root UITree SemanticUI ConcreteUI window_of
+@use "./abstract" describe Root UITree SemanticUI GeometricUI ConcreteUI window_of
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
@@ -456,7 +456,7 @@ frame(window::Window) = begin
   stats = frame_stats(window)
   t = get(_tools, id, nothing)
   t0 = time_ns()
-  geo = describe(ui(window))
+  geo = convert(GeometricUI, ui(window))
   t1 = time_ns()
   scene = resolve_layout(geo, app_size(t, window.size), id)
   t2 = time_ns()
@@ -503,11 +503,15 @@ hittest(ui::ConcreteRect, pos) = begin
 end
 hittest(::ConcreteText, pos) = nothing
 
-"Find the SemanticUI node under the mouse cursor"
-hittest(w::Window) = begin
+"""
+Find the SemanticUI node under the mouse cursor, or under `pos`. Inside a
+`MouseMove` handler, pass the event's position: the window records where the
+mouse is only after the handler returns.
+"""
+hittest(w::Window, pos=w.mouse) = begin
   scene = get(_scenes, objectid(w), nothing)
   scene === nothing && return nothing
-  hittest(scene, w.mouse)
+  hittest(scene, pos)
 end
 
 "Dispatch an event to a target, bubbling up through parent SemanticUI nodes"
@@ -644,8 +648,24 @@ end_scroll_drag!(w::Window) = begin
   true
 end
 
+"""
+Read where the cursor is from GLFW. A click can arrive with no move before it,
+like the click that brings an inactive window to the front, so the last move
+event may be out of date.
+"""
+sync_mouse!(w::Window) = begin
+  isempty(w.glfw) && return
+  x, y = GLFW.GetCursorPos(w.glfw[1])
+  pos = Vec2{px}(px(x), px(y))
+  pos == w.mouse && return
+  w.mouse = pos
+  scene = get(_scenes, objectid(w), nothing)
+  scene === nothing || update_hover!(w, scene, pos)
+end
+
 onkey(w::Window, e) = begin
   id = objectid(w)
+  is_mouse_button(e) && sync_mouse!(w)
   t = get(_tools, id, nothing)
   t !== nothing && tool_input(t, w, e) && return
   ov = get(_overlay, id, nothing)

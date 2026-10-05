@@ -1,5 +1,5 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
-@use "github.com/jkroso/Font.jl" Font widths! TTFont ascent descent cap_height ["units" Length px FontUnit absolute relative]
+@use "github.com/jkroso/Font.jl" ["units" Length px absolute]
 @use "../Geometric"... Width Height Dimension
 @use "../abstract" describe ConcreteUI WrapMode
 @use "../fonts" skia_font
@@ -7,7 +7,7 @@
 @use GeometryBasics: Vec2, Vec
 @use Colors...
 @use "github.com/jkroso/MiniFB.jl"... int
-@use "github.com/jkroso/MiniFB.jl/skia" font_metrics
+@use "github.com/jkroso/MiniFB.jl/skia" font_metrics measure_text
 
 @Enum Axis x y
 
@@ -54,14 +54,14 @@ end
 end
 
 @def mutable struct ConcreteText <: ConcreteUI
-  font::Font
   width::px=0px
   height::px=0px
   top::px=0px
   left::px=0px
   lines::Vector{SubString{String}}=Vector[]
   words::Vector{SubString{String}}=Vector[]
-  widths::Vector{FontUnit}=Vector[]
+  # How wide each word is, measured with the Skia font that draws it
+  widths::Vector{px}=px[]
 end
 
 @property ConcreteText.size = Vec2{px}(self.width, self.height)
@@ -158,7 +158,9 @@ function initialize(ui::Container, parent::ConcreteRect)
       rect.width = clamp(0px, ui.width.min, ui.width.max)
     end
   end
-  rect.min_width = max(convert(px, ui.width.min), content_min_width(ui, rect))
+  # Something that never shrinks is as narrow as it can get already
+  rect.min_width = ui.width.grow == GrowType.None ? rect.width :
+                   max(convert(px, ui.width.min), content_min_width(ui, rect))
   rect
 end
 
@@ -167,13 +169,13 @@ content_min_width(ui::Container, rect) = clips(ui) ? extra(rect, Axis.x) : _cont
 "True when a container hides content that doesn't fit, so it can be narrower than it"
 clips(ui::Container) = ui.clip || ui isa Scroll
 _content_min_width(::Row, rect) = sum(c -> minsize(c, field"width"), rect.children, init=0px) + extra(rect, Axis.x)
-_content_min_width(::Union{Box,Column,Scroll}, rect) =
+_content_min_width(::Union{Box,Stack,Column,Scroll}, rect) =
   maximum(c -> minsize(c, field"width"), rect.children, init=0px) + extra(rect, Axis.x)
 _content_min_width(::Container, rect) = 0px
 
 "How wide a container's content is, or `nothing` if the content doesn't say"
 content_width(::Row, rect) = sum(field"width", rect.children, init=0px) + extra(rect, Axis.x)
-content_width(::Union{Box,Column,Scroll}, rect) = maximum(field"width", rect.children, init=0px) + extra(rect, Axis.x)
+content_width(::Union{Box,Stack,Column,Scroll}, rect) = maximum(field"width", rect.children, init=0px) + extra(rect, Axis.x)
 content_width(::Container, rect) = nothing
 content_width(img::Image, rect) = begin
   img.height.preferred == 0px && return nothing
@@ -340,7 +342,7 @@ wraplines(from::Text, ui::ConcreteText) = begin
   elseif from.wrap == WrapMode.newlines
     split(from.content, '\n')
   else
-    wraptext(from.content, ui.font.face, ui.width, words=ui.words, widths=ui.widths, size=ui.font.size)
+    wraptext(from.content, ui.width, ui.words, ui.widths, text_width(from, " "))
   end
 end
 
@@ -369,8 +371,8 @@ minsize(ui::ConcreteUI, prop::Field) = minsize(ui.from, prop)
 minsize(ui::ConcreteRect, ::Field{:width}) = ui.min_width
 minsize(ui::ConcreteText, ::Field{:width}) =
   ui.from.wrap == WrapMode.words ?
-    maximum(word->textwidth(String(word), ui.font), ui.words, init=0px) :
-    natural_width(ui.from, ui.font)
+    maximum(ui.widths, init=0px) :
+    natural_width(ui.from)
 minsize(ui::ConcreteText, ::Field{:height}) = ui.height
 
 maxsize(ui::Container, prop::Field) = max(getproperty(ui, prop).preferred, getproperty(ui, prop).max)
@@ -390,26 +392,28 @@ function best(growable; by=field"width", comp=(>))
   group, 0px
 end
 
-const _fonts = Dict{Tuple{String,String,Length},Font}()
-"Font.jl parses the whole font file for each new Font, so share them"
-font(family, subfamily, size) = get!(() -> Font(family*':'*subfamily, size), _fonts, (family, subfamily, size))
+"""
+How wide `s` is when drawn in `t`'s font. Layout measures with the same Skia
+font that draws the text, so the two always agree. Measuring the font file
+directly can't, for fonts like the macOS system font that the system adjusts
+for each size.
+"""
+text_width(t::Text, s::AbstractString) = px(measure_text(skia_font(t.family, t.size, t.subfamily), s)[1])
 
 function initialize(ui::Text, parent)
-  f = font(ui.family, ui.subfamily, ui.size)
   words = split(ui.content)
   ConcreteText(from=ui,
-               width=natural_width(ui, f),
+               width=natural_width(ui),
                height=skia_cap_height(ui),  # natural height = visible glyph height (single line)
-               font=f,
                words=words,
-               widths=widths!(words, f.face),
+               widths=px[text_width(ui, w) for w in words],
                parent=parent)
 end
 
-natural_width(ui::Text, f::Font) =
+natural_width(ui::Text) =
   ui.wrap == WrapMode.newlines ?
-    maximum(line -> textwidth(line, f), split(ui.content, '\n'), init=0px) :
-    textwidth(ui.content, f)
+    maximum(line -> text_width(ui, line), split(ui.content, '\n'), init=0px) :
+    text_width(ui, ui.content)
 
 "Look up Skia's actual cap-height for a Text's font, in px. Cached by (family, subfamily, size)."
 const _skia_cap_height_cache = Dict{Tuple{String,String,Any},px}()
@@ -420,12 +424,9 @@ function skia_cap_height(t::Text)
   end
 end
 
-function wraptext(s::String, face::TTFont{pem}, max_width::px; words=split(s),
-                                                               widths=widths!(words, face),
-                                                               size::pt=12pt) where pem
+"Break `s` into lines no wider than `limit`, given the width of each of its words"
+function wraptext(s::String, limit::px, words, widths, space_width::px)
   isempty(words) && return SubString{String}[SubString(s)]
-  space_width = textwidth(' ', face)
-  limit = relative(FontUnit{pem}, convert(pt, max_width), size)
   lines = SubString{String}[]
   pairs = zip(widths, words)
   w, lastword = first(pairs)
@@ -478,6 +479,7 @@ function position!(scroll::Scroll, ui::ConcreteRect)
   child = ui.children[1]
   left, top = content_origin(scroll, ui)
   scroll.content_height = child.height + extra(ui, Axis.y)
+  scroll.viewport = inner(ui, Axis.y)
   scroll.offset = clamp(scroll.offset, 0px, max(0px, scroll.content_height - ui.height))
   child.left = left
   child.top = top - scroll.offset
@@ -518,6 +520,16 @@ function position!(col::Column, ui::ConcreteRect)
     child.left = place(left, w, child.width, col.align)
     child.top = top
     top += child.height + col.between_width
+    apply_translate!(child)
+    position!(child.from, child)
+  end
+end
+
+function position!(stack::Stack, ui::ConcreteRect)
+  left, top = content_origin(stack, ui)
+  for child in ui.children
+    child.top = place(top, inner(ui, Axis.y), child.height, stack.align)
+    child.left = place(left, inner(ui, Axis.x), child.width, stack.align)
     apply_translate!(child)
     position!(child.from, child)
   end

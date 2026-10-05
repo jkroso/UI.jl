@@ -41,7 +41,7 @@ Triggers the appropriate event handlers. Mouse and keyboard events are automatic
 
 ## Layout
 
-Layout follows the same steps as [Clay](https://www.nicbarker.com/clay). Widths are settled first, from the root down. Then text wraps to its final width, images take their height from their aspect ratio and containers measure their content. Last, spare height is shared out and every element is placed.
+Layout follows the same steps as [Clay](https://www.nicbarker.com/clay). Widths are settled first, from the root down. Then text wraps to its final width, images take their height from their aspect ratio and containers measure their content. Last, spare height is shared out and every element is placed. Text is measured with the same Skia font that draws it, so the two always agree.
 
 Each `width(...)` or `height(...)` takes one sizing rule, clamped by `min` and `max`:
 
@@ -69,5 +69,13 @@ Containers also take:
 - `viewport(node)` gives the size the window lays the app out at. Use it to switch layouts by width.
 - `frame_stats(window)` gives the time the last frame spent in each stage.
 - `toggle_inspector!(window)` opens the layout inspector. It shows the layout tree beside the app, highlights the element under the cursor and lists how that element was sized.
+- `Stack(...)` puts its children on top of each other. Later children draw over earlier ones and get clicks first. Use it to float a panel, like a dialog, over a window.
+- `scroll_into_view!(scroll, top, bottom)` scrolls the shortest distance that shows that part of a Scroll's content.
+- `register_image(key, bytes)` makes PNG or JPEG bytes that are in memory drawable as `Image(key)`.
+- `Text(subfamily="Semibold")` picks a weight of an installed font by its name.
+- `TextInput(look=(input, text) -> ...)` puts your own geometry around the typed text, in place of the standard box.
+- `hide_titlebar!(window)` removes the title bar on macOS, so your app runs to the top edge of the window. Call `drag_window!(window)` from a click on an empty part of your own top bar, so the window can still be moved.
+- `dark_mode()` tells you whether macOS is in dark mode. `set_dark!(window, true)` draws the parts of the window that macOS owns, like the close button, to match.
+- `TextInput(color=..., placeholder_color=...)` sets the colours of the typed text and of the placeholder.
 
-`examples/25_clay_website.jl` is a port of Clay's website, and it uses all of these.
+`examples/25_clay_website.jl` is a port of Clay's website, and it uses most of these. `examples/26_finder.jl` is a file browser modelled on the macOS Finder.

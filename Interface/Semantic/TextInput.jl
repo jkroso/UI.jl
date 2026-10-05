@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe
+@use "../abstract" SemanticUI describe window_of
 @use "../draw" draw
 @use Colors: @colorant_str, Colorant, RGBA
 @use GeometryBasics: Vec2
@@ -18,6 +18,11 @@
   font_family::String = "Helvetica"
   font_size::pt = 14pt
   placeholder::String = "Type here..."
+  color::Colorant = colorant"rgb(30,30,30)"              # the typed text and the caret
+  placeholder_color::Colorant = colorant"rgb(160,160,160)"
+  # `look(input, text)` returns the geometry around `text`, the Text that shows
+  # what's typed. Leave it as `nothing` for the standard bordered box.
+  look::Any = nothing
   # cached layout (updated each frame for mouse hit-testing)
   cached_left::px = 0px
   cached_top::px = 0px
@@ -27,16 +32,21 @@
   cached_font::Union{Nothing,SkiaFont} = nothing
 end
 
-describe(input::TextInput) = begin
+"The typed text, or the placeholder in grey when nothing has been typed"
+content(input::TextInput) = begin
   empty = isempty(input.text)
+  Text(empty ? input.placeholder : input.text,
+       size=input.font_size, family=input.font_family,
+       color=empty ? input.placeholder_color : input.color)
+end
+
+describe(input::TextInput) = begin
+  input.look === nothing || return input.look(input, content(input))
   Row(width(grow=GrowType.Grow), height(36px),
     padding(8px),
     border(1px, :solid, colorant"rgb(180,180,180)"),
     radius(4px),
-    Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      Text(empty ? input.placeholder : input.text,
-           size=input.font_size, family=input.font_family,
-           color=empty ? colorant"rgb(160,160,160)" : colorant"rgb(30,30,30)")))
+    Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), content(input)))
 end
 
 has_selection(input::TextInput) = input.anchor != input.cursor
@@ -183,7 +193,11 @@ onmouse(input::TextInput, e::MouseMove) = Keys.mouse_left in e.window.keys && ha
 
 # --- overlay drawing ---
 
+"True when key presses go to `input`. Only then does it show a caret."
+focused(input::TextInput) = (w = window_of(input); w !== nothing && w.focus === input)
+
 draw_cursor(ctx, input::TextInput, ct::ConcreteText, offsets) = begin
+  focused(input) || return
   elapsed = time() - input.last_action
   visible = elapsed < 0.5 || mod(elapsed - 0.5, 1.0) < 0.5
   visible || return
@@ -191,7 +205,7 @@ draw_cursor(ctx, input::TextInput, ct::ConcreteText, offsets) = begin
   baseline = ct.top + input.cached_capheight
   top = baseline + input.cached_ascent
   bot = baseline + input.cached_descent
-  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, colorant"rgb(30,30,30)")
+  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, input.color)
 end
 
 draw_selection(ctx, input::TextInput, ct::ConcreteText, offsets) = begin
@@ -215,6 +229,7 @@ draw_overlay(ctx, input::TextInput, ct::ConcreteText) = begin
 end
 
 draw_empty_cursor(ctx, input::TextInput, ct::ConcreteText) = begin
+  focused(input) || return
   elapsed = time() - input.last_action
   visible = elapsed < 0.5 || mod(elapsed - 0.5, 1.0) < 0.5
   visible || return
@@ -222,7 +237,7 @@ draw_empty_cursor(ctx, input::TextInput, ct::ConcreteText) = begin
   baseline = ct.top + input.cached_capheight
   top = baseline + input.cached_ascent
   bot = baseline + input.cached_descent
-  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, colorant"rgb(30,30,30)")
+  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, input.color)
 end
 
 find_concrete_text(tree::ConcreteText) = tree

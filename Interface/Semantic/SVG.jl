@@ -1,5 +1,6 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl" int flt
+@use "github.com/jkroso/MiniFB.jl/skia" sk_color
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
@@ -65,13 +66,6 @@ parse_svg_file(filepath::String) = begin
   (paths=paths, viewbox=vb)
 end
 
-to_skia_color(c::Colorant) = begin
-  c = convert(RGBA{N0f8}, c)
-  UInt32(reinterpret(UInt8, alpha(c))) << 24 |
-  UInt32(reinterpret(UInt8, blue(c))) << 16 |
-  UInt32(reinterpret(UInt8, green(c))) << 8 |
-  UInt32(reinterpret(UInt8, red(c)))
-end
 
 describe(svg::SVG) = Box(width(svg.width), height(svg.height))
 
@@ -85,7 +79,7 @@ render_svg(ctx, x::px, y::px, w::px, h::px, paths::Vector{SVGPath}, viewbox::NTu
   Skia.sk_canvas_translate(ctx, flt(x), flt(y))
   Skia.sk_canvas_scale(ctx, sx, sy)
   (vx != 0 || vy != 0) && Skia.sk_canvas_translate(ctx, -vx, -vy)
-  c = to_skia_color(color)
+  c = sk_color(color)
   for sp in paths
     p = Skia.sk_path_new()
     Skia.sk_path_parse_svg_string(p, sp.d)

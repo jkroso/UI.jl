@@ -31,6 +31,7 @@ const BADGES = Dict(
   "Row" => colorant"rgb(77,124,163)",
   "Column" => colorant"rgb(98,140,92)",
   "Box" => colorant"rgb(128,121,115)",
+  "Stack" => colorant"rgb(150,110,90)",
   "Scroll" => colorant"rgb(176,170,62)",
   "Image" => colorant"rgb(66,150,110)",
   "Text" => colorant"rgb(64,140,152)",
@@ -252,6 +253,7 @@ border_text(b) = allequal(values(b)) ? side_text(b.top) :
 direction_text(::Row) = "left to right"
 direction_text(::Column) = "top to bottom"
 direction_text(::Scroll) = "scrolls vertically"
+direction_text(::Stack) = "on top of each other"
 direction_text(::Container) = "one child"
 
 swatch(c) = Row(child_gap=6px, Alignment.Center,

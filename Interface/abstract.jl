@@ -99,7 +99,24 @@ Base.convert(::Type{GeometricUI}, node::GeometricUI) = node
 Base.convert(::Type{GeometricUI}, node::SemanticUI) = begin
   result = describe(node)
   result.from = node
+  adopt_inline!(node, result)
   result
+end
+
+"""
+Semantic nodes made inside a `describe`, like an `Icon` in a button, belong to
+the node being described. Giving them that parent lets their clicks bubble up
+to it, and makes `ishovered` true for it while the cursor is over them.
+"""
+adopt_inline!(owner::SemanticUI, geo::UITree) = begin
+  for child in geo.children
+    source = child isa GeometricUI ? child.from : nothing
+    if source isa SemanticUI
+      source !== owner && source.parent === nothing && setfield!(source, :parent, owner)
+    else
+      adopt_inline!(owner, child)
+    end
+  end
 end
 
 @def struct SiblingIterator
