@@ -3,27 +3,30 @@
 @use "github.com/jkroso/MiniFB.jl"... int KeyEvent flt onscroll
 @use "github.com/jkroso/Font.jl" cap_height ["units" px absolute]
 @use GeometryBasics: Vec2
-@use Colors: @colorant_str, RGBA, alpha
+@use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
-@use "./abstract" describe Root UITree SemanticUI ConcreteUI
+@use GLFW
+@use "./abstract" describe Root UITree SemanticUI ConcreteUI window_of
 @use "./Geometric"...
 @use "./Specific"... position!
+@use "./fonts" skia_font
+@use "./image" image_source
 
-draw_between_row(ctx, ui, left) = begin
-  border = ui.from.border.between
-  border.width > 0 || return
-  start = Vec2{px}(left+border.width/2, ui.top)
-  finish = Vec2{px}(left+border.width/2, ui.top + ui.height)
-  line(ctx, start, finish, border.width, border.color)
-end
-
-draw_between_column(ctx, ui, top) = begin
-  border = ui.from.border.between
-  border.width > 0 || return
-  offset = top+border.width/2
-  start = Vec2{px}(ui.left, offset)
-  finish = Vec2{px}(ui.left + ui.width, offset)
-  line(ctx, start, finish, border.width, border.color)
+"Draw the lines a container puts between its children, centred in each gap"
+function draw_between(ctx, ui::ConcreteRect)
+  from = ui.from
+  border = from.border.between
+  (border.width > 0px && length(ui.children) > 1) || return
+  for i in 2:length(ui.children)
+    prev, child = ui.children[i-1], ui.children[i]
+    if from isa Row
+      x = (prev.left + prev.width + child.left) / 2
+      line(ctx, Vec2{px}(x, ui.top), Vec2{px}(x, ui.top + ui.height), border.width, border.color)
+    else
+      y = (prev.top + prev.height + child.top) / 2
+      line(ctx, Vec2{px}(ui.left, y), Vec2{px}(ui.left + ui.width, y), border.width, border.color)
+    end
+  end
 end
 
 "Run `f` with the canvas clipped to the given rect, then restore."
@@ -47,77 +50,123 @@ work. Outside a clip context this always returns false."
   Skia.sk_canvas_quick_reject_rect(ctx, rect)
 end
 
-function draw_scrollbar(ctx, ui::ConcreteRect, scroll::Scroll)
+"""
+Where a Scroll's scrollbar track and thumb sit, or `nothing` when the content
+fits and no scrollbar is needed.
+"""
+function scrollbar_geometry(ui::ConcreteRect, scroll::Scroll)
   viewport = ui.height
   content = scroll.content_height
-  content > viewport || return
-  track_w = 6px
+  content > viewport || return nothing
+  w = scroll.scrollbar_width
   margin = 4px
-  track_x = ui.left + ui.width - track_w - margin
+  track_x = ui.left + ui.width - w - margin
   track_y = ui.top + margin
   track_h = ui.height - 2margin
   thumb_h = max(24px, track_h * (viewport / content))
   range = max(1px, content - viewport)
   ratio = clamp(scroll.offset / range, 0.0, 1.0)
   thumb_y = track_y + (track_h - thumb_h) * ratio
-  rounded_rectangle(ctx, track_x, track_y, track_w, track_h, track_w/2,
-                    background=RGBA(0, 0, 0, 0.06))
-  rounded_rectangle(ctx, track_x, thumb_y, track_w, thumb_h, track_w/2,
-                    background=RGBA(0, 0, 0, 0.38))
+  (x=track_x, y=track_y, width=w, height=track_h, thumb_y=thumb_y, thumb_h=thumb_h, range=range)
+end
+
+scrollbar_visible(scroll::Scroll) =
+  scroll.scrollbar == ScrollbarMode.always ||
+  (scroll.scrollbar == ScrollbarMode.hover && (scroll.hover || scroll.dragging))
+
+"Scale a colour's opacity, keeping it within 0–1"
+fade(c::Colorant, k) = RGBA(red(c), green(c), blue(c), clamp(alpha(c) * k, 0, 1))
+
+function draw_scrollbar(ctx, ui::ConcreteRect, scroll::Scroll)
+  scrollbar_visible(scroll) || return
+  g = scrollbar_geometry(ui, scroll)
+  g === nothing && return
+  alpha(scroll.scrollbar_track) > 0 &&
+    rounded_rectangle(ctx, g.x, g.y, g.width, g.height, g.width/2, background=scroll.scrollbar_track)
+  k = scroll.dragging ? 1.6 : scroll.thumb_hover ? 1.3 : 1.0
+  rounded_rectangle(ctx, g.x, g.thumb_y, g.width, g.thumb_h, g.width/2, background=fade(scroll.scrollbar_color, k))
+end
+
+"""
+Borders are drawn inside the element's bounds, after its children so a child's
+background can't cover them. When all four sides match they follow the corner
+radius. Otherwise each side is drawn as its own straight edge.
+"""
+function draw_border(ctx, ui::ConcreteRect)
+  (;border, radius) = ui.from
+  sides = (border.top, border.right, border.bottom, border.left)
+  all(isempty, sides) && return
+  if all(==(border.top), sides)
+    bw = border.top.width
+    rounded_rectangle(ctx, ui.origin .+ bw/2, ui.size .- bw, max(0px, radius.tl - bw/2),
+                      color=border.top.color, stroke_width=bw)
+  else
+    (;left, top, width, height) = ui
+    edge(x, y, w, h, side) = isempty(side) || rounded_rectangle(ctx, x, y, w, h, 0px, background=side.color)
+    edge(left, top, width, border.top.width, border.top)
+    edge(left, top + height - border.bottom.width, width, border.bottom.width, border.bottom)
+    edge(left, top, border.left.width, height, border.left)
+    edge(left + width - border.right.width, top, border.right.width, height, border.right)
+  end
+end
+
+const sampling = Skia.sk_sampling_options_t(0, false, Skia.sk_cubic_resampler_t(0f0, 0f0),
+                                            Skia.SK_FILTER_MODE_LINEAR, Skia.SK_MIPMAP_MODE_LINEAR)
+
+"Draw an Image's pixels stretched over its box, clipped to its corner radius"
+function draw_image(ctx, ui::ConcreteRect, img::Image)
+  isempty(img.src) && return
+  src = image_source(img.src)
+  srcrect = Ref(Skia.sk_rect_t(0f0, 0f0, Float32(src.width), Float32(src.height)))
+  dst = Ref(Skia.sk_rect_t(flt(ui.left), flt(ui.top), flt(ui.left + ui.width), flt(ui.top + ui.height)))
+  opts = Ref(sampling)
+  Skia.sk_canvas_save(ctx)
+  r = img.radius.tl
+  if r > 0px
+    p = Skia.sk_path_new()
+    Skia.sk_path_add_rounded_rect(p, dst, flt(r), flt(r), Skia.SK_PATH_DIRECTION_CW)
+    Skia.sk_canvas_clip_path_with_operation(ctx, p, Skia.SK_CLIP_OP_INTERSECT, true)
+    Skia.sk_path_delete(p)
+  end
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  Skia.sk_canvas_draw_image_rect(ctx, src.raw, srcrect, dst, opts, paint, Skia.SRC_RECT_CONSTRAINT_FAST)
+  Skia.sk_paint_delete(paint)
+  Skia.sk_canvas_restore(ctx)
+end
+
+function draw_children(ctx, ui::ConcreteRect)
+  for child in ui.children
+    quick_reject(ctx, child) && continue
+    draw(ctx, child.size, child)
+  end
 end
 
 draw(ctx, size, ui::ConcreteRect) = begin
-  (;background, border, radius) = ui.from
-  bw = border.top.width
-  tl = ui.origin .+ bw/2
-  sz = ui.size .- bw
-  bg = alpha(background.color) > 0 ? background.color : nothing
-  rounded_rectangle(ctx, tl, sz, radius.tl, background=bg,
-                                             color=isempty(border.top) ? nothing : border.top.color,
-                                             stroke_width=bw)
-  isfirst = true
-  if ui.from isa Scroll
+  from = ui.from
+  (;background, radius) = from
+  alpha(background.color) > 0 && rounded_rectangle(ctx, ui.origin, ui.size, radius.tl, background=background.color)
+  from isa Image && draw_image(ctx, ui, from)
+  if from isa Scroll
+    with_clip(() -> draw_children(ctx, ui), ctx, ui.left, ui.top, ui.width, ui.height)
+  elseif from.clip
     with_clip(ctx, ui.left, ui.top, ui.width, ui.height) do
-      for child in ui.children
-        quick_reject(ctx, child) && continue
-        draw(ctx, child.size, child)
-      end
-    end
-    ui.from.hover && draw_scrollbar(ctx, ui, ui.from)
-  elseif ui.from isa Row
-    left = ui.left
-    for child in ui.children
-      step = child.width + ui.from.between_width
-      if quick_reject(ctx, child)
-        left += step
-        continue
-      end
-      draw(ctx, child.size, child)
-      isfirst || draw_between_row(ctx, ui, left)
-      isfirst = false
-      left += step
+      draw_children(ctx, ui)
+      draw_between(ctx, ui)
     end
   else
-    top = ui.top
-    for child in ui.children
-      step = child.height + ui.from.between_width
-      if quick_reject(ctx, child)
-        top += step
-        continue
-      end
-      draw(ctx, child.size, child)
-      isfirst || draw_between_column(ctx, ui, top)
-      isfirst = false
-      top += step
-    end
+    draw_children(ctx, ui)
+    draw_between(ctx, ui)
   end
-  ui.from.from !== nothing && draw(ctx, size, ui, ui.from.from)
+  draw_border(ctx, ui)
+  from isa Scroll && draw_scrollbar(ctx, ui, from)
+  from.from !== nothing && draw(ctx, size, ui, from.from)
 end
 
 draw(ctx, size, ui::ConcreteRect, source) = nothing
 
 draw(ctx, _, ui::ConcreteText) = begin
-  f = SkiaFont(ui.from.family, ui.from.size)
+  f = skia_font(ui.from.family, ui.from.size, ui.from.subfamily)
   caph = px(font_metrics(f).capHeight)                   # match Specific's layout sizing
   leading = absolute(ui.from.lineheight, ui.from.size)   # spacing between subsequent baselines
   align = ui.from.align
@@ -223,7 +272,7 @@ draw_menu(ctx, ov::MenuOverlay) = begin
   rounded_rectangle(ctx, ov.x, ov.y, ov.width, total_h, 6px,
                     background=colorant"white",
                     color=colorant"rgb(200,200,200)", stroke_width=1px)
-  f = SkiaFont("Helvetica", 13pt)
+  f = skia_font("Helvetica", 13pt)
   for (i, item) in enumerate(ov.items)
     iy = ov.y + (i - 1) * ov.item_height
     if i == ov.hover
@@ -360,17 +409,72 @@ resolve_layout(geo::Container, size, window_id::UInt) = begin
   cui
 end
 
+# Tools like the layout inspector that share the window with the app. Each
+# window can have one. The tool decides how much room the app gets, draws
+# itself after the app, and sees input before the app does.
+const _tools = Dict{UInt, Any}()
+
+"How much of the window `tool` leaves for the app"
+app_size(tool, size) = size
+"Draw `tool` over the app's `scene`"
+draw_tool(ctx, window, tool, scene) = nothing
+"Give `tool` first look at an input event. Return true if it used the event."
+tool_input(tool, window, event) = false
+
+"""
+The size the app in `node`'s window is laid out at, or `nothing` when `node`
+isn't shown in a window. Use it in `describe` to switch layouts by width.
+"""
+viewport(node::UITree) = begin
+  w = window_of(node)
+  w === nothing && return nothing
+  app_size(get(_tools, objectid(w), nothing), w.size)
+end
+
+set_tool!(w::AbstractWindow, tool) = (_tools[objectid(w)] = tool; invalidate_layout!(w))
+clear_tool!(w::AbstractWindow) = (delete!(_tools, objectid(w)); invalidate_layout!(w))
+window_tool(w::AbstractWindow) = get(_tools, objectid(w), nothing)
+
+"How long each stage of a window's last frame took, in milliseconds"
+@def mutable struct FrameStats
+  describe::Float64 = 0.0
+  layout::Float64 = 0.0
+  draw::Float64 = 0.0
+  elements::Int = 0
+end
+
+const _stats = Dict{UInt, FrameStats}()
+
+"Timings for the most recent frame drawn in `w`"
+frame_stats(w::AbstractWindow) = get!(FrameStats, _stats, objectid(w))
+
+count_elements(ui::ConcreteRect) = 1 + sum(count_elements, ui.children, init=0)
+count_elements(::ConcreteUI) = 1
+
 frame(window::Window) = begin
+  id = objectid(window)
+  stats = frame_stats(window)
+  t = get(_tools, id, nothing)
+  t0 = time_ns()
   geo = describe(ui(window))
-  scene = resolve_layout(geo, window.size, objectid(window))
-  _scenes[objectid(window)] = scene
-  ov = get(_overlay, objectid(window), nothing)
-  tt = get(_tooltip, objectid(window), nothing)
-  drawing(window, scene) do ctx, size, scene
+  t1 = time_ns()
+  scene = resolve_layout(geo, app_size(t, window.size), id)
+  t2 = time_ns()
+  _scenes[id] = scene
+  update_hover!(window, scene)
+  ov = get(_overlay, id, nothing)
+  tt = get(_tooltip, id, nothing)
+  pixels = drawing(window, scene) do ctx, size, scene
     draw(ctx, size, scene)
     ov !== nothing && draw_menu(ctx, ov)
     tt !== nothing && draw_tooltip(ctx, tt)
+    t === nothing || draw_tool(ctx, window, t, scene)
   end
+  stats.describe = (t1 - t0) / 1e6
+  stats.layout = (t2 - t1) / 1e6
+  stats.draw = (time_ns() - t2) / 1e6
+  stats.elements = count_elements(scene)
+  pixels
 end
 
 Base.display(w::Window) = open(w)
@@ -385,12 +489,14 @@ semantic_source(ui::Union{ConcreteRect,ConcreteText}) = begin
   nothing
 end
 
+inside(ui::ConcreteUI, (x, y)) = ui.left <= x <= ui.left + ui.width && ui.top <= y <= ui.top + ui.height
+
 "Find the deepest SemanticUI node under the given position"
-hittest(ui::ConcreteRect, (x, y)) = begin
-  (x >= ui.left && x <= ui.left + ui.width &&
-   y >= ui.top && y <= ui.top + ui.height) || return nothing
-  for child in ui.children
-    result = hittest(child, (x, y))
+hittest(ui::ConcreteRect, pos) = begin
+  inside(ui, pos) || return nothing
+  # Later children draw on top, so they get first claim on the cursor
+  for child in Iterators.reverse(ui.children)
+    result = hittest(child, pos)
     result !== nothing && return result
   end
   semantic_source(ui)
@@ -419,14 +525,129 @@ end
 on(target::SemanticUI, e::KeyEvent) = onkey(target, e)
 on(target::SemanticUI, e::MouseMove) = onmouse(target, e)
 
+# Hover tracking. After each layout and each mouse move the window records
+# which semantic nodes sit under the cursor: the deepest one and all of its
+# semantic ancestors. `describe` methods ask `ishovered(self)` to pick a hover
+# style, the same way Clay's `Clay_Hovered()` works.
+const _hovered = Dict{UInt, Vector{SemanticUI}}()
+
+semantic_parent(node) = begin
+  node = node.parent
+  while node !== nothing && !(node isa SemanticUI)
+    node = node.parent
+  end
+  node
+end
+
+hover_chain(target) = begin
+  chain = SemanticUI[]
+  node = target
+  while node !== nothing && !(node isa Root)
+    push!(chain, node)
+    node = semantic_parent(node)
+  end
+  chain
+end
+
+"True when the cursor is over `node` or one of its descendants"
+ishovered(node::SemanticUI) = begin
+  w = window_of(node)
+  w === nothing && return false
+  any(n -> n === node, get(_hovered, objectid(w), ()))
+end
+
+"""
+The mouse cursor to show over a node: `:hand`, `:ibeam`, `:crosshair` or
+`nothing` to leave it to the node's parent.
+"""
+cursor(::SemanticUI) = nothing
+
+const cursor_shapes = Dict(:arrow => GLFW.ARROW_CURSOR, :hand => GLFW.HAND_CURSOR,
+                           :ibeam => GLFW.IBEAM_CURSOR, :crosshair => GLFW.CROSSHAIR_CURSOR)
+const _cursor_shape = Dict{UInt, Symbol}()
+
+set_cursor!(w::Window, shape::Symbol) = begin
+  get(_cursor_shape, objectid(w), :arrow) == shape && return
+  _cursor_shape[objectid(w)] = shape
+  isempty(w.glfw) || (w.cursor = cursor_shapes[shape])
+end
+
+update_hover!(w::Window, scene::ConcreteRect, pos=w.mouse) = begin
+  id = objectid(w)
+  chain = hover_chain(hittest(scene, pos))
+  old = get(_hovered, id, SemanticUI[])
+  length(chain) == length(old) && all(a === b for (a, b) in zip(chain, old)) && return false
+  _hovered[id] = chain
+  shape = something((cursor(n) for n in chain)..., :arrow)
+  set_cursor!(w, shape)
+  # The hover style changes the next frame, so make sure there is one
+  isempty(w.glfw) || GLFW.PostEmptyEvent()
+  true
+end
+
+"Open a URL or file with the system's default application"
+open_url(url::AbstractString) = begin
+  cmd = Sys.isapple() ? `open $url` : Sys.iswindows() ? `cmd /c start "" $url` : `xdg-open $url`
+  run(pipeline(cmd, stdout=devnull, stderr=devnull), wait=false)
+  nothing
+end
+
 const _captured = Dict{UInt, SemanticUI}()
 
 is_mouse_button(::KeyPress{K}) where K =
   K == Keys.mouse_left || K == Keys.mouse_right || K == Keys.mouse_middle
 is_mouse_button(_) = false
 
+# Scrollbar dragging, per window: the Scroll being dragged, the track it
+# moves along, and how far below the thumb's top edge it was grabbed.
+const _scroll_drag = Dict{UInt, NamedTuple}()
+
+"The Scroll whose scrollbar thumb is under `pos`, along with its geometry"
+thumb_at(rect::ConcreteRect, pos) = begin
+  inside(rect, pos) || return nothing
+  for child in rect.children
+    child isa ConcreteRect || continue
+    found = thumb_at(child, pos)
+    found === nothing || return found
+  end
+  rect.from isa Scroll || return nothing
+  scrollbar_visible(rect.from) || return nothing
+  g = scrollbar_geometry(rect, rect.from)
+  g === nothing && return nothing
+  (g.x - 4px <= pos[1] <= g.x + g.width + 4px && g.thumb_y <= pos[2] <= g.thumb_y + g.thumb_h) || return nothing
+  (scroll=rect.from, geometry=g)
+end
+
+start_scroll_drag!(w::Window, scene, pos) = begin
+  found = thumb_at(scene, pos)
+  found === nothing && return false
+  (;scroll, geometry) = found
+  scroll.dragging = true
+  _scroll_drag[objectid(w)] = (scroll=scroll, geometry=geometry, grab=pos[2] - geometry.thumb_y)
+  true
+end
+
+drag_scroll!(w::Window, pos) = begin
+  drag = get(_scroll_drag, objectid(w), nothing)
+  drag === nothing && return false
+  g = drag.geometry
+  travel = max(1px, g.height - g.thumb_h)
+  ratio = clamp((pos[2] - drag.grab - g.y) / travel, 0.0, 1.0)
+  drag.scroll.offset = ratio * g.range
+  true
+end
+
+end_scroll_drag!(w::Window) = begin
+  drag = pop!(_scroll_drag, objectid(w), nothing)
+  drag === nothing && return false
+  drag.scroll.dragging = false
+  true
+end
+
 onkey(w::Window, e) = begin
   id = objectid(w)
+  t = get(_tools, id, nothing)
+  t !== nothing && tool_input(t, w, e) && return
   ov = get(_overlay, id, nothing)
   if ov !== nothing && is_mouse_button(e)
     if e isa KeyPress{Keys.mouse_left} && ov.onselect !== nothing
@@ -434,6 +655,11 @@ onkey(w::Window, e) = begin
       ov.onselect(idx) # 0 if clicked outside
     end
     hide_menu!(w)
+    return
+  end
+  scene = get(_scenes, id, nothing)
+  e isa KeyRelease{Keys.mouse_left} && end_scroll_drag!(w) && return
+  if e isa KeyPress{Keys.mouse_left} && scene !== nothing && start_scroll_drag!(w, scene, w.mouse)
     return
   end
   if is_mouse_button(e)
@@ -444,6 +670,8 @@ onkey(w::Window, e) = begin
     end
   elseif w.focus !== nothing
     emit(w.focus, e)
+  elseif e isa KeyPress && scene !== nothing
+    scroll_by_key!(w, scene, e)
   end
 end
 
@@ -454,13 +682,44 @@ out-of-bounds rect immediately, so cost is O(depth + matching siblings)
 not O(tree size)."
 find_scroll_at(::Any, _) = nothing
 find_scroll_at(rect::ConcreteRect, pos) = begin
-  (rect.left <= pos[1] <= rect.left + rect.width &&
-   rect.top  <= pos[2] <= rect.top  + rect.height) || return nothing
+  inside(rect, pos) || return nothing
   for child in rect.children
     found = find_scroll_at(child, pos)
     found === nothing || return found
   end
   rect.from isa Scroll ? rect : nothing
+end
+
+"The first Scroll in a concrete tree, searching breadth first"
+first_scroll(rect::ConcreteRect) = begin
+  queue = ConcreteUI[rect]
+  while !isempty(queue)
+    node = popfirst!(queue)
+    node isa ConcreteRect || continue
+    node.from isa Scroll && return node
+    append!(queue, node.children)
+  end
+  nothing
+end
+
+scroll_step(rect, ::KeyPress{Keys.down}) = 50px
+scroll_step(rect, ::KeyPress{Keys.up}) = -50px
+scroll_step(rect, ::KeyPress{Keys.pagedown}) = rect.height - 40px
+scroll_step(rect, ::KeyPress{Keys.pageup}) = 40px - rect.height
+scroll_step(rect, ::KeyPress{Keys.space}) = rect.height - 40px
+scroll_step(rect, ::KeyPress{Keys.home}) = px(-Inf)
+scroll_step(rect, ::KeyPress{Keys._end}) = px(Inf)
+scroll_step(rect, _) = nothing
+
+"When nothing has keyboard focus, arrow and page keys scroll the Scroll under
+the cursor, or the first one in the window."
+scroll_by_key!(w::Window, scene, e) = begin
+  rect = something(find_scroll_at(scene, w.mouse), first_scroll(scene), Some(nothing))
+  rect === nothing && return
+  step = scroll_step(rect, e)
+  step === nothing && return
+  scroll = rect.from::Scroll
+  scroll.offset = clamp(scroll.offset + step, 0px, max(0px, scroll.content_height - rect.height))
 end
 
 # Per-window memo of which Scroll is currently hovered. Lets the
@@ -474,18 +733,25 @@ update_scroll_hover!(w, scene::ConcreteRect, pos) = begin
   rect = find_scroll_at(scene, pos)
   current = rect === nothing ? nothing : rect.from::Scroll
   prev = get(_hovered_scroll, id, nothing)
-  current === prev && return
-  prev === nothing || (prev.hover = false)
+  if prev !== nothing && prev !== current
+    prev.hover = false
+    prev.thumb_hover = false
+  end
   if current === nothing
     delete!(_hovered_scroll, id)
   else
     current.hover = true
+    g = scrollbar_geometry(rect, current)
+    current.thumb_hover = g !== nothing && g.x - 4px <= pos[1] && g.thumb_y <= pos[2] <= g.thumb_y + g.thumb_h
     _hovered_scroll[id] = current
   end
 end
 
 onscroll(w::Window, delta::Vec2{px}) = begin
-  scene = get(_scenes, objectid(w), nothing)
+  id = objectid(w)
+  t = get(_tools, id, nothing)
+  t !== nothing && tool_input(t, w, delta) && return
+  scene = get(_scenes, id, nothing)
   scene === nothing && return
   rect = find_scroll_at(scene, w.mouse)
   rect === nothing && return
@@ -497,8 +763,14 @@ end
 
 onmouse(w::Window, e::MouseMove) = begin
   id = objectid(w)
+  t = get(_tools, id, nothing)
+  t !== nothing && tool_input(t, w, e) && return
+  drag_scroll!(w, e.position) && return
   scene = get(_scenes, id, nothing)
-  scene === nothing || update_scroll_hover!(w, scene, e.position)
+  if scene !== nothing
+    update_scroll_hover!(w, scene, e.position)
+    update_hover!(w, scene, e.position)
+  end
   ov = get(_overlay, id, nothing)
   if ov !== nothing
     ov.hover = menu_hittest(ov, e.position)
@@ -522,4 +794,6 @@ onmouse(w::Window, e::MouseMove) = begin
   end
 end
 
-export draw, ui, hittest, emit, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!
+export draw, ui, hittest, emit, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
+       invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, inside, offset!,
+       frame_stats, FrameStats, semantic_source, viewport

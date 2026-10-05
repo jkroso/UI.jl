@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" pt px]
 @use "github.com/jkroso/Units.jl" Length mm
 @use "../abstract" GeometricUI mixin! StyleNode Text TextAlign propertyname
-@use Colors: Color, Colorant, RGB, hex
+@use Colors: Color, Colorant, RGB, RGBA, hex
 
 const transparent = parse(Colorant, "transparent")
 const black = parse(Colorant, "black")
@@ -56,11 +56,17 @@ Radius(top, bottom) = Radius(top, top, bottom, bottom)
 
 @Enum GrowType FitContent Grow None
 
+"""
+Sizing along one axis. `preferred` fixes the size, `grow` lets it absorb spare
+space and `percent` (0–1) takes that fraction of the parent's inner size after
+padding and gaps. `min` and `max` clamp whichever of these applies.
+"""
 @abstract struct Dimension <: StyleNode
   min::Length=0px
   max::Length=px(Inf)
   preferred::Length=0px
   grow::GrowType=GrowType.FitContent
+  percent::Float64=0.0
 end
 @def Width <: Dimension
 @def Height <: Dimension
@@ -116,6 +122,14 @@ rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
 
 @Enum Alignment Start Center End
 
+"""
+`align` places children across the layout direction (vertically in a Row,
+horizontally in a Column, both ways in a Box). `justify` places the whole run of
+children along the layout direction, when they don't fill it. With `clip` set,
+children are cut off at the container's edges, and content that can't shrink
+any further no longer forces the container (and its parents) to be wider.
+`name` only labels the container in the layout inspector.
+"""
 @abstract struct Container <: GeometricUI
   background::Background=Background()
   border::Border=Border()
@@ -125,8 +139,11 @@ rgb(r=0, g=0, b=0) = RGB(clamp(r/255,0,1),clamp(g/255,0,1),clamp(b/255,0,1))
   height::Height=Height()
   child_gap::Length=0px
   align::Alignment=Alignment.Center
+  justify::Alignment=Alignment.Start
+  clip::Bool=false
   offset_x::px=0px
   offset_y::px=0px
+  name::String=""
 end
 
 "A box around vertically arranged children"
@@ -136,6 +153,8 @@ end
 "A box around a single child"
 @def mutable struct Box <: Container end
 
+@Enum ScrollbarMode hover always never
+
 """
 Vertical scroll viewport. Sizes itself like a Box in the cross axis but
 lays its single child out at its natural height in the scroll axis,
@@ -144,12 +163,32 @@ translating it by `offset` at position-time. State (`offset`,
 across frames — keep the Scroll instance alive (e.g. as a `const`) and
 do not re-construct it inside a `describe(::SemanticUI)` body, or the
 scroll position will reset every frame.
+
+The scrollbar thumb can be dragged. `scrollbar` says when it shows:
+`hover` (only while the cursor is inside), `always` or `never`.
 """
 @def mutable struct Scroll <: Container
   offset::px=0px
   content_height::px=0px
   hover::Bool=false
+  scrollbar::ScrollbarMode=ScrollbarMode.hover
+  scrollbar_width::px=6px
+  scrollbar_color::Colorant=RGBA(0, 0, 0, 0.38)
+  scrollbar_track::Colorant=RGBA(0, 0, 0, 0.06)
+  thumb_hover::Bool=false
+  dragging::Bool=false
 end
+
+"""
+A raster image (PNG, JPEG, WebP…) drawn to fill its box. If you fix only the
+width, the height follows the image's aspect ratio. `aspect` is width ÷ height,
+and the default of 0 means "read it from the file".
+"""
+@def mutable struct Image <: Container
+  src::String=""
+  aspect::Float64=0.0
+end
+Image(src::AbstractString, args...; kwargs...) = Image(args...; src=String(src), kwargs...)
 
 mixin!(r::Container, a::Alignment) = (r.align = a; r)
 
@@ -163,4 +202,4 @@ end
 
 @property Container.between_width = self.child_gap + self.border.between.width
 
-export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Scroll, Text, TextAlign, width, height, GrowType, Alignment, radius
+export padding, background, border, rgb, pt, mm, px, Container, Box, Column, Row, Scroll, ScrollbarMode, Image, Text, TextAlign, width, height, GrowType, Alignment, radius

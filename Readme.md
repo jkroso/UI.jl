@@ -38,3 +38,36 @@ Will set the UI element to receive keyboard events
 ### `emit(ui::SemanticUI, event::Event)`
 
 Triggers the appropriate event handlers. Mouse and keyboard events are automatically emitted so you would only use this event for custom event types such as form submission. The default handler for `emit` will call `onmouse(ui, event)` or `onkey(ui, event)` so if you want to handle mouse and keyboard input then those should be your first choice rather than specialising the emit method. Though either option will work. Though specialising the emit method will prevent event bubbling which is where the even is progressively escalated up the UI tree.
+
+## Layout
+
+Layout follows the same steps as [Clay](https://www.nicbarker.com/clay). Widths are settled first, from the root down. Then text wraps to its final width, images take their height from their aspect ratio and containers measure their content. Last, spare height is shared out and every element is placed.
+
+Each `width(...)` or `height(...)` takes one sizing rule, clamped by `min` and `max`:
+
+- Nothing: fit the content.
+- A length, e.g. `width(300px)`: that size. It can still shrink if its siblings don't fit.
+- `grow=GrowType.Grow`: start at the content's size, then take an equal share of any spare space.
+- `percent=0.5`: that fraction of the parent's space, after padding and gaps.
+
+Containers also take:
+
+- `align`: where children sit across the layout direction.
+- `justify`: where the run of children sits along the layout direction.
+- `child_gap`: space between children.
+- `clip=true`: hide what doesn't fit. Without it, content that can't wrap any further makes its parents wider.
+
+`border(2px, :solid, colour)` draws all four sides. Pick sides with `border(...)[:left, :right]`, and use `border(...; between=true)[:between]` to draw a line between children only.
+
+## Building blocks
+
+- `Image("photo.png", width(grow=GrowType.Grow, max=500px))` draws a PNG or JPEG. If you only fix its width, its height follows the image's aspect ratio.
+- `register_font("Fonts/Calistoga-Regular.ttf")` makes a font file usable by its family name, without installing it.
+- `Scroll(...)` is a scrolling viewport. You can drag its scrollbar. Arrow keys, Page Up/Down, Home and End scroll it when no element has keyboard focus. Because it keeps its offset on itself, reuse the same instance every frame with `reuse!(scroll, content)`.
+- `ishovered(node)` tells a `describe` method whether the cursor is over that node. Define `cursor(::MyNode) = :hand` to change the mouse cursor over it.
+- `Link(url) do hovered ... end` opens `url` when clicked. The block returns its geometry, so it can change style on hover.
+- `viewport(node)` gives the size the window lays the app out at. Use it to switch layouts by width.
+- `frame_stats(window)` gives the time the last frame spent in each stage.
+- `toggle_inspector!(window)` opens the layout inspector. It shows the layout tree beside the app, highlights the element under the cursor and lists how that element was sized.
+
+`examples/25_clay_website.jl` is a port of Clay's website, and it uses all of these.

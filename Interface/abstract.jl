@@ -176,6 +176,23 @@ detach!(node::UITree) = begin
   node
 end
 
+"""
+Put a stateful node, like a `Scroll`, into a freshly built tree. Geometry is
+usually rebuilt every frame, but a Scroll keeps its offset on itself, so the
+same instance has to come back each frame. This detaches it from last frame's
+tree, swaps in the new children and returns it, ready to be added to a parent.
+"""
+reuse!(node::UITree, children...) = begin
+  detach!(node)
+  for child in collect(node.children)
+    detach!(child)
+  end
+  for child in children
+    mixin!(node, child)
+  end
+  node
+end
+
 "A symbolic representation of an image which just happens to be a UI"
 @abstract struct ConcreteUI <: UITree
   from::Union{Nothing,UI}=nothing
@@ -204,14 +221,26 @@ specialize this method on either the type of node or the type of event or both.
 """
 function on(ui_node, event) end
 
-"""
-Switches the target of future keyboard events to a given semantic node
-"""
-focus(node::UITree) = begin
+"The top of the tree that `node` belongs to"
+root_of(node::UITree) = begin
   root = node
   while root.parent !== nothing
     root = root.parent
   end
+  root
+end
+
+"The window showing `node`, or `nothing` if it isn't attached to one"
+window_of(node::UITree) = begin
+  root = root_of(node)
+  root isa Root ? root.window : nothing
+end
+
+"""
+Switches the target of future keyboard events to a given semantic node
+"""
+focus(node::UITree) = begin
+  root = root_of(node)
   root isa Root && (root.window.focus = node)
   node
 end
