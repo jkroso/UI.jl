@@ -54,9 +54,14 @@ start_packages() = begin
 end
 building && (Kip.__init__(); start_packages())
 
-include(joinpath(@__DIR__, "..", "26_finder.jl"))
+@use "../26_finder" build_finder open_finder colours select_only! item! Heading TOOLBAR_H HEADER_H _listings _entries
+@use "github.com/jkroso/MiniFB.jl" Window KeyPress KeyRelease MouseMove Keys onkey onmouse
+@use "github.com/jkroso/Font.jl/units" px
+@use "../../Interface/Geometric" Box width height background
+@use "../../Interface/abstract" describe focus
 @use "../../Interface/Semantic/Icon" load_icon
-@use "../../Interface/draw" frame
+@use "../../Interface/draw" frame draw
+@use "../../Interface/save" save_png
 @use GeometryBasics: Vec2
 @use Libdl
 
