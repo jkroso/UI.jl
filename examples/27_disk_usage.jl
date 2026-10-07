@@ -61,10 +61,9 @@ Base.@kwdef mutable struct Palette
   panel::Colorant         # the list down the side, and the status bar
   ink::Colorant           # text
   dim::Colorant           # secondary text
-  faint::Colorant         # buttons you can't use yet
+  faint::Colorant         # the arrows in the path, and rows whose slice is too small to draw
   line::Colorant
   hover::Colorant
-  button::Colorant
   middle::Colorant        # the circle in the middle of the chart
   middle_hover::Colorant
   small::Colorant         # the slices that group small items
@@ -74,13 +73,13 @@ end
 
 const LIGHT = Palette(bg=colorant"white", panel=colorant"rgb(247,247,246)", ink=colorant"rgb(38,38,38)",
                       dim=colorant"rgb(128,128,128)", faint=colorant"rgb(190,190,190)", line=colorant"rgb(229,229,229)",
-                      hover=colorant"rgb(234,234,233)", button=colorant"white", middle=colorant"rgb(243,243,242)",
+                      hover=colorant"rgb(234,234,233)", middle=colorant"rgb(243,243,242)",
                       middle_hover=colorant"rgb(232,232,231)", small=colorant"rgb(196,196,194)",
                       lightness=60, step=5)
 
 const DARK = Palette(bg=colorant"rgb(30,30,30)", panel=colorant"rgb(37,37,37)", ink=colorant"rgb(225,225,225)",
                      dim=colorant"rgb(150,150,150)", faint=colorant"rgb(95,95,95)", line=colorant"rgb(58,58,58)",
-                     hover=colorant"rgb(56,56,56)", button=colorant"rgb(50,50,50)", middle=colorant"rgb(42,42,42)",
+                     hover=colorant"rgb(56,56,56)", middle=colorant"rgb(42,42,42)",
                      middle_hover=colorant"rgb(54,54,54)", small=colorant"rgb(92,92,92)",
                      lightness=50, step=5)
 
@@ -91,7 +90,7 @@ use!(p::Palette) = foreach(n -> setfield!(colours, n, getfield(p, n)), fieldname
 const transparent = RGBA(0, 0, 0, 0)
 
 # As tall as a title bar, so the window's close, minimise and zoom buttons sit
-# in line with the toolbar's own
+# in line with the path
 const TOOLBAR_H = 32px
 const STATUS_H  = 28px
 const LIST_W    = 360px
@@ -212,7 +211,6 @@ end
   crumbs::IdDict{Any,Any} = IdDict{Any,Any}()
   middle::Any = nothing
   titlebar::Any = nothing
-  buttons::Dict{Symbol,Any} = Dict{Symbol,Any}()
   list::Scroll = Scroll(width(grow=grow), height(grow=grow), name="List")
   free::Tuple{Float64,Int64} = (0.0, 0)  # when the free space was last read, and how much there was
   appearance::Symbol = :system           # :system follows the Mac. :light and :dark don't.
@@ -255,12 +253,6 @@ end
 "The toolbar. The window has no title bar, so dragging the toolbar's empty parts moves it."
 @def mutable struct TitleBar <: SemanticUI end
 
-@def mutable struct ToolButton <: SemanticUI
-  action::Symbol = :up
-  icon::String = ""
-  text::String = ""
-end
-
 app_of(node) = begin
   while !(node isa DiskUsage)
     node = node.parent
@@ -275,8 +267,6 @@ DiskUsage(scan::Scan; kwargs...) = begin
   a = DiskUsage(; scan=scan, zoom=scan.root, kwargs...)
   a.middle = own!(a, Middle())
   a.titlebar = own!(a, TitleBar())
-  a.buttons[:up] = own!(a, ToolButton(action=:up, icon="arrow-up"))
-  a.buttons[:rescan] = own!(a, ToolButton(action=:rescan, icon="arrow-clockwise", text="Scan Again"))
   a
 end
 
@@ -535,25 +525,6 @@ end
 
 # --- the toolbar and status bar ----------------------------------------------------
 
-enabled(a, action) = action == :up ? a.zoom.parent !== nothing : true
-
-describe(b::ToolButton) = begin
-  a = app_of(b)
-  on = enabled(a, b.action)
-  ink = on ? colours.ink : colours.faint
-  parts = Any[Icon(b.icon, size=13px, color=ink)]
-  isempty(b.text) || push!(parts, label(b.text, 12px, color=ink))
-  Row(height(24px), padding(isempty(b.text) ? 6px : 9px, 0px), child_gap=5px, radius(6px), Alignment.Center,
-      background(on && ishovered(b) ? colours.hover : colours.button), border(1px, :solid, colours.line), parts...)
-end
-
-onkey(b::ToolButton, ::KeyPress{Keys.mouse_left}) = begin
-  a = app_of(b)
-  enabled(a, b.action) || return
-  b.action == :up ? zoom_out!(a) : rescan_item!(a, a.zoom)
-end
-cursor(b::ToolButton) = enabled(app_of(b), b.action) ? :hand : nothing
-
 describe(c::Crumb) = begin
   a = app_of(c)
   here = c.item === a.zoom
@@ -583,7 +554,7 @@ describe(t::TitleBar) = begin
   a = app_of(t)
   Row(width(grow=grow), height(TOOLBAR_H), padding(0px, 8px, 0px, 80px), child_gap=10px, Alignment.Center,
       border(1px, :solid, colours.line)[:bottom], name="Toolbar",
-    a.buttons[:up], crumbs(a), a.buttons[:rescan])
+    crumbs(a))
 end
 
 onkey(t::TitleBar, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(t))
