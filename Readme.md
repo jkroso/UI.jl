@@ -80,3 +80,5 @@ Containers also take:
 - `Wedge(inner=0.5, outer=1.0, start=0, sweep=90)` draws a slice of a ring in the middle of its box, like a piece of a pie chart. Its radii are fractions of the biggest circle that fits in the box, and its angles are in degrees, clockwise from 12 o'clock. Only the slice itself gets the cursor, so wedges stacked in one box can each be hovered and clicked.
 
 `examples/25_clay_website.jl` is a port of Clay's website, and it uses most of these. `examples/26_finder.jl` is a file browser modelled on the macOS Finder. `examples/27_disk_usage.jl` shows what's using your disk space as a sunburst chart made of wedges.
+
+`julia --project=. examples/finder/build.jl` builds the Finder example into a Mac app that runs without Julia installed, and `examples/disk_usage/build.jl` does the same for Disk Usage. Add `--install` to copy the app into /Applications. `examples/mac_app/build.jl` explains what the build needs.

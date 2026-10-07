@@ -6,53 +6,7 @@
 # screen so that code is compiled ahead of time. `main` runs each time the app
 # opens.
 
-using Kip
-# The packages that wrap native libraries, loaded before UI.jl needs them
-import GLFW, Skia, Fontconfig, ModernGL
-
-# While Julia builds an app, packages don't run their __init__ as they load.
-# Julia saves those to run when the app starts. But building the app runs the
-# code below, which needs them now: Kip to find UI.jl's files, the libraries
-# that GLFW and Skia wrap, and so on. Running them here is harmless, since they
-# run again when the app starts.
-const building = ccall(:jl_generating_output, Cint, ()) == 1
-const started = Set{Module}()
-const stdlibs = Set(readdir(Sys.STDLIB))
-"""
-Run the __init__ of each package loaded so far that hasn't run it yet. Julia's
-own standard libraries are left alone: they set up things like the maths
-libraries, which don't take kindly to starting twice.
-"""
-start_packages() = begin
-  waiting = filter(collect(values(Base.loaded_modules))) do m
-    # Kip runs the __init__ of each UI.jl file itself, as it includes it
-    !(m in started || m in (Core, Base, Main) || string(nameof(m)) in stdlibs ||
-      Base.PkgId(m) in Base._sysimage_modules || m in values(Kip.modules)) && isdefined(m, :__init__)
-  end
-  # There's no record of the order they loaded in, so one that needs another
-  # library loaded first just tries again after the rest
-  problems = Dict{Module,Any}()
-  for _ in 1:4
-    failed = Module[]
-    for m in waiting
-      try
-        # GLFW's __init__ also asks to shut GLFW down when Julia exits, which
-        # Julia refuses while it builds an app. Starting GLFW is all that's needed.
-        m === GLFW ? GLFW.Init() : Base.invokelatest(getfield(m, :__init__))
-        push!(started, m)
-      catch e
-        problems[m] = e
-        push!(failed, m)
-      end
-    end
-    waiting = failed
-    isempty(waiting) && break
-  end
-  println(stderr, "Started: ", join(sort(string.(nameof.(collect(started)))), " "))
-  isempty(waiting) || error("These packages couldn't start: ",
-                            join(("$m ($(sprint(showerror, problems[m])))" for m in waiting), ", "))
-end
-building && (Kip.__init__(); start_packages())
+include("../mac_app/start.jl")
 
 @use "../26_finder" build_finder open_finder colours select_only! item! Heading TOOLBAR_H HEADER_H _listings _entries
 @use "github.com/jkroso/MiniFB.jl" Window KeyPress KeyRelease MouseMove Keys onkey onmouse
@@ -63,7 +17,6 @@ building && (Kip.__init__(); start_packages())
 @use "../../Interface/draw" frame draw
 @use "../../Interface/save" save_png
 @use GeometryBasics: Vec2
-@use Libdl
 
 building && start_packages()
 
@@ -145,63 +98,15 @@ end
 
 warm_up()
 
-"""
-While the app was built, each package that wraps a library found that library
-in ~/.julia and remembered where. Make them forget, so that when the app starts
-they look again and find the copies inside it. Skia.jl keeps its path in a
-constant, so that becomes the library's own name, which finds whichever copy
-Skia_jll loaded.
-"""
-relocate!() = begin
-  for m in values(Base.loaded_modules)
-    name = string(nameof(m))
-    (endswith(name, "_jll") && !(name in stdlibs)) || continue
-    for g in names(m, all=true)
-      endswith(string(g), "_path") && isdefined(m, g) && getglobal(m, g) isa String || continue
-      try setglobal!(m, g, nothing) catch end
-    end
-  end
-  Core.eval(Skia, :(const libskia = "@rpath/libskia.dylib"))
-end
-
 if building
   relocate!()
   # Skia's calls were compiled with the old path, so compile them again
   warm_up()
 end
 
-"""
-Run the __init__ of each of UI.jl's files. Kip included them while the app was
-built, so Julia doesn't know to run them when the app starts.
-"""
-start_ui() = begin
-  n = 0
-  for path in Kip.fallback_paths
-    m = Kip.modules[path]
-    isdefined(m, :__init__) || continue
-    Base.invokelatest(getfield(m, :__init__))
-    n += 1
-  end
-  n
-end
-
 function (@main)(args::Vector{String})
-  n = start_ui()
   # Forget the folders the warm up read. They were on the machine that built the app.
   empty!(_listings)
   empty!(_entries)
-  if "--self-test" in args
-    t = try
-      @elapsed warm_up()
-    catch e
-      println(stderr, "Self-test failed: ", sprint(showerror, e, catch_backtrace()))
-      return 1
-    end
-    println("Self-test passed in ", round(t, digits=2), " s. It started $n of UI.jl's files.")
-    # Which native libraries the app loaded, so unused ones can be left out
-    "--libraries" in args && foreach(println, Libdl.dllist())
-    return 0
-  end
-  open_finder(args)
-  return 0
+  run_app(open_finder, args, warm_up)
 end
