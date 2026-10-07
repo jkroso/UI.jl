@@ -34,6 +34,7 @@ const BADGES = Dict(
   "Stack" => colorant"rgb(150,110,90)",
   "Scroll" => colorant"rgb(176,170,62)",
   "Image" => colorant"rgb(66,150,110)",
+  "Wedge" => colorant"rgb(168,92,128)",
   "Text" => colorant"rgb(64,140,152)",
   "Background" => colorant"rgb(190,110,60)",
   "Border" => colorant"rgb(116,104,176)",
@@ -283,6 +284,7 @@ fields(node::ConcreteRect) = begin
                                                                   small(side_text(b.between)), swatch(b.between.color))))
   ui.radius.tl > 0px && push!(out, field("Corner radius", px_text(ui.radius.tl)))
   ui isa Image && push!(out, field("Source", basename(ui.src)))
+  ui isa Wedge && push!(out, field("Slice", "radius $(ui.inner)–$(ui.outer), $(round(ui.sweep, digits=1))° wide, starting at $(round(ui.start, digits=1))°"))
   ui isa Scroll && push!(out, field("Scroll offset", "$(px_text(ui.offset)) of $(px_text(max(0px, ui.content_height - node.height)))"))
   out
 end

@@ -1,5 +1,5 @@
 @use "github.com/jkroso/Prospects.jl" Field @def
-@use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont font_metrics text_bounds
+@use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont font_metrics text_bounds sk_color
 @use "github.com/jkroso/MiniFB.jl"... int KeyEvent flt onscroll
 @use "github.com/jkroso/Font.jl" cap_height ["units" px absolute]
 @use GeometryBasics: Vec2
@@ -135,6 +135,65 @@ function draw_image(ctx, ui::ConcreteRect, img::Image)
   Skia.sk_canvas_restore(ctx)
 end
 
+"The centre of a Wedge's box and the radius of the biggest circle that fits in it"
+wedge_circle(ui::ConcreteRect) = begin
+  (;padding) = ui.from
+  w, h = ui.width - padding.width, ui.height - padding.height
+  (ui.left + padding.left + w/2, ui.top + padding.top + h/2, min(w, h)/2)
+end
+
+"A Skia path around a slice of a ring. Angles are clockwise from 12 o'clock."
+function wedge_path(cx, cy, r0, r1, start, sweep)
+  p = Skia.sk_path_new()
+  oval(r) = Ref(Skia.sk_rect_t(flt(cx - r), flt(cy - r), flt(cx + r), flt(cy + r)))
+  if sweep >= 360
+    Skia.sk_path_add_circle(p, flt(cx), flt(cy), flt(r1), Skia.SK_PATH_DIRECTION_CW)
+    r0 > 0px && Skia.sk_path_add_circle(p, flt(cx), flt(cy), flt(r0), Skia.SK_PATH_DIRECTION_CCW)
+  else
+    # Skia measures angles from 3 o'clock
+    a, s = Float32(start - 90), Float32(sweep)
+    Skia.sk_path_arc_to_with_oval(p, oval(r1), a, s, true)
+    if r0 > 0px
+      Skia.sk_path_arc_to_with_oval(p, oval(r0), a + s, -s, false)
+    else
+      Skia.sk_path_line_to(p, flt(cx), flt(cy))
+    end
+    Skia.sk_path_close(p)
+  end
+  p
+end
+
+function draw_wedge(ctx, ui::ConcreteRect, w::Wedge)
+  cx, cy, r = wedge_circle(ui)
+  p = wedge_path(cx, cy, w.inner * r, w.outer * r, w.start, w.sweep)
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  if alpha(w.background.color) > 0
+    Skia.sk_paint_set_color(paint, sk_color(w.background.color))
+    Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(0))
+    Skia.sk_canvas_draw_path(ctx, p, paint)
+  end
+  edge = w.border.top
+  if !isempty(edge)
+    Skia.sk_paint_set_color(paint, sk_color(edge.color))
+    Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(1))
+    Skia.sk_paint_set_stroke_width(paint, flt(edge.width))
+    Skia.sk_canvas_draw_path(ctx, p, paint)
+  end
+  Skia.sk_paint_delete(paint)
+  Skia.sk_path_delete(p)
+end
+
+"True when `pos`, which is inside `ui`'s box, is on the shape that `from` draws there"
+on_shape(from, ui, pos) = true
+on_shape(w::Wedge, ui::ConcreteRect, (x, y)) = begin
+  cx, cy, r = wedge_circle(ui)
+  # As fractions of the radius, like `inner` and `outer`
+  dx, dy = (x - cx) / r, (y - cy) / r
+  w.inner <= hypot(dx, dy) <= w.outer || return false
+  w.sweep >= 360 || mod(atand(dx, -dy) - w.start, 360) <= w.sweep
+end
+
 function draw_children(ctx, ui::ConcreteRect)
   for child in ui.children
     quick_reject(ctx, child) && continue
@@ -145,7 +204,11 @@ end
 draw(ctx, size, ui::ConcreteRect) = begin
   from = ui.from
   (;background, radius) = from
-  alpha(background.color) > 0 && rounded_rectangle(ctx, ui.origin, ui.size, radius.tl, background=background.color)
+  if from isa Wedge
+    draw_wedge(ctx, ui, from)
+  elseif alpha(background.color) > 0
+    rounded_rectangle(ctx, ui.origin, ui.size, radius.tl, background=background.color)
+  end
   from isa Image && draw_image(ctx, ui, from)
   if from isa Scroll
     with_clip(() -> draw_children(ctx, ui), ctx, ui.left, ui.top, ui.width, ui.height)
@@ -158,7 +221,7 @@ draw(ctx, size, ui::ConcreteRect) = begin
     draw_children(ctx, ui)
     draw_between(ctx, ui)
   end
-  draw_border(ctx, ui)
+  from isa Wedge || draw_border(ctx, ui)
   from isa Scroll && draw_scrollbar(ctx, ui, from)
   from.from !== nothing && draw(ctx, size, ui, from.from)
 end
@@ -489,7 +552,8 @@ semantic_source(ui::Union{ConcreteRect,ConcreteText}) = begin
   nothing
 end
 
-inside(ui::ConcreteUI, (x, y)) = ui.left <= x <= ui.left + ui.width && ui.top <= y <= ui.top + ui.height
+inside(ui::ConcreteUI, (x, y)) =
+  ui.left <= x <= ui.left + ui.width && ui.top <= y <= ui.top + ui.height && on_shape(ui.from, ui, (x, y))
 
 "Find the deepest SemanticUI node under the given position"
 hittest(ui::ConcreteRect, pos) = begin

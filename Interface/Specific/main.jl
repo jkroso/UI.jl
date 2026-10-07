@@ -99,7 +99,7 @@ dimension(ui::Container, d::Axis) = getproperty(ui, field(d))
 "The axes along which a container lays its children end to end"
 main_axes(::Row) = (Axis.x,)
 main_axes(::Column) = (Axis.y,)
-main_axes(::Box) = (Axis.x, Axis.y)
+main_axes(::Union{Box,Wedge}) = (Axis.x, Axis.y)
 main_axes(::Container) = ()
 
 "Space between children: the gap plus any border drawn between them"
@@ -169,13 +169,13 @@ content_min_width(ui::Container, rect) = clips(ui) ? extra(rect, Axis.x) : _cont
 "True when a container hides content that doesn't fit, so it can be narrower than it"
 clips(ui::Container) = ui.clip || ui isa Scroll
 _content_min_width(::Row, rect) = sum(c -> minsize(c, field"width"), rect.children, init=0px) + extra(rect, Axis.x)
-_content_min_width(::Union{Box,Stack,Column,Scroll}, rect) =
+_content_min_width(::Union{Box,Wedge,Stack,Column,Scroll}, rect) =
   maximum(c -> minsize(c, field"width"), rect.children, init=0px) + extra(rect, Axis.x)
 _content_min_width(::Container, rect) = 0px
 
 "How wide a container's content is, or `nothing` if the content doesn't say"
 content_width(::Row, rect) = sum(field"width", rect.children, init=0px) + extra(rect, Axis.x)
-content_width(::Union{Box,Stack,Column,Scroll}, rect) = maximum(field"width", rect.children, init=0px) + extra(rect, Axis.x)
+content_width(::Union{Box,Wedge,Stack,Column,Scroll}, rect) = maximum(field"width", rect.children, init=0px) + extra(rect, Axis.x)
 content_width(::Container, rect) = nothing
 content_width(img::Image, rect) = begin
   img.height.preferred == 0px && return nothing
@@ -487,7 +487,7 @@ function position!(scroll::Scroll, ui::ConcreteRect)
   position!(child.from, child)
 end
 
-function position!(box::Box, ui::ConcreteRect)
+function position!(box::Union{Box,Wedge}, ui::ConcreteRect)
   isempty(ui.children) && return
   child = ui.children[1]
   left, top = content_origin(box, ui)

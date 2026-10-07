@@ -92,3 +92,9 @@ const clipped = Row(width(60px), Box(clip=true, Text("unbreakable", wrap=WrapMod
 # Text doesn't absorb spare height; it's exactly as tall as its lines
 const tall = Column(width(200px), height(400px), Text("one line"))
 @test describe(tall, (200px, 400px)).children[1].height < 50px
+
+# A Wedge places its child like a Box does, in the middle of its box
+const pie = Wedge(width(200px), height(100px), outer=0.5, Box(width(20px), height(10px)))
+let wedge = describe(pie, (200px, 100px))
+  @test (wedge.children[1].left, wedge.children[1].top) == (90px, 45px)
+end

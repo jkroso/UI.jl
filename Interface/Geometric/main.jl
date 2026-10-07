@@ -212,6 +212,22 @@ and the default of 0 means "read it from the file".
 end
 Image(src::AbstractString, args...; kwargs...) = Image(args...; src=String(src), kwargs...)
 
+"""
+A slice of a ring, like a piece of a pie chart or a sunburst, filled with its
+`background` colour. It's centred in its box. `inner` and `outer` are its radii,
+as fractions of the radius of the biggest circle that fits in the box, so the
+slice grows with the box. `start` and `sweep` are angles in degrees, clockwise
+from 12 o'clock. A `border` outlines the slice, centred on its edge. Its
+children are placed as in a Box. Only the slice itself gets the cursor, so
+wedges stacked in one box can each be hovered and clicked.
+"""
+@def mutable struct Wedge <: Container
+  inner::Float64=0.0
+  outer::Float64=1.0
+  start::Float64=0.0
+  sweep::Float64=360.0
+end
+
 mixin!(r::Container, a::Alignment) = (r.align = a; r)
 
 mixin!(old::Border, new::Border) = begin
@@ -224,4 +240,4 @@ end
 
 @property Container.between_width = self.child_gap + self.border.between.width
 
-export padding, background, border, rgb, pt, mm, px, Container, Box, Stack, Column, Row, Scroll, ScrollbarMode, scroll_into_view!, Image, Text, TextAlign, width, height, GrowType, Alignment, radius
+export padding, background, border, rgb, pt, mm, px, Container, Box, Stack, Column, Row, Scroll, ScrollbarMode, scroll_into_view!, Image, Wedge, Text, TextAlign, width, height, GrowType, Alignment, radius
