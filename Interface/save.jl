@@ -4,17 +4,22 @@
 @use "./Specific"...
 @use "./draw" draw
 
-"Render a draw function to a PNG file. `f(canvas, size, args...)` is called to draw."
-function save_png(f::Function, path::AbstractString, size, args...; scale=(2.0, 2.0))
+"""
+Render a draw function to a PNG file. `f(canvas, size, args...)` is called to draw.
+With `opaque=false` the image starts out transparent, so the parts `f` doesn't
+draw on stay see-through, e.g. the corners of an app icon.
+"""
+function save_png(f::Function, path::AbstractString, size, args...; scale=(2.0, 2.0), opaque=true)
   (scalex, scaley) = scale
   x, y = int.(size)
   scaledx = round(Int, x*scalex)
   scaledy = round(Int, y*scaley)
-  info = Ref(Skia.sk_image_info_t(C_NULL, Skia.SK_COLOR_TYPE_RGBA_8888, Skia.sk_alpha_type_t(1), scaledx, scaledy))
+  info = Ref(Skia.sk_image_info_t(C_NULL, Skia.SK_COLOR_TYPE_RGBA_8888, opaque ? Skia.SK_ALPHA_TYPE_OPAQUE : Skia.SK_ALPHA_TYPE_PREMUL, scaledx, scaledy))
   GC.@preserve info begin
     surface = Skia.sk_surface_make_raster_n32_premul(pointer_from_objref(info), C_NULL)
     surface == C_NULL && error("Failed to create Skia surface ($(scaledx)x$(scaledy))")
     canvas = Skia.sk_surface_get_canvas(surface)
+    opaque || Skia.sk_canvas_clear(canvas, 0x00000000)
     Skia.sk_canvas_scale(canvas, Float32(scalex), Float32(scaley))
     invokelatest(f, canvas, size, args...)
     image = Skia.sk_surface_make_image_snapshot(surface)
