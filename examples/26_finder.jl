@@ -1,7 +1,7 @@
 # Finder
 #
 # A file browser modelled on the macOS Finder: a sidebar of places, a toolbar
-# with back and forward buttons, three ways to view a folder, a path bar and a
+# with back and forward buttons, four ways to view a folder, a path bar and a
 # Quick Look panel. It shows the real files on your disk. You can open them,
 # and drag them to move or copy them. It never deletes or replaces a file.
 #
@@ -13,7 +13,11 @@
 # setting. Add `--dark` or `--light` to choose one.
 #
 # Things to try:
-#   - Switch between the icon, list and column views with the toolbar, or ⌘1, ⌘2 and ⌘3.
+#   - Switch between the icon, list, column and sunburst views with the toolbar, or ⌘1 to ⌘4.
+#   - The sunburst view is the chart from the Disk Usage example. It shows what's
+#     using the space in the folder. Hover a slice to see how big it is. Click a
+#     folder's slice to go into it, and the middle to go back out. ⌘R reads the
+#     folder again.
 #   - Click to select. ⌘-click and shift-click select more. Double-click opens.
 #   - Use the arrow keys. In the list view, → and ← open and close folders.
 #   - Click a column heading in the list view to sort by it.
@@ -50,6 +54,8 @@
 @use "../Interface/Semantic/Icon" Icon
 @use "../Interface/Semantic/TextInput" TextInput
 @use "./finder/system" file_info file_icon available_space sidebar_volume locale
+@use "./27_disk_usage" DiskUsage scan! zoom! rescan_item! busy
+@use "./disk_usage/scan" Scan stop! running path => item_path
 @use Colors: @colorant_str, RGBA, Colorant
 @use InteractiveUtils: clipboard
 
@@ -273,7 +279,7 @@ is_image(e::Entry) = !e.folder && lowercase(splitext(e.path)[2]) in IMAGE_TYPES 
   path::String = homedir()             # the folder the window shows
   back::Vector{String} = String[]
   forward::Vector{String} = String[]
-  mode::Symbol = :list                 # :icons, :list or :columns
+  mode::Symbol = :list                 # :icons, :list, :columns or :sunburst
   selected::Set{String} = Set{String}()
   anchor::String = ""                  # where a shift-click selection starts
   cursor::String = ""                  # the item the arrow keys move from
@@ -294,6 +300,8 @@ is_image(e::Entry) = !e.folder && lowercase(splitext(e.path)[2]) in IMAGE_TYPES 
   marquee::Any = nothing               # the corners of the box being dragged out
   undo::Any = nothing                  # the (from, to) pairs of the last move
   menu::Any = nothing                  # the ContextMenu a right-click opened, while it's open
+  usage::Any = nothing                 # the DiskUsage chart the sunburst view shows
+  charted::String = ""                 # the folder the chart and the window last agreed on
   notice::Tuple{String,Float64} = ("", 0.0)
   typed::Tuple{String,Float64} = ("", 0.0)
   # Visible items in keyboard order, and how many fit in an icon view row
@@ -436,7 +444,7 @@ build_finder(path=homedir()) = begin
     p isa Place && add_child!(f, p)
   end
   for (action, icon) in ((:back, "chevron-left"), (:forward, "chevron-right"), (:icons, "grid"),
-                         (:list, "list-ul"), (:columns, "layout-three-columns"))
+                         (:list, "list-ul"), (:columns, "layout-three-columns"), (:sunburst, "bullseye"))
     f.buttons[action] = ToolButton(action=action, icon=icon)
     add_child!(f, f.buttons[action])
   end
@@ -608,7 +616,7 @@ toolbar(f) = Row(width(grow=grow), height(TOOLBAR_H), padding(12px, 0px), child_
   capsule(f.buttons[:back], divider(), f.buttons[:forward], name="History"),
   label(fit(entry(target(f)).name, 400px, size=15px), 15px, weight="Bold"),
   Box(width(grow=grow)),
-  capsule(f.buttons[:icons], divider(), f.buttons[:list], f.buttons[:columns], name="Views"),
+  capsule(f.buttons[:icons], divider(), f.buttons[:list], f.buttons[:columns], f.buttons[:sunburst], name="Views"),
   f.search)
 
 # --- path bar ----------------------------------------------------------------
@@ -942,7 +950,72 @@ content(f, w, h) = begin
   isempty(l.error) || (f.order = Entry[]; return message(l.error))
   f.mode == :list ? list_view(f, w, h - HEADER_H) :
   f.mode == :icons ? icon_view(f, w, h) :
-                     column_view(f, w, h)
+  f.mode == :sunburst ? sunburst_view(f, w, h) :
+                        column_view(f, w, h)
+end
+
+# --- the sunburst view ------------------------------------------------------------
+
+"The Disk Usage example's chart of the folder the window shows, laid out at `w` × `h`"
+sunburst_view(f, w, h) = begin
+  u = f.usage
+  u.size = (w, h)
+  u.appearance = f.dark ? :dark : :light
+  # For the counts in the path bar
+  f.order = entries(f, f.path)
+  u
+end
+
+"""
+Keep the chart and the window on the same folder. Going to a folder in the
+window zooms the chart there, and clicking a slice or the middle of the chart
+takes the window there. A folder outside the one the chart read starts a new
+scan.
+"""
+sync_sunburst!(f) = begin
+  isdir(f.path) || return
+  u = f.usage
+  if u === nothing
+    u = f.usage = own!(f, DiskUsage(Scan(f.path), embedded=true, onmenu=item -> sunburst_menu!(f, item)))
+  elseif f.path != f.charted
+    item = find_item(u.scan.root, f.path)
+    item === nothing ? scan!(u, f.path) : item === u.zoom || zoom!(u, item)
+  else
+    here = item_path(u.zoom)
+    here == f.path || navigate!(f, here)
+  end
+  f.charted = f.path
+end
+
+"The chart's Item for the folder `dir`, when the scan from `root` has read that far"
+find_item(root, dir) = begin
+  top = item_path(root)
+  dir == top && return root
+  startswith(dir, rstrip(top, '/') * "/") || return nothing
+  item = root
+  for name in splitpath(relpath(dir, top))
+    i = findfirst(c -> c.name == name, item.children)
+    i === nothing && return nothing
+    item = item.children[i]
+  end
+  item.folder ? item : nothing
+end
+
+"A right-click on a slice or a row of the chart opens Finder's menu for what it stands for"
+sunburst_menu!(f, item) = begin
+  p = item_path(item)
+  f.selected = Set([p])
+  f.anchor = f.cursor = p
+  open_menu!(f, mouse(f))
+end
+
+"Read these folders again, if the chart has them, after files were added to them"
+rechart!(f, dirs) = begin
+  f.usage === nothing && return
+  for d in dirs
+    item = find_item(f.usage.scan.root, d)
+    item === nothing || rescan_item!(f.usage, item)
+  end
 end
 
 # --- Quick Look ----------------------------------------------------------------
@@ -950,6 +1023,7 @@ end
 "The item that Quick Look and the arrow keys start from"
 current(f) =
   f.mode == :columns ? (isempty(f.trail) ? nothing : entry(f.trail[end])) :
+  f.mode == :sunburst ? (ispath(f.cursor) ? entry(f.cursor) : nothing) :
   (i = findfirst(e -> e.path == f.cursor, f.order); i === nothing ? nothing : f.order[i])
 
 "The start of a text file, or `nothing` when it doesn't look like text"
@@ -1006,6 +1080,7 @@ end
 
 describe(f::Finder) = begin
   use_appearance!(f)
+  f.mode == :sunburst && sync_sunburst!(f)
   w, h = window_size(f)
   # Fetching icons gets 12 ms of each frame
   f.icon_budget = 0.012
@@ -1018,7 +1093,8 @@ describe(f::Finder) = begin
       pathbar(f)))
   win = window_of(f)
   # Draw again soon while icons are still arriving or the search caret blinks
-  win === nothing || (win.animating = f.icons_pending || win.focus === search_input(f))
+  charting = f.mode == :sunburst && f.usage !== nothing && busy(f.usage)
+  win === nothing || (win.animating = f.icons_pending || win.focus === search_input(f) || charting)
   layers = Any[window]
   f.quicklook && push!(layers, f.quicklook_backdrop, f.quicklook_panel)
   isempty(f.dragging) || win === nothing || push!(layers, float_layer(drag_preview(f, win.mouse)))
@@ -1133,6 +1209,7 @@ duplicate!(f, paths) = begin
     end
   end
   refresh!(unique(dirname.(paths))...)
+  rechart!(f, unique(dirname.(paths)))
   if !isempty(made)
     f.selected = Set(made)
     f.anchor = f.cursor = last(made)
@@ -1341,7 +1418,8 @@ open!(f, e::Entry) = e.folder ? navigate!(f, e.path) : open_url(e.path)
 
 open_selection!(f) = begin
   chosen = f.mode == :columns ? (isempty(f.trail) ? Entry[] : [entry(f.trail[end])]) :
-                                filter(e -> e.path in f.selected, f.order)
+           f.mode == :sunburst ? [entry(p) for p in sort!(collect(f.selected)) if ispath(p)] :
+                                 filter(e -> e.path in f.selected, f.order)
   folders = filter(e -> e.folder, chosen)
   length(folders) == 1 && return navigate!(f, folders[1].path)
   foreach(e -> e.folder || open_url(e.path), first(chosen, 10))
@@ -1349,6 +1427,11 @@ end
 
 set_mode!(f, mode) = begin
   mode == f.mode && return
+  # A scan that's stopped part way can't go on, so the next sunburst starts a new one
+  if f.mode == :sunburst && f.usage !== nothing && running(f.usage.scan)
+    stop!(f.usage.scan)
+    f.usage = nothing
+  end
   if f.mode == :columns
     dir = target(f)
     chosen = isempty(f.trail) ? "" : f.trail[end]
@@ -1395,6 +1478,7 @@ end
 "Move the selection with an arrow key"
 move!(f, key, extend) = begin
   f.mode == :columns && return move_column!(f, key)
+  f.mode == :sunburst && return
   n = length(f.order)
   n == 0 && return
   i = findfirst(e -> e.path == f.cursor, f.order)
@@ -1452,6 +1536,7 @@ LETTERS[Keys.minus] = '-'
 
 "Select the first item whose name starts with what's been typed in the last second"
 type_select!(f, c) = begin
+  f.mode == :sunburst && return
   typed, t = f.typed
   typed = time() - t < 1 ? typed * c : string(c)
   f.typed = (typed, time())
@@ -1469,7 +1554,7 @@ type_select!(f, c) = begin
 end
 
 const VIEW_KEYS = Dict(getproperty(Keys, Symbol(1)) => :icons, getproperty(Keys, Symbol(2)) => :list,
-                       getproperty(Keys, Symbol(3)) => :columns)
+                       getproperty(Keys, Symbol(3)) => :columns, getproperty(Keys, Symbol(4)) => :sunburst)
 
 is_mouse(k) = k in (Keys.mouse_left, Keys.mouse_right, Keys.mouse_middle)
 
@@ -1494,6 +1579,8 @@ onkey(f::Finder, e::KeyPress{K}) where K = begin
     focus(search_input(f))
   elseif cmd && haskey(VIEW_KEYS, K)
     set_mode!(f, VIEW_KEYS[K])
+  elseif cmd && K == Keys.r && f.mode == :sunburst && f.usage !== nothing
+    rescan_item!(f.usage, f.usage.zoom)
   elseif cmd && K == Keys.left_bracket
     go_back!(f)
   elseif cmd && K == Keys.right_bracket
@@ -1534,7 +1621,7 @@ open_finder(args) = begin
   display(window)
 end
 
-onopen(w::Window) = hide_titlebar!(w)
+onopen(::Finder, w::Window) = hide_titlebar!(w)
 
 if abspath(PROGRAM_FILE) == @__FILE__
   open_finder(ARGS)

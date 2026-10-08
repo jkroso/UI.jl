@@ -21,6 +21,8 @@
 #   - Drop a folder on the window to scan that folder instead.
 #   - ⌘⌥I opens the layout inspector.
 #
+# The Finder example shows this chart too, as its sunburst view.
+#
 # The rings fill in while the scan runs. Worker threads read the folders, and
 # each frame adds what they've found. Start Julia with more threads to scan
 # faster:
@@ -157,6 +159,13 @@ name(item::Item) = begin
   item.name == home || startswith(item.name, home * "/") ? "~" * item.name[length(home)+1:end] : item.name
 end
 
+"""
+The name to show for `item` in `a`. An app that has the chart in its window has
+a path bar of its own, so there the folder the scan started at shows its name
+rather than its path.
+"""
+name(a, item::Item) = a.embedded && item.parent === nothing && !isempty(basename(item.name)) ? basename(item.name) : name(item)
+
 "The colour of a slice with hue `hue` on ring `ring`. Each ring out is lighter."
 slice_colour(hue, ring, folder, hover) = begin
   l = colours.lightness + colours.step * (max(ring, 1) - 1) + (hover ? 9 : 0)
@@ -218,6 +227,12 @@ end
   dark::Union{Nothing,Bool} = nothing
   # The size to lay out at when the app isn't in a window, e.g. for a PNG
   size::Tuple{px,px} = (1100px, 720px)
+  # True when it's part of another app's window, as in Finder's sunburst view.
+  # Then it's just the chart, with no toolbar or list. It's laid out at `size`,
+  # and the other app sets its appearance and the window's. `onmenu(item)`, when
+  # it's set, runs on a right-click instead of this app's menu.
+  embedded::Bool = false
+  onmenu::Any = nothing
 end
 
 "One slice of the chart. `key` is its Item, or (:small, folder) for a slice of small items."
@@ -288,7 +303,7 @@ end
 "Drop the nodes made for items, after the items they show have changed"
 forget!(a) = (empty!(a.slices); empty!(a.rows); empty!(a.crumbs); a)
 
-window_size(a) = something(viewport(a), a.size)
+window_size(a) = a.embedded ? a.size : something(viewport(a), a.size)
 
 # --- zooming -------------------------------------------------------------------
 
@@ -413,7 +428,7 @@ end
 "The radius of the chart, worked out from the window's size"
 chart_radius(a) = begin
   w, h = window_size(a)
-  min(w - LIST_W - 48px, h - TOOLBAR_H - 48px) / 2
+  a.embedded ? min(w - 48px, h - 48px) / 2 : min(w - LIST_W - 48px, h - TOOLBAR_H - 48px) / 2
 end
 
 """
@@ -430,13 +445,13 @@ summary(a::DiskUsage) = begin
       free = free_space(a)
       free > 0 && push!(lines, "$(size_text(free)) free on disk")
     end
-    name(a.zoom), a.zoom.bytes, lines
+    name(a, a.zoom), a.zoom.bytes, lines
   elseif p.key isa Tuple
     "$(commas(p.count)) smaller items", p.bytes, ["in " * basename(path(p.item))]
   else
     item = p.item
     share = share_text(item.bytes, a.zoom.bytes) * " of " * basename(path(a.zoom))
-    name(item), item.bytes, item.folder ? [files_text(item.files), share] : [share]
+    name(a, item), item.bytes, item.folder ? [files_text(item.files), share] : [share]
   end
   Column(child_gap=8px, Alignment.Center,
     label(fit(title, room, size=13px), 13px, weight="Semibold", align=TextAlign.Center),
@@ -465,7 +480,10 @@ onkey(s::Union{Slice,ListRow}, ::KeyPress{Keys.mouse_left}) = begin
   t = target(s)
   t === nothing || zoom!(app_of(s), t)
 end
-onkey(s::Union{Slice,ListRow}, ::KeyPress{Keys.mouse_right}) = item_menu(app_of(s), s.item)
+onkey(s::Union{Slice,ListRow}, ::KeyPress{Keys.mouse_right}) = begin
+  a = app_of(s)
+  a.onmenu === nothing ? item_menu(a, s.item) : a.onmenu(s.item)
+end
 cursor(s::Union{Slice,ListRow}) = target(s) === nothing ? nothing : :hand
 
 "Show in Finder, open, or scan again"
@@ -535,15 +553,16 @@ describe(r::ListRow) = begin
 end
 
 describe(h::ListHeader) = begin
-  folder = app_of(h).zoom
+  a = app_of(h)
+  folder = a.zoom
   detail = files_text(folder.files) * (folder.denied ? " · couldn't be read" : "")
   Column(width(grow=grow), padding(14px, 16px), child_gap=8px, Alignment.Start,
          border(1px, :solid, colours.line)[:bottom],
-    label(fit(name(folder), LIST_W - 32px, size=15px), 15px, weight="Semibold"),
+    label(fit(name(a, folder), LIST_W - 32px, size=15px), 15px, weight="Semibold"),
     label(size_text(folder.bytes) * " · " * detail, 12px, color=colours.dim))
 end
 
-onkey(h::ListHeader, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(h))
+onkey(h::ListHeader, ::KeyPress{Keys.mouse_left}) = app_of(h).embedded || drag_window!(window_of(h))
 
 "The list down the side, from the top of the window to the bottom"
 list_panel(a::DiskUsage) = begin
@@ -610,9 +629,12 @@ use_appearance!(a) = begin
   dark = a.appearance == :system ? dark_mode() : a.appearance == :dark
   use!(dark ? DARK : LIGHT)
   win = window_of(a)
-  win === nothing || dark === a.dark || set_dark!(win, dark)
+  win === nothing || a.embedded || dark === a.dark || set_dark!(win, dark)
   a.dark = dark
 end
+
+"True while the scan runs or the chart zooms, so the window needs to keep drawing"
+busy(a::DiskUsage) = running(a.scan) || a.moving !== nothing
 
 "The slice or row `node` is part of, or `nothing`"
 part_of(node) = begin
@@ -634,7 +656,9 @@ describe(a::DiskUsage) = begin
     a.hover = a.pointed === nothing ? nothing : a.pointed.key
   end
   parts = slices(a, view!(a))
-  win === nothing || (win.animating = running(a.scan) || a.moving !== nothing)
+  win === nothing || a.embedded || (win.animating = busy(a))
+  a.embedded && return Box(width(grow=grow), height(grow=grow), background(colours.bg), name="DiskUsage",
+                           chart(a, parts))
   Row(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg), name="DiskUsage",
     Column(width(grow=grow), height(grow=grow), Alignment.Start,
       a.titlebar,
@@ -655,7 +679,7 @@ onkey(a::DiskUsage, e::KeyPress{K}) where K = begin
   end
 end
 
-onopen(w::Window) = hide_titlebar!(w)
+onopen(::DiskUsage, w::Window) = hide_titlebar!(w)
 
 onfiledrop(w::Window, paths) = begin
   a = w.ui

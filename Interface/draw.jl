@@ -549,6 +549,14 @@ end
 
 Base.display(w::Window) = open(w)
 
+"""
+MiniFB calls `onopen(window)` once the window is open. UI.jl passes it on to
+`onopen(ui, window)`, so each app can do what its window needs then, like
+`hide_titlebar!`, without replacing what another app loaded alongside it does.
+"""
+onopen(w::Window) = onopen(w.ui, w)
+onopen(ui, w::Window) = nothing
+
 "Walk the from chain to find the SemanticUI that produced this concrete node"
 semantic_source(ui::Union{ConcreteRect,ConcreteText}) = begin
   from = ui.from

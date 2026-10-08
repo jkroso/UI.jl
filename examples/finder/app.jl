@@ -9,6 +9,7 @@
 include("../mac_app/start.jl")
 
 @use "../26_finder" build_finder open_finder colours select_only! item! Heading TOOLBAR_H HEADER_H _listings _entries
+@use "../27_disk_usage" busy
 @use "github.com/jkroso/MiniFB.jl" Window KeyPress KeyRelease MouseMove Keys onkey onmouse
 @use "github.com/jkroso/Font.jl/units" px
 @use "../../Interface/Geometric" Box width height background
@@ -22,9 +23,10 @@ building && start_packages()
 
 # Icons are read from UI.jl's Icons folder the first time they're drawn. Reading
 # them now keeps them in the app, so it doesn't need that folder.
-foreach(load_icon, ["app", "arrow-down-circle", "chevron-down", "chevron-left", "chevron-right", "chevron-up",
-                    "cloud", "display", "file-earmark", "folder-fill", "grid", "hdd", "house",
-                    "layout-three-columns", "list-ul", "search", "trash3", "x-circle-fill"])
+foreach(load_icon, ["app", "arrow-down-circle", "bullseye", "chevron-down", "chevron-left", "chevron-right",
+                    "chevron-up", "cloud", "display", "file-earmark", "file-earmark-fill", "folder-fill", "grid",
+                    "hdd", "house", "layout-three-columns", "list-ul", "search", "three-dots", "trash3",
+                    "x-circle-fill"])
 
 """
 Show each view and send input to a window that isn't on screen, in a throwaway
@@ -108,6 +110,18 @@ warm_up() = begin
   f.mode = :list; frame(w)
   right_click(400, row(1)); click(f.menu.children[3])
   right_click(400, row(1)); click(f.menu.children[2]); press(Keys.escape)
+  # The sunburst view in each appearance, once its scan of the folder is done.
+  # Leaving it with ⌘2 keeps the finished scan for next time.
+  for appearance in (:light, :dark)
+    f.appearance = appearance
+    press(Keys.var"4", Keys.cmd)
+    stop = time() + 30
+    while busy(f.usage) && time() < stop
+      frame(w)
+    end
+    mouse(560, 300); frame(w); mouse(560, 200); frame(w)
+    press(Keys.var"2", Keys.cmd)
+  end
   rm(dir, recursive=true)
 end
 
