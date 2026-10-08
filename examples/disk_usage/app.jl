@@ -14,7 +14,8 @@ include("../mac_app/start.jl")
 @use "github.com/jkroso/Font.jl/units" px
 @use "../../Interface/abstract" focus
 @use "../../Interface/Semantic/Icon" load_icon
-@use "../../Interface/draw" frame
+@use "../../Interface/draw" frame _scenes semantic_source
+@use "../../Interface/Specific" ConcreteRect
 @use GeometryBasics: Vec2
 
 building && start_packages()
@@ -25,7 +26,8 @@ foreach(load_icon, ["chevron-right", "file-earmark-fill", "folder-fill", "three-
 
 """
 A throwaway folder to scan. It has folders deeper than the chart's rings, one
-with more files than the list shows, an empty one and one that can't be read.
+with more files than the list shows, an empty one, one that can't be read, and
+names too long to fit or in other scripts, as a real disk has.
 """
 test_folder() = begin
   dir = mktempdir()
@@ -37,8 +39,33 @@ test_folder() = begin
       write(joinpath(dir, folder, "file $i.txt"), "x"^(100i))
     end
   end
+  long = "a folder with a name that is far too long to fit in the list or in the path at the top"
+  mkpath(joinpath(dir, long, long))
+  write(joinpath(dir, long, "a file with a very long name that has to be shortened in the middle.txt"), "x"^5000)
+  write(joinpath(dir, long, long, "inside.txt"), "x"^3000)
+  for name in ("写真とビデオ.txt", "Screenshot 2026-10-08 at 10.00.00\u202fam.png", "😀 emoji.txt", "Ünïcödé.txt")
+    write(joinpath(dir, name), "x"^300)
+  end
   chmod(joinpath(dir, "locked"), 0o000)
   dir
+end
+
+"""
+A point on one thing of each kind in window `w`, as its last frame laid them out.
+A kind is the kind of layout node, of what it draws and of the thing it shows. A
+grid of points can miss small things, like the icon in a row.
+"""
+kinds(w) = begin
+  points = Dict{Any,Tuple{Float64,Float64}}()
+  visit(n) = begin
+    shows = applicable(semantic_source, n) ? semantic_source(n) : nothing
+    if n.width > 0px && n.height > 0px
+      get!(points, (typeof(n), typeof(n.from), typeof(shows)), (n.left.value + n.width.value / 2, n.top.value + n.height.value / 2))
+    end
+    n isa ConcreteRect && foreach(visit, n.children)
+  end
+  visit(_scenes[objectid(w)])
+  collect(values(points))
 end
 
 "The item called `name` in `folder`"
@@ -90,6 +117,14 @@ warm_up() = begin
       end
       foreach(x -> mouse(x, 16), (20, 96, 300, 1050))
       foreach(y -> mouse(cx * 2 + 100, y), 40:26:400)
+      foreach(p -> mouse(p...), kinds(w))
+    end
+    # Click and right-click one thing of each kind. Then go back to the top, and click
+    # away from any menu to close it without choosing anything.
+    for p in kinds(w)
+      click(p...); click(p..., Keys.mouse_right); click(5, 5)
+      # Without waiting for the zoom to play out, which the rest of the warm up does
+      zoom!(a, a.scan.root); a.moving = nothing; settle()
     end
     # Into a folder with more files than the list shows. Scroll its list.
     zoom!(a, child(a.scan.root, "many")); settle()
@@ -97,6 +132,10 @@ warm_up() = begin
     foreach(_ -> (onscroll(w, Vec2{px}(0px, -5px)); frame(w)), 1:4)
     foreach(y -> mouse(cx * 2 + 100, y), 100:26:400)
     press(Keys.escape); settle()
+    # A folder with a name too long for the path at the top, then back out
+    long = only(c for c in a.scan.root.children if startswith(c.name, "a folder with"))
+    zoom!(a, only(c for c in long.children if c.folder)); settle()
+    press(Keys.escape); settle(); press(Keys.escape); settle()
     # Deep enough that the rings run out, then back by the path at the top
     deep = child(a.scan.root, "deep")
     zoom!(a, child(child(deep, "a"), "b")); settle()
@@ -143,6 +182,67 @@ if building
   sleep(0.5)
 end
 
+"""
+Choose each item in a folder's menu and in a file's menu, in a window that isn't
+on screen. The warm up doesn't, since Show in Finder and Open run `open`. When
+`record` runs, `open` does nothing.
+"""
+use_menus() = begin
+  dir = test_folder()
+  a = DiskUsage(Scan(dir))
+  w = Window(a, title="menus", size=(1100px, 720px))
+  focus(a)
+  try
+    stop = time() + 60
+    while running(a.scan)
+      time() < stop || error("The scan of $dir didn't finish")
+      frame(w)
+    end
+    frame(w)
+    # Each menu opens where the pointer is, at the top left, with items 32 pixels tall
+    for name in ("documents", "big.bin"), item in 1:2
+      onkey(a.rows[child(a.scan.root, name)], KeyPress{Keys.mouse_right}(0, w)); frame(w)
+      pos = Vec2{px}(20px, px(16 + 32 * (item - 1)))
+      onmouse(w, MouseMove(pos, w)); w.mouse = pos
+      onkey(w, KeyPress{Keys.mouse_left}(0, w)); onkey(w, KeyRelease{Keys.mouse_left}(0, w)); frame(w)
+      w.mouse = Vec2{px}(0px, 0px)
+    end
+    while running(a.scan); frame(w) end
+  finally
+    stop!(a.scan)
+    chmod(joinpath(dir, "locked"), 0o755)
+    rm(dir, recursive=true)
+  end
+end
+
+"""
+Open the real window on a throwaway folder and send it every kind of input, then
+the app's shortcuts. build.jl runs the app with `--record` before it builds a
+trimmed app, so the calls this makes are kept. See ../mac_app/record.jl.
+"""
+record() = begin
+  use_menus()
+  dir = test_folder()
+  try
+    record_window(() -> open_disk_usage([dir])) do window
+      sleep(1)  # time for the scan
+      points = [(x, y) for y in 16:64:700 for x in 40:100:1080]
+      send_every_input(window, points=points, drop=joinpath(dir, "documents"))
+      press_keys(window, GLFW.KEY_R, GLFW.KEY_LEFT_SUPER)
+      press_keys(window, GLFW.KEY_UP, GLFW.KEY_LEFT_SUPER)
+      press_keys(window, GLFW.KEY_I, GLFW.KEY_LEFT_SUPER, GLFW.KEY_LEFT_ALT)
+      press_keys(window, GLFW.KEY_I, GLFW.KEY_LEFT_SUPER, GLFW.KEY_LEFT_ALT)
+      press_keys(window, GLFW.KEY_ESCAPE)
+    end
+  finally
+    chmod(joinpath(dir, "locked"), 0o755)
+    rm(dir, recursive=true)
+  end
+end
+
+# A trimmed app keeps only the methods main calls, and the ones --record saw
+trimming && keep_recorded(ENV["APP_CALLS"])
+
 function (@main)(args::Vector{String})
-  run_app(open_disk_usage, args, warm_up)
+  run_app(open_disk_usage, args, warm_up, record=record)
 end

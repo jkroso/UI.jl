@@ -511,7 +511,14 @@ const _stats = Dict{UInt, FrameStats}()
 "Timings for the most recent frame drawn in `w`"
 frame_stats(w::AbstractWindow) = get!(FrameStats, _stats, objectid(w))
 
-count_elements(ui::ConcreteRect) = 1 + sum(count_elements, ui.children, init=0)
+count_elements(ui::ConcreteRect) = begin
+  # A loop rather than `sum`, so a trimmed app only needs the count_elements methods
+  n = 1
+  for child in ui.children
+    n += count_elements(child)
+  end
+  n
+end
 count_elements(::ConcreteUI) = 1
 
 frame(window::Window) = begin

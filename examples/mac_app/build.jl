@@ -15,7 +15,10 @@
 #   APP_CPU=apple-m1     the CPUs to compile for. apple-m1 runs on every Apple Silicon Mac.
 #   APP_STRIP=metadata   leave out docstrings and line numbers. Add `ir` to leave out the
 #                        code Julia would need to compile anything new while the app runs.
-#   APP_TRIM=no          JuliaC's trimming: no, safe or unsafe-warn.
+#   APP_TRIM=no          JuliaC's trimming: no, safe, unsafe or unsafe-warn. Trimming leaves out
+#                        the code the app doesn't use. The app is first run with
+#                        `--record`, and opens its window for a few seconds. See
+#                        mac_app/record.jl.
 #   APP_PRUNE=1          delete the native libraries the self-test didn't load.
 #   APP_PROJECT=path     the Julia project to build from, if not UI.jl's own.
 #
@@ -67,6 +70,7 @@ build_app(; name, program, id, entry, threads=nothing, icon=nothing, plist="") =
 
   options = threads === nothing ? Dict{String,String}() : Dict("threads" => threads)
   build_time = @elapsed begin
+    trim == "no" || (ENV["APP_CALLS"] = record_calls(entry, threads))
     image = ImageRecipe(output_type="--output-exe", file=entry, project=project, cpu_target=cpu,
                         trim_mode=trim, julia_args=["--strip-$s" for s in strips], jl_options=options)
     link = LinkRecipe(image_recipe=image, outname=joinpath(bundle, program), rpath="@bundle")
@@ -127,6 +131,33 @@ build_app(; name, program, id, entry, threads=nothing, icon=nothing, plist="") =
 end
 
 mb(n) = string(round(n / 1e6, digits=1), " MB")
+
+"""
+Run the app with `--record`, while Julia writes down each call it makes through a
+dynamic dispatch, and return the file it wrote. A trimmed build keeps those
+calls. See record.jl. The app opens its window for a few seconds.
+"""
+record_calls(entry, threads) = begin
+  calls = joinpath(mktempdir(), "calls.jl")
+  # The menus' Show in Finder and Open run `open`. Here it does nothing.
+  bin = mktempdir()
+  write(joinpath(bin, "open"), "#!/bin/sh\n")
+  chmod(joinpath(bin, "open"), 0o755)
+  flags = threads === nothing ? `` : `--threads=$threads`
+  cmd = `$(Base.julia_cmd()) --project=$(option("PROJECT", root)) $flags --trace-dispatch=$calls $entry --libraries --record`
+  # Its output goes to a file, as a trimmed app's does, so it prints through the same methods
+  log = joinpath(dirname(calls), "output.txt")
+  env = addenv(cmd, "KIP_FROZEN" => "1", "PATH" => bin * ":" * ENV["PATH"])
+  process = run(pipeline(env, stdout=log, stderr=log), wait=false)
+  # A window that gets stuck would stop the build. A stuck Julia may not be able
+  # to act on a polite request to stop, so this one can't be refused.
+  timer = Timer(_ -> process_running(process) && kill(process, Base.SIGKILL), 600)
+  wait(process)
+  close(timer)
+  success(process) || error("The app failed while its calls were recorded:\n", read(log, String))
+  println("Recorded ", count(startswith("precompile("), eachline(calls)), " calls")
+  calls
+end
 
 "Make the .icns file `icns` from `png`, with each of the sizes macOS shows icons at"
 make_icns(png, icns) = begin

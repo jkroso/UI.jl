@@ -6,6 +6,10 @@
 # /Applications too. See ../mac_app/build.jl for what the build needs and the
 # settings it takes.
 #
+# With APP_TRIM=unsafe-warn the app is about 80 MB instead of 350 MB, and the
+# build takes about 4 minutes. It runs the app first, which opens its window for
+# a minute or so. See ../mac_app/record.jl.
+#
 # icon.jl draws the app's icon, icon.png. The app scans with a worker thread for
 # each of the Mac's cores. macOS asks before the app can read your Desktop,
 # Documents and Downloads folders, and shows the reasons below.
