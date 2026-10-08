@@ -81,4 +81,6 @@ Containers also take:
 
 `examples/25_clay_website.jl` is a port of Clay's website, and it uses most of these. `examples/26_finder.jl` is a file browser modelled on the macOS Finder. `examples/27_disk_usage.jl` shows what's using your disk space as a sunburst chart made of wedges.
 
+`julia --project=. examples/hot_reload.jl examples/26_finder.jl` runs an example so that each change you save to it, or to UI.jl, shows in the open window straight away. The window keeps what it was showing. `examples/hot_reload.jl` explains what happens when you change a struct or save a mistake.
+
 `julia --project=. examples/finder/build.jl` builds the Finder example into a Mac app that runs without Julia installed, and `examples/disk_usage/build.jl` does the same for Disk Usage. Add `--install` to copy the app into /Applications. `examples/mac_app/build.jl` explains what the build needs.
