@@ -23,6 +23,8 @@
 #   - Drag files onto a folder, a sidebar place or the path bar to move them there.
 #     Hold ⌥ to copy them instead. ⌘Z moves them back.
 #   - Drag across empty space to select the files in the box.
+#   - Right-click a file or folder, or control-click it, for a menu. It opens
+#     what's selected, Quick Looks it, duplicates it or copies its path.
 #
 # On macOS the names, kinds and icons come from the system, so they match what
 # Finder shows. On other systems the example uses plain names and drawn icons.
@@ -49,6 +51,7 @@
 @use "../Interface/Semantic/TextInput" TextInput
 @use "./finder/system" file_info file_icon available_space sidebar_volume locale
 @use Colors: @colorant_str, RGBA, Colorant
+@use InteractiveUtils: clipboard
 
 # --- look --------------------------------------------------------------------
 
@@ -290,6 +293,7 @@ is_image(e::Entry) = !e.folder && lowercase(splitext(e.path)[2]) in IMAGE_TYPES 
   drop::String = ""                    # the folder they'd land in if let go now
   marquee::Any = nothing               # the corners of the box being dragged out
   undo::Any = nothing                  # the (from, to) pairs of the last move
+  menu::Any = nothing                  # the ContextMenu a right-click opened, while it's open
   notice::Tuple{String,Float64} = ("", 0.0)
   typed::Tuple{String,Float64} = ("", 0.0)
   # Visible items in keyboard order, and how many fit in an icon view row
@@ -379,6 +383,25 @@ end
 
 @def mutable struct QuickLookBackdrop <: SemanticUI end
 @def mutable struct QuickLookPanel <: SemanticUI end
+
+"""
+The menu a right-click on a file opens. Its children are its MenuChoices, and
+`lines` says which of them have a line under them.
+"""
+@def mutable struct ContextMenu <: SemanticUI
+  at::Tuple{px,px} = (0px, 0px)        # where the click was
+  opened::Float64 = 0.0
+  lines::Vector{Int} = Int[]
+end
+
+"A choice in the ContextMenu. `action` does it."
+@def mutable struct MenuChoice <: SemanticUI
+  title::String = ""
+  action::Any = nothing
+end
+
+"The rest of the window while the ContextMenu is open. A click on it closes the menu."
+@def mutable struct MenuBackdrop <: SemanticUI end
 
 finder(node) = begin
   while !(node isa Finder)
@@ -725,6 +748,7 @@ end
 const DOUBLE_CLICK = 0.4
 
 onkey(item::FileItem, ::KeyPress{Keys.mouse_left}) = begin
+  Keys.ctrl in window_keys(item) && return menu_click!(item)
   f, e = finder(item), item.entry
   focus(f)
   last, t = f.last_click
@@ -999,7 +1023,129 @@ describe(f::Finder) = begin
   f.quicklook && push!(layers, f.quicklook_backdrop, f.quicklook_panel)
   isempty(f.dragging) || win === nothing || push!(layers, float_layer(drag_preview(f, win.mouse)))
   f.marquee === nothing || push!(layers, float_layer(marquee_box(f.marquee)))
+  f.menu === nothing || push!(layers, item!(f, :menu_backdrop, MenuBackdrop), float_layer(f.menu))
   length(layers) == 1 ? window : Stack(width(grow=grow), height(grow=grow), name="Finder", layers...)
+end
+
+# --- the menu a right-click opens -----------------------------------------------
+
+const MENU_W = 220px
+const MENU_ROW = 22px
+
+"""
+A right-click or a control-click on a file. Like Finder, it selects the file
+unless it's selected already, then opens the menu for what's selected.
+"""
+menu_click!(item::FileItem) = begin
+  f, e = finder(item), item.entry
+  focus(f)
+  if item.style == :column
+    resize!(f.trail, item.column - 1)
+    push!(f.trail, e.path)
+    f.selected = Set([e.path])
+  elseif !(e.path in f.selected)
+    f.selected = Set([e.path])
+  end
+  f.anchor = f.cursor = e.path
+  open_menu!(f, mouse(item))
+end
+
+onkey(item::FileItem, ::KeyPress{Keys.mouse_right}) = menu_click!(item)
+
+"Open the menu for the selected files at `at`, a point in the window"
+open_menu!(f, at) = begin
+  chosen = sort!(collect(f.selected))
+  isempty(chosen) && return
+  n = length(chosen)
+  m = own!(f, ContextMenu(at=at, opened=time()))
+  choices = Any["Open" => () -> open_selection!(f),
+                :line,
+                "Quick Look" => () -> (f.quicklook = true),
+                "Duplicate" => () -> duplicate!(f, chosen),
+                :line,
+                (n == 1 ? "Copy Path" : "Copy $n Paths") => () -> copy_paths!(f, chosen)]
+  Sys.isapple() && push!(choices, "Show in Finder" => () -> run(`open -R $chosen`, wait=false))
+  for c in choices
+    c === :line ? push!(m.lines, length(m.children)) : add_child!(m, MenuChoice(title=first(c), action=last(c)))
+  end
+  f.menu = m
+end
+
+describe(m::ContextMenu) = begin
+  f = finder(m)
+  parts = Any[]
+  for (i, c) in enumerate(m.children)
+    push!(parts, c)
+    i in m.lines && push!(parts, Box(width(grow=grow), height(11px), padding(9px, 5px),
+                                     Box(width(grow=grow), height(1px), background(colours.line))))
+  end
+  # It opens below and to the right of the pointer, unless that would go past
+  # the edge of the window
+  w, h = window_size(f)
+  tall = 10px + MENU_ROW * length(m.children) + 11px * length(m.lines)
+  x, y = m.at
+  x + MENU_W > w - 4px && (x = max(4px, x - MENU_W))
+  y + tall > h - 4px && (y = max(4px, h - 4px - tall))
+  Column(fixed(MENU_W), padding(5px), radius(7px), Alignment.Start, background(colours.capsule),
+         border(1px, :solid, colours.panel_line), offset_x=x, offset_y=y, name="ContextMenu", parts...)
+end
+
+describe(c::MenuChoice) = begin
+  on = ishovered(c)
+  Row(width(grow=grow), height(MENU_ROW), padding(9px, 0px), radius(4px), name="MenuChoice",
+      background(on ? colours.selected : RGBA(0, 0, 0, 0)),
+    label(c.title, color=on ? colours.onsel : colours.ink))
+end
+
+"Close the menu, then do what `c` says"
+choose!(c::MenuChoice) = (finder(c).menu = nothing; c.action())
+
+onkey(c::MenuChoice, ::KeyPress{Keys.mouse_left}) = choose!(c)
+# You can also hold the right button down, move to a choice and let go. A quick
+# click leaves the menu open, as Finder does.
+onkey(c::MenuChoice, ::KeyRelease{Keys.mouse_right}) = time() - c.parent.opened > 0.3 && choose!(c)
+
+describe(::MenuBackdrop) = Box(width(grow=grow), height(grow=grow))
+onkey(b::MenuBackdrop, ::KeyPress) = (finder(b).menu = nothing)
+
+"A name for a copy of `path` that isn't taken yet: “name copy.txt”, then “name copy 2.txt”"
+copy_name(path) = begin
+  dir, base = splitdir(path)
+  stem, ext = entry(path).folder ? (base, "") : splitext(base)
+  n = 1
+  while true
+    to = joinpath(dir, stem * (n == 1 ? " copy" : " copy $n") * ext)
+    ispath(to) || islink(to) || return to
+    n += 1
+  end
+end
+
+"Copy each of `paths` next to itself, and select the copies"
+duplicate!(f, paths) = begin
+  made, failed = String[], String[]
+  for p in paths
+    to = copy_name(p)
+    try
+      cp(p, to)
+      push!(made, to)
+    catch
+      push!(failed, basename(p))
+    end
+  end
+  refresh!(unique(dirname.(paths))...)
+  if !isempty(made)
+    f.selected = Set(made)
+    f.anchor = f.cursor = last(made)
+    f.mode == :columns && !isempty(f.trail) && (f.trail[end] = last(made))
+  end
+  f.notice = (isempty(failed) ? "Duplicated $(items_text(length(made)))." :
+                                "“$(failed[1])” couldn't be duplicated.", time())
+end
+
+copy_paths!(f, paths) = begin
+  clipboard(join(paths, "\n"))
+  f.notice = (length(paths) == 1 ? "Copied the path of “$(entry(paths[1]).name)”." :
+                                   "Copied the paths of $(items_text(length(paths))).", time())
 end
 
 # --- dragging ------------------------------------------------------------------
@@ -1169,6 +1315,7 @@ navigate!(f, dir; record=true) = begin
   f.anchor = f.cursor = ""
   f.scroll.offset = 0px
   f.quicklook = false
+  f.menu = nothing
   clear_search!(f)
 end
 
@@ -1328,6 +1475,8 @@ is_mouse(k) = k in (Keys.mouse_left, Keys.mouse_right, Keys.mouse_middle)
 
 onkey(f::Finder, e::KeyPress{K}) where K = begin
   is_mouse(K) && return
+  # While the menu is open, esc closes it and other keys do nothing
+  f.menu === nothing || return K == Keys.escape && (f.menu = nothing)
   w = e.window
   cmd, shift, opt = Keys.cmd in w.keys, Keys.shft in w.keys, Keys.opt in w.keys
   typing = w.focus === search_input(f)

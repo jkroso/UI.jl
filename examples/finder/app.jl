@@ -93,6 +93,21 @@ warm_up() = begin
   mouse(690, 590); mouse(650, row(1)); frame(w)
   release((Keys.mouse_left,))
   onkey(w, KeyRelease{Keys.mouse_left}(0, w)); frame(w)
+  # The menu a right-click opens, in each view. Hover a choice and close it with
+  # esc, then duplicate a file from it and Quick Look the copy.
+  right_click(x, y) = begin
+    mouse(x, y); hold((Keys.mouse_right,))
+    onkey(w, KeyPress{Keys.mouse_right}(0, w)); frame(w)
+    release((Keys.mouse_right,))
+    onkey(w, KeyRelease{Keys.mouse_right}(0, w)); frame(w)
+  end
+  for (mode, x, y) in ((:list, 400, row(1)), (:icons, 400, TOOLBAR_H.value + 60), (:columns, 300, TOOLBAR_H.value + 15))
+    f.mode = mode; frame(w)
+    right_click(x, y); mouse(x + 30, y + 30); frame(w); press(Keys.escape)
+  end
+  f.mode = :list; frame(w)
+  right_click(400, row(1)); click(f.menu.children[3])
+  right_click(400, row(1)); click(f.menu.children[2]); press(Keys.escape)
   rm(dir, recursive=true)
 end
 
