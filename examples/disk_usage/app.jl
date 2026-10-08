@@ -77,20 +77,19 @@ warm_up() = begin
       frame(w)
     end
     # Where the chart is: in the middle of the space left of the list, below the toolbar
-    cx, cy = (1100 - LIST_W.value) / 2, 32 + (720 - 32 - 28) / 2
-    radius = min(1100 - LIST_W.value - 48, 720 - 32 - 28 - 48) / 2
+    cx, cy = (1100 - LIST_W.value) / 2, 32 + (720 - 32) / 2
+    radius = min(1100 - LIST_W.value - 48, 720 - 32 - 48) / 2
     at(r, θ) = (cx + r * radius * cosd(θ), cy + r * radius * sind(θ))
     for appearance in (:system, :light, :dark)
       a.appearance = appearance
       scan!(a, dir)
       settle()
-      # Hover the middle and each ring, then the toolbar, the list and the status bar
+      # Hover the middle and each ring, then the toolbar and the list
       for r in (0.1, 0.4, 0.6, 0.85), θ in 0:30:330
         mouse(at(r, θ)...)
       end
       foreach(x -> mouse(x, 16), (20, 96, 300, 1050))
       foreach(y -> mouse(cx * 2 + 100, y), 40:26:400)
-      mouse(cx, 708)
     end
     # Into a folder with more files than the list shows. Scroll its list.
     zoom!(a, child(a.scan.root, "many")); settle()
@@ -119,10 +118,11 @@ warm_up() = begin
       mouse(target[1] + 20, target[2] + 16)
       click(20, 700)
     end
-    # Scan again with ⌘R, open and close the layout inspector, and drag the window by its toolbar
+    # Scan again with ⌘R, open and close the layout inspector, and drag the window by
+    # its toolbar and by the top of the list
     press(Keys.r, Keys.cmd); settle()
     press(Keys.i, Keys.cmd, Keys.opt); press(Keys.i, Keys.cmd, Keys.opt)
-    click(600, 16)
+    click(600, 16); click(cx * 2 + 100, 16)
     # Drop a folder on the window, then the whole test folder again
     onfiledrop(w, [joinpath(dir, "documents")]); settle()
     onfiledrop(w, [dir]); settle()

@@ -46,7 +46,7 @@
 @use "../Interface/inspector" toggle_inspector!
 @use "../Interface/window" hide_titlebar! drag_window! dark_mode set_dark!
 @use "../Interface/Semantic/Icon" Icon
-@use "./disk_usage/scan" Item Scan step! stop! running elapsed sorted lineage within rescan! path
+@use "./disk_usage/scan" Item Scan step! stop! running sorted lineage within rescan! path
 @use "./finder/system" available_space
 @use Colors: @colorant_str, RGB, RGBA, LCHab, Colorant
 
@@ -58,7 +58,7 @@ const FONT = isfile("/System/Library/Fonts/SFNS.ttf") ? ".SF NS" : "Helvetica"
 "The colours for one appearance. `use!` copies one into `colours`."
 Base.@kwdef mutable struct Palette
   bg::Colorant
-  panel::Colorant         # the list down the side, and the status bar
+  panel::Colorant         # the list down the side
   ink::Colorant           # text
   dim::Colorant           # secondary text
   faint::Colorant         # the arrows in the path, and rows whose slice is too small to draw
@@ -92,7 +92,6 @@ const transparent = RGBA(0, 0, 0, 0)
 # As tall as a title bar, so the window's close, minimise and zoom buttons sit
 # in line with the path
 const TOOLBAR_H = 32px
-const STATUS_H  = 28px
 const LIST_W    = 360px
 const ROW       = 26px
 const NAME_W    = 170px   # room for a name in the list
@@ -106,6 +105,7 @@ const THICK     = (EDGE - MIDDLE) / RINGS
 const MIN_SWEEP = 0.8     # degrees. Thinner slices are grouped together.
 const ZOOM_TIME = 0.45    # seconds
 const SCAN_TIME = 0.025   # the most time each frame spends adding what the scan found
+const SPIN_TIME = 1.5     # seconds for the spinner to go round once
 
 const grow = GrowType.Grow
 fixed(w) = width(preferred=w, grow=GrowType.None)
@@ -211,6 +211,7 @@ end
   crumbs::IdDict{Any,Any} = IdDict{Any,Any}()
   middle::Any = nothing
   titlebar::Any = nothing
+  header::Any = nothing
   list::Scroll = Scroll(width(grow=grow), height(grow=grow), name="List")
   free::Tuple{Float64,Int64} = (0.0, 0)  # when the free space was last read, and how much there was
   appearance::Symbol = :system           # :system follows the Mac. :light and :dark don't.
@@ -253,6 +254,9 @@ end
 "The toolbar. The window has no title bar, so dragging the toolbar's empty parts moves it."
 @def mutable struct TitleBar <: SemanticUI end
 
+"The top of the list, which names the folder in the middle. Dragging it moves the window too."
+@def mutable struct ListHeader <: SemanticUI end
+
 app_of(node) = begin
   while !(node isa DiskUsage)
     node = node.parent
@@ -267,6 +271,7 @@ DiskUsage(scan::Scan; kwargs...) = begin
   a = DiskUsage(; scan=scan, zoom=scan.root, kwargs...)
   a.middle = own!(a, Middle())
   a.titlebar = own!(a, TitleBar())
+  a.header = own!(a, ListHeader())
   a
 end
 
@@ -400,21 +405,32 @@ describe(m::Middle) = begin
   can_zoom_out = a.zoom.parent !== nothing
   Wedge(width(grow=grow), height(grow=grow), outer=MIDDLE,
         background(can_zoom_out && ishovered(m) ? colours.middle_hover : colours.middle),
-    summary(a))
+    Stack(width(grow=grow), height(grow=grow),
+      (running(a.scan) ? spinner(a) : [])...,
+      Box(width(grow=grow), height(grow=grow), summary(a))))
 end
 
 "The radius of the chart, worked out from the window's size"
 chart_radius(a) = begin
   w, h = window_size(a)
-  min(w - LIST_W - 48px, h - TOOLBAR_H - STATUS_H - 48px) / 2
+  min(w - LIST_W - 48px, h - TOOLBAR_H - 48px) / 2
 end
 
-"What the middle circle says: about the item under the cursor, or else the folder in the middle"
+"""
+What the middle circle says: about the item under the cursor, or else the
+folder in the middle. When that's the folder the scan started at, it also says
+how much space is free on the disk.
+"""
 summary(a::DiskUsage) = begin
   room = max(60px, chart_radius(a) * MIDDLE * 1.6)
   p = a.pointed
   title, bytes, details = if p === nothing
-    name(a.zoom), a.zoom.bytes, [files_text(a.zoom.files)]
+    lines = [files_text(a.zoom.files)]
+    if a.zoom === a.scan.root
+      free = free_space(a)
+      free > 0 && push!(lines, "$(size_text(free)) free on disk")
+    end
+    name(a.zoom), a.zoom.bytes, lines
   elseif p.key isa Tuple
     "$(commas(p.count)) smaller items", p.bytes, ["in " * basename(path(p.item))]
   else
@@ -426,6 +442,17 @@ summary(a::DiskUsage) = begin
     label(fit(title, room, size=13px), 13px, weight="Semibold", align=TextAlign.Center),
     label(size_text(bytes), 22px, weight="Semibold", align=TextAlign.Center),
     (label(fit(d, room, size=11px), 11px, color=colours.dim, align=TextAlign.Center) for d in details)...)
+end
+
+"""
+A thin ring round the inside of the middle circle's edge, with a darker part
+that goes round while the scan runs
+"""
+spinner(a) = begin
+  inner = MIDDLE - 4 / chart_radius(a).value
+  turn = mod(time(), SPIN_TIME) / SPIN_TIME * 360
+  [Wedge(width(grow=grow), height(grow=grow), inner=inner, outer=MIDDLE, background(colours.line)),
+   Wedge(width(grow=grow), height(grow=grow), inner=inner, outer=MIDDLE, start=turn, sweep=90, background(colours.dim))]
 end
 
 onkey(m::Middle, ::KeyPress{Keys.mouse_left}) = zoom_out!(app_of(m))
@@ -507,23 +534,31 @@ describe(r::ListRow) = begin
     Box(fixed(72px), label(size_text(r.bytes), 12px, align=TextAlign.Right)))
 end
 
+describe(h::ListHeader) = begin
+  folder = app_of(h).zoom
+  detail = files_text(folder.files) * (folder.denied ? " · couldn't be read" : "")
+  Column(width(grow=grow), padding(14px, 16px), child_gap=8px, Alignment.Start,
+         border(1px, :solid, colours.line)[:bottom],
+    label(fit(name(folder), LIST_W - 32px, size=15px), 15px, weight="Semibold"),
+    label(size_text(folder.bytes) * " · " * detail, 12px, color=colours.dim))
+end
+
+onkey(h::ListHeader, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(h))
+
+"The list down the side, from the top of the window to the bottom"
 list_panel(a::DiskUsage) = begin
   folder = a.zoom
-  detail = files_text(folder.files) * (folder.denied ? " · couldn't be read" : "")
   body = isempty(folder.children) ?
     Box(width(grow=grow), height(grow=grow), Alignment.Center,
         label(folder.read ? "This folder is empty." : "Not read yet…", color=colours.dim)) :
     reuse!(a.list, Column(width(grow=grow), padding(0px, 0px, 8px, 0px), Alignment.Start, rows(a)...))
   Column(fixed(LIST_W), height(grow=grow), Alignment.Start, background(colours.panel),
          border(1px, :solid, colours.line)[:left], name="List",
-    Column(width(grow=grow), padding(14px, 16px), child_gap=8px, Alignment.Start,
-           border(1px, :solid, colours.line)[:bottom],
-      label(fit(name(folder), LIST_W - 32px, size=15px), 15px, weight="Semibold"),
-      label(size_text(folder.bytes) * " · " * detail, 12px, color=colours.dim)),
+    a.header,
     body)
 end
 
-# --- the toolbar and status bar ----------------------------------------------------
+# --- the toolbar ---------------------------------------------------------------
 
 describe(c::Crumb) = begin
   a = app_of(c)
@@ -553,7 +588,7 @@ end
 describe(t::TitleBar) = begin
   a = app_of(t)
   Row(width(grow=grow), height(TOOLBAR_H), padding(0px, 8px, 0px, 80px), child_gap=10px, Alignment.Center,
-      border(1px, :solid, colours.line)[:bottom], name="Toolbar",
+      name="Toolbar",
     crumbs(a))
 end
 
@@ -566,22 +601,6 @@ free_space(a::DiskUsage) = begin
   n = try available_space(path(a.scan.root)) catch; 0 end
   a.free = (time(), n)
   n
-end
-
-status_bar(a::DiskUsage) = begin
-  s = a.scan
-  root = s.root
-  seconds = round(Int, elapsed(s))
-  took = seconds < 1 ? "under a second" : seconds == 1 ? "1 second" : "$seconds seconds"
-  left = running(s) ? "Scanning… $(files_text(root.files)), $(size_text(root.bytes)) so far" :
-                      "$(files_text(root.files)), $(size_text(root.bytes)). Scanned in $took."
-  s.denied > 0 && (left *= " $(commas(s.denied)) $(s.denied == 1 ? "folder" : "folders") couldn't be read.")
-  free = free_space(a)
-  Row(width(grow=grow), height(STATUS_H), padding(14px, 0px), Alignment.Center, background(colours.panel),
-      border(1px, :solid, colours.line)[:top], name="Status",
-    label(left, 12px, color=colours.dim),
-    Box(width(grow=grow)),
-    label(free > 0 ? "$(size_text(free)) free on this disk" : "", 12px, color=colours.dim))
 end
 
 # --- the whole window ------------------------------------------------------------
@@ -616,12 +635,11 @@ describe(a::DiskUsage) = begin
   end
   parts = slices(a, view!(a))
   win === nothing || (win.animating = running(a.scan) || a.moving !== nothing)
-  Column(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg), name="DiskUsage",
-    a.titlebar,
-    Row(width(grow=grow), height(grow=grow), Alignment.Start,
-      chart(a, parts),
-      list_panel(a)),
-    status_bar(a))
+  Row(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg), name="DiskUsage",
+    Column(width(grow=grow), height(grow=grow), Alignment.Start,
+      a.titlebar,
+      chart(a, parts)),
+    list_panel(a))
 end
 
 onkey(a::DiskUsage, e::KeyPress{K}) where K = begin
