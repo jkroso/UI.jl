@@ -1968,6 +1968,8 @@ onkey(e::Editor, ev::KeyPress{K}) where K = begin
     end
   elseif K == Keys.home || K == Keys._end
     move!(e, screen_edge(e, K == Keys.home ? -1 : 1), shift)
+  elseif K == Keys.backspace && !cmd && !opt && emptyrow(b)
+    backrow!(e)
   elseif K == Keys.backspace
     erase!(e, cmd ? (b.caret[1], 0) : opt ? word_step(b, b.caret, -1) : backstep(b, block(b, b.caret[1])))
   elseif K == Keys.delete
@@ -2032,6 +2034,24 @@ tableop!(e, action::Symbol) = begin
 end
 
 # The three buttons that move a column's text show the usual picture of lines of text on that side
+"True when the caret is in a row of a table, under the heading row, that has no text in any cell"
+emptyrow(b::Buffer) = begin
+  run = table(b, b.caret[1])
+  run !== nothing && !selecting(b) && b.caret[1] > run[1] + 1 && all(isempty, celltexts(b.lines[b.caret[1]]))
+end
+
+"Backspace in an empty row removes the row and puts the caret at the end of the row above"
+backrow!(e) = begin
+  b = e.buf
+  s, _ = table(b, b.caret[1])
+  i = b.caret[1]
+  tableop!(e, :delrow)
+  above = i - 1 == s + 1 ? s : i - 1
+  cs = tablecells(b.lines[above])
+  isempty(cs) || (b.caret = b.anchor = (above, cs[end].hi))
+  touch!(e)
+end
+
 describe(t::TableButton) =
   Box(height(BAR_H - 6px), padding(7px, 0px), radius(4px), background(ishovered(t) ? colours.hover : clear),
     haskey(ALIGN_ICONS, t.action) ? Icon(getproperty(ALIGN_ICONS, t.action), size=13px, color=colours.dim) :
