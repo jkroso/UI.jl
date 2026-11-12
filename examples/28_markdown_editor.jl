@@ -48,6 +48,7 @@
 @use "../Interface/Semantic/TextInput" TextInput
 @use "./markdown_editor/markdown" Kind Line Span Cell classify spans tablecells isdivider words
 @use "./markdown_editor/highlight" tokens
+@use "github.com/jkroso/URI.jl/FSPath" FSPath
 @use Colors: @colorant_str, RGBA, Colorant
 @use InteractiveUtils: clipboard
 
@@ -854,18 +855,101 @@ end
 "Run the code of a live block and return a UI node that shows its value, or its error"
 evaluate(e, code::String) = begin
   path = e.buf.path
-  value = try
-    # Kip finds a path like "./widgets.jl" from the folder of the document
-    include_string(sandbox(e), code, isempty(path) ? joinpath(e.folder, "untitled.md") : path)
+  try
+    # Kip finds a path like "./widgets.jl" from the folder of the document, and so does a relative FSPath
+    cd(isdir(e.folder) ? e.folder : pwd()) do
+      value = include_string(sandbox(e), code, isempty(path) ? joinpath(e.folder, "untitled.md") : path)
+      node = present(value)
+      node === nothing ? note(repr("text/plain", value), colours.ink) : node
+    end
   catch err
     err = err isa LoadError ? err.error : err
-    return note(sprint(showerror, err), colours.accent)
+    note(sprint(showerror, err), colours.accent)
   end
-  value isa Union{SemanticUI,GeometricUI} ? value : note(repr("text/plain", value), colours.text)
 end
+
+"""
+The node that shows `value` in a live block, or nothing to show it as text. Add
+a method to show a type of your own as a node.
+"""
+present(value) = nothing
+present(node::Union{SemanticUI,GeometricUI}) = node
+present(p::FSPath) = FileList(at=realpath(abspath(string(p))))
 
 note(text, colour) = Box(width(grow=grow), padding(BLOCK_X, 10px), background(colours.block),
   Text(String(text), size=13px, family=MONO, color=colour))
+
+# --- files in a live block ---------------------------------------------------------------
+#
+# An FSPath shows as the list of what's in its folder. Click a folder to go
+# into it, and click a Markdown file to open it in the editor.
+
+"One line of a FileList: a file, a folder, or the way up to the folder above"
+@def mutable struct FileEntry <: SemanticUI
+  path::String = ""
+  up::Bool = false
+end
+
+"What's in the folder `at`. A path to a file shows that one file."
+@def mutable struct FileList <: SemanticUI
+  at::String = ""
+  entries::Dict{String,FileEntry} = Dict{String,FileEntry}()   # kept so each line knows when the mouse is over it
+end
+
+const MOST_FILES = 100
+
+entry(l::FileList, key, path; up=false) = begin
+  r = get!(() -> own!(l, FileEntry(up=up)), l.entries, key)
+  r.path = path
+  r
+end
+
+"The files and folders in `dir` that aren't hidden, folders first"
+listing(dir) = begin
+  names = try filter(n -> !startswith(n, "."), readdir(dir)) catch; String[] end
+  sort!(names, by=n -> (!isdir(joinpath(dir, n)), lowercase(n)))
+end
+
+describe(l::FileList) = begin
+  dir = isdir(l.at) ? l.at : dirname(l.at)
+  names = isdir(l.at) ? listing(dir) : [basename(l.at)]
+  shown = first(names, MOST_FILES)
+  above = dirname(dir)
+  Column(width(grow=grow), Alignment.Start, padding(6px), radius(8px), background(colours.block), child_gap=1px,
+    Row(width(grow=grow), height(26px), padding(10px, 0px), clip=true,
+      label(replace(dir, homedir() => "~"), 12px, color=colours.dim)),
+    (isdir(l.at) && above != dir ? (entry(l, "..", above, up=true),) : ())...,
+    [entry(l, n, joinpath(dir, n)) for n in shown]...,
+    (length(names) > length(shown) ? (Row(width(grow=grow), height(26px), padding(10px, 0px),
+       label("and $(length(names) - length(shown)) more", 12px, color=colours.dim)),) : ())...)
+end
+
+describe(r::FileEntry) = begin
+  folder = isdir(r.path)
+  opens = folder || ismarkdown(r.path)
+  Row(width(grow=grow), height(26px), padding(10px, 0px), radius(5px), child_gap=8px, clip=true,
+      background(opens && ishovered(r) ? colours.hover : clear),
+    Icon(r.up ? "arrow-90deg-up" : folder ? "folder" : ismarkdown(r.path) ? "file-earmark-text" : "file-earmark",
+         size=13px, color=colours.dim),
+    Box(width(grow=grow), Alignment.Start, label(r.up ? ".." : basename(r.path), color=opens ? colours.ink : colours.dim)),
+    (folder ? () : (Box(label(bytes(filesize(r.path)), 12px, color=colours.dim)),))...)
+end
+
+"A file's size in words, like 6.5 KB"
+bytes(n) = begin
+  n < 1000 && return "$n bytes"
+  for unit in ("KB", "MB", "GB")
+    n /= 1000
+    (n < 1000 || unit == "GB") && return "$(n < 10 ? round(n, digits=1) : round(Int, n)) $unit"
+  end
+end
+
+cursor(r::FileEntry) = isdir(r.path) || ismarkdown(r.path) ? :hand : :arrow
+
+onkey(r::FileEntry, ::KeyPress{Keys.mouse_left}) = begin
+  l = r.parent::FileList
+  isdir(r.path) ? (l.at = r.path) : ismarkdown(r.path) ? open!(editor(r), r.path) : nothing
+end
 
 "What the live block with this code shows"
 live(e, code::String) = begin

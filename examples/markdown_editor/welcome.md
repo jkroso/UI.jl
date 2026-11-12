@@ -65,6 +65,14 @@ Counter()
 Meter(done=0.7)
 ```
 
+A file path shows as a list of files. Click a folder to go into it, and click
+a Markdown file to open it.
+
+```ui
+@use "github.com/jkroso/URI.jl/FSPath" @fs_str
+fs"."
+```
+
 To change the code, move the caret into the block with ↑ or ↓, or hold ⌥ and
 click the block.
 
