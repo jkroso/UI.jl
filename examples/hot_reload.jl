@@ -180,6 +180,22 @@ track!() =
     lock(() -> sources[path] = s, watching)
   end
 
+# How many files Kip had loaded when `track!` last ran
+const loaded = Ref(0)
+
+"""
+Watch the files Kip loaded since the last look. An example can load a file
+while it runs, as the Markdown editor does for the code in a `ui` block.
+"""
+track_new!() = begin
+  n = length(Kip.modules)
+  n == loaded[] && return
+  loaded[] = n
+  before = length(sources)
+  track!()
+  length(sources) > before && say("Watching ", plural(length(sources) - before, "more file", "more files"), " that the example loaded")
+end
+
 # --- running code ------------------------------------------------------------
 
 "Leaves out the warning Julia gives when a docstring is replaced"
@@ -406,6 +422,8 @@ MiniFB.redraw(w::MiniFB.Window) = begin
   catch e
     window_error("The window couldn't draw, so it shows its last picture until you save a fix", e, catch_backtrace())
   end
+  # After the frame, since drawing it can load files, and the window may not draw again for a while
+  track_new!()
 end
 
 "The block in `src` that opens its window when the file is run on its own"
@@ -421,6 +439,7 @@ end
 say("Loading $(short(entry))…")
 Kip.require(entry, dirname(entry))
 track!()
+loaded[] = length(Kip.modules)
 say("Loaded in $(round(Int, time() - started)) s. Watching $(length(sources)) files. Save one and the window uses it.")
 
 """
