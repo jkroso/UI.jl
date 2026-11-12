@@ -1491,6 +1491,16 @@ opens(text::AbstractString, lang::AbstractString) = begin
   occursin(r"\b(begin|do( [\w, ]+)?)$", s) || (occursin(OPENERS, s) && !occursin(r"\bend$", s))
 end
 
+"Where backspace deletes back to from the caret: one character, or one step of the spaces that start a line"
+backstep(b::Buffer, block) = begin
+  i, col = b.caret
+  indented = col > 0 && !selecting(b) && all(==(' '), head(b.lines[i], col))
+  indented ? (i, col - (col - 1) % length(STEP) - 1) : beside(b, b.caret, -1)
+end
+
+# In a table the spaces belong to a cell
+backstep(b::Buffer, ::Type{Table}) = beside(b, b.caret, -1)
+
 "Tab moves text in, and shift-Tab moves it back out. What they move depends on the block the caret is in."
 indent!(e, out::Bool) = begin
   b = e.buf
@@ -1670,7 +1680,7 @@ onkey(e::Editor, ev::KeyPress{K}) where K = begin
   elseif K == Keys.home || K == Keys._end
     move!(e, screen_edge(e, K == Keys.home ? -1 : 1), shift)
   elseif K == Keys.backspace
-    erase!(e, cmd ? (b.caret[1], 0) : opt ? word_step(b, b.caret, -1) : beside(b, b.caret, -1))
+    erase!(e, cmd ? (b.caret[1], 0) : opt ? word_step(b, b.caret, -1) : backstep(b, block(b, b.caret[1])))
   elseif K == Keys.delete
     erase!(e, opt ? word_step(b, b.caret, 1) : beside(b, b.caret, 1))
   elseif K == Keys.enter
