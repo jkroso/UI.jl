@@ -657,10 +657,14 @@ codeblock(b::Buffer, i::Int) = begin
   (s, t)
 end
 
-"True when the caret or the other end of the selection is in the code block that line `i` is in"
+"""
+True when the caret is in the code block that line `i` is in, and the selection
+doesn't reach out of the block. A selection that goes through a block leaves it
+as it reads.
+"""
 incode(b::Buffer, i::Int) = begin
   s, t = codeblock(b, i)
-  s <= b.caret[1] <= t || s <= b.anchor[1] <= t
+  s <= b.caret[1] <= t && s <= b.anchor[1] <= t
 end
 
 "True when line `i` shows its markup: it has the caret, and the selection doesn't reach another line"
@@ -909,7 +913,7 @@ layout!(e) = begin
       end
     end
     # A table needs its line of dashes. It shows as plain lines while the caret is on that line.
-    if j > i && isdivider(b.lines[i+1]) && b.caret[1] != i + 1 && b.anchor[1] != i + 1
+    if j > i && isdivider(b.lines[i+1]) && !israw(b, i + 1)
       content = grid(e, i, j)
       push!(items, Item(i, j, top, tall(content), content))
       top += tall(content)
@@ -1174,7 +1178,7 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
           lo[1] <= i <= hi[1] && push!(rects, (num(ui.left), num(y), num(ui.left + e.width), num(y + h)))
           y += h
         end
-        hi[1] > it.last && push!(rects, (num(ui.left), num(y), num(ui.left + 7px), num(y + TABLE_GAP)))
+        lo[1] <= it.last && hi[1] > it.last && push!(rects, (num(ui.left), num(y), num(ui.left + 7px), num(y + TABLE_GAP)))
         continue
       end
       for (r, i) in enumerate(g.rows), (c, cell) in enumerate(g.cells[r])
@@ -1205,7 +1209,7 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
       end
       continue
     end
-    it.first == b.caret[1] && caret(ctx, e, it.content::Flow, ui.left, top, b.caret[2])
+    it.first == b.caret[1] && it.content isa Flow && caret(ctx, e, it.content, ui.left, top, b.caret[2])
   end
 end
 
@@ -1424,9 +1428,33 @@ screen_edge(e, by::Int) = begin
   by < 0 ? (i, vl.from) : (i, k < length(f.lines) ? max(vl.from, vl.to - 1) : vl.to)
 end
 
+"""
+Where a selection that grows to `p` ends. It steps over the ``` lines of a code
+block that the selection didn't start in, and over the whole of a live block,
+because those lines don't show.
+"""
+pass(b::Buffer, p::Pos, by::Int) = begin
+  ks = kinds(b)
+  i = p[1]
+  ks[i].kind in (Kind.fence, Kind.code) || return p
+  s, t = codeblock(b, i)
+  s <= b.anchor[1] <= t && return p
+  closed = t > s && ks[t].kind == Kind.fence && ks[t].level == 1
+  if closed && ks[s].lang == LIVE
+    i = by < 0 ? s - 1 : t + 1
+  elseif ks[i].kind == Kind.fence
+    i += by
+  else
+    return p
+  end
+  1 <= i <= length(b.lines) || return p
+  by < 0 ? line_end(b, i) : (i, 0)
+end
+
 "Move the caret to `p`, which was reached by going in the direction `by`. With `extend`, the selection grows to it."
 move!(e, p::Pos, extend::Bool; keep_goal=false, by=0) = begin
   p = settle(e.buf, p, by)
+  extend && by != 0 && (p = pass(e.buf, p, by))
   e.buf.caret = p
   extend || (e.buf.anchor = p)
   touch!(e; keep_goal)
