@@ -402,12 +402,26 @@ text_width(t::Text, s::AbstractString) = px(measure_text(skia_font(t.family, t.s
 
 function initialize(ui::Text, parent)
   words = split(ui.content)
+  widths = px[text_width(ui, w) for w in words]
+  # Text that wraps at words is as wide as `wraptext` counts it: a word and a
+  # space at a time. The whole line measured at once can be narrower, because
+  # of kerning, and then text in a box made to fit it would wrap its last word.
+  natural = ui.wrap == WrapMode.words && !isempty(words) ? words_width(widths, text_width(ui, " ")) : natural_width(ui)
   ConcreteText(from=ui,
-               width=natural_width(ui),
+               width=natural,
                height=skia_cap_height(ui),  # natural height = visible glyph height (single line)
                words=words,
-               widths=px[text_width(ui, w) for w in words],
+               widths=widths,
                parent=parent)
+end
+
+"How wide words are on one line with a space between each, added up the way `wraptext` adds them"
+words_width(widths, space_width) = begin
+  w = widths[1]
+  for width in @view widths[2:end]
+    w += space_width + width
+  end
+  w
 end
 
 natural_width(ui::Text) =
