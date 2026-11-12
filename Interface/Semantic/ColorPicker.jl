@@ -8,7 +8,7 @@
 @use "../abstract" SemanticUI describe describe! add_child! focus
 @use "../draw" draw ishovered cursor show_tooltip! redraw_in!
 @use "./Icon" Icon
-@use Colors: @colorant_str, HSV, RGB, RGBA, hex, weighted_color_mean
+@use Colors: @colorant_str, HSV, RGB, RGBA, hex
 
 @def mutable struct ColorPicker <: SemanticUI
   color::HSV = HSV(225, 0.8, 0.8)
@@ -36,33 +36,28 @@ copy_button(cp::ColorPicker) = begin
   cp.copy
 end
 
-# After a click the button shows a tick for TICK seconds, and a ring spreads out
-# from it and fades for RING seconds
-const TICK = 0.6
-const RING = 0.3
+# After a click the button's outline turns green and fades back over GLOW
+# seconds. The button keeps its size and its icon.
+const GLOW = 0.6
 const GREEN = colorant"rgb(22,163,74)"
-const PALE_GREEN = colorant"rgb(220,252,231)"
 
 since_copy(btn::CopyButton) = time() - btn.copied
 hexcode(btn::CopyButton) = "#" * hex(convert(RGB, btn.picker.color))
 
 describe(btn::CopyButton) = begin
-  t = since_copy(btn)
-  ticked = t < TICK
-  # Each frame of the ring asks for the next one, and the tick asks for the frame that takes it away
-  t < RING ? redraw_in!(btn, 1/60) : ticked && redraw_in!(btn, TICK - t)
-  base = ishovered(btn) ? colorant"rgb(243,244,246)" : colorant"white"
-  fill = t < RING ? weighted_color_mean(1 - t / RING, PALE_GREEN, base) : base
-  Box(padding(6px, 4px), radius(6px), background(fill), Alignment.Center,
-      border(1px, :solid, ticked ? GREEN : colorant"rgb(229,231,235)"),
-    describe!(Icon(ticked ? "check2" : "copy", size=14px, color=ticked ? GREEN : colorant"rgb(140,140,140)")))
+  # Each frame of the glow asks for the next one
+  since_copy(btn) < GLOW && redraw_in!(btn, 1/60)
+  Box(padding(6px, 4px), radius(6px), Alignment.Center,
+      background(ishovered(btn) ? colorant"rgb(243,244,246)" : colorant"white"),
+      border(1px, :solid, colorant"rgb(229,231,235)"),
+    describe!(Icon("copy", size=14px, color=colorant"rgb(140,140,140)")))
 end
 
 cursor(::CopyButton) = :hand
 
 "What the tooltip over the button says"
 tip(btn::CopyButton) = Box(padding(8px, 6px),
-  Box(Text((since_copy(btn) < TICK ? "Copied " : "Copy ") * hexcode(btn), size=12pt, color=colorant"rgb(240,240,240)")))
+  Box(Text((since_copy(btn) < GLOW ? "Copied " : "Copy ") * hexcode(btn), size=12pt, color=colorant"rgb(240,240,240)")))
 
 show_tip!(btn::CopyButton, window) = begin
   x, y, w, h = btn.rect
@@ -82,12 +77,11 @@ end
 draw(ctx, size, ui::ConcreteRect, btn::CopyButton) = begin
   btn.rect = (ui.left, ui.top, ui.width, ui.height)
   t = since_copy(btn)
-  t < RING || return
-  # The ring grows from the edge of the button and fades as it goes
-  k = t / RING
-  grow = 7px * (1 - (1 - k)^3)
-  rounded_rectangle(ctx, ui.left - grow, ui.top - grow, ui.width + 2grow, ui.height + 2grow, 6px + grow,
-                    color=RGBA{Float64}(GREEN.r, GREEN.g, GREEN.b, 0.7 * (1 - k)), stroke_width=2px)
+  t < GLOW || return
+  # The green outline lies inside the button's edge, over its grey border, and fades out
+  fade = (1 - t / GLOW)^2
+  rounded_rectangle(ctx, ui.left + 1px, ui.top + 1px, ui.width - 2px, ui.height - 2px, 5px,
+                    color=RGBA{Float64}(GREEN.r, GREEN.g, GREEN.b, fade), stroke_width=2px)
 end
 
 const SHADE_SIZE = 200px
