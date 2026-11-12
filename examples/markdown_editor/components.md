@@ -45,11 +45,11 @@ Box(width(240px), Dropdown(options=["Charter", "Helvetica Neue", "Menlo", "Lucid
 
 ## Numbers and colours
 
-Drag the slider, or click it and press ← and →.
+Drag the slider, or click it and press ← and →. It sets the size of the page's text.
 
 ```ui
 @use "../../Interface/Semantic" Slider
-Slider(value=0.3)
+Slider(value=page_text_size(), min=11, max=40, onchange=slider -> page_text_size!(slider.value))
 ```
 
 ```ui

@@ -607,7 +607,8 @@ input(e) = e.nodes[:input]::TextInput
 
 # --- faces -----------------------------------------------------------------------------
 
-body(e) = Face(e.serif ? SERIF : PLAIN, "", 17px * e.zoom, colours.ink, false)
+const TEXT_SIZE = 17px   # of the page's text, before it's zoomed
+body(e) = Face(e.serif ? SERIF : PLAIN, "", TEXT_SIZE * e.zoom, colours.ink, false)
 const HEADINGS = (2.1, 1.75, 1.4, 1.2, 1.05, 1.0)
 
 "The face a line's plain text is drawn in"
@@ -917,26 +918,50 @@ sandbox(e) = get!(e.nodes, :sandbox) do
   m = Module(:Page)
   Core.eval(m, :(using Kip))
   # A live block can read and set the page's colours: `page_theme()` gives "Sepia", "Paper" or "Night"
-  Core.eval(m, :(const page_theme = $(() -> read_theme(e))))
+  Core.eval(m, :(const page_theme = $(() -> (reads!(e, :theme); titlecase(string(e.theme))))))
   Core.eval(m, :(const page_theme! = $(name -> theme!(e, Symbol(lowercase(string(name)))))))
+  # ... and the size of the page's text, in pixels
+  Core.eval(m, :(const page_text_size = $(() -> (reads!(e, :zoom); TEXT_SIZE.value * e.zoom))))
+  Core.eval(m, :(const page_text_size! = $(size -> text_size!(e, size))))
   m
 end
 
 """
-The name of the page's colours, for a live block. A block that asks while it
-runs is run again when the colours change, so what it shows stays true.
+Note that the live block that's running now asked for a setting of the page:
+`:theme` or `:zoom`. Such a block is run again when the setting changes, so
+what it shows stays true.
 """
-read_theme(e) = begin
+reads!(e, setting::Symbol) = begin
   code = get(e.nodes, :running, nothing)
-  code === nothing || push!(get!(() -> Set{Any}(), e.nodes, :theme_readers), (:live, e.buf.path, code))
-  titlecase(string(e.theme))
+  code === nothing || push!(get!(() -> Set{Any}(), e.nodes, (:readers, setting)), (:live, e.buf.path, code))
+  nothing
+end
+
+"Run again the live blocks that asked for `setting`"
+rerun!(e, setting::Symbol) = foreach(key -> delete!(e.nodes, key), pop!(e.nodes, (:readers, setting), ()))
+
+"""
+Make the page's text `size` pixels tall, for a live block. The block under the
+mouse stays where it is in the window, so a slider that's being dragged
+doesn't move away from the mouse.
+"""
+text_size!(e, size) = begin
+  e.zoom = clamp(Float64(size) / TEXT_SIZE.value, 0.6, 2.5)
+  empty!(e.flows)
+  win = window_of(e)
+  if win !== nothing && !isempty(e.layout)
+    y = win.mouse[2] - TOPBAR_H - PAGE_TOP + e.scroll.offset
+    i = findfirst(it -> it.top <= y < it.top + it.tall, e.layout)
+    i === nothing || (e.nodes[:hold] = (e.layout[i].first, e.layout[i].top - e.scroll.offset))
+  end
+  e
 end
 
 "Use the colours called `name` for the page"
 theme!(e, name::Symbol) = begin
   name in THEME_ORDER || error("The page's colours are Sepia, Paper and Night. $name isn't one of them.")
   e.theme = name
-  foreach(key -> delete!(e.nodes, key), pop!(e.nodes, :theme_readers, ()))
+  rerun!(e, :theme)
   restyle!(e)
 end
 
@@ -2018,7 +2043,7 @@ end
 copy_selection!(e) = selecting(e.buf) && clipboard(excerpt(e.buf, selection(e.buf)...))
 paste!(e) = type!(e, replace(clipboard(), "\r\n" => "\n", '\r' => '\n', '\t' => "  "))
 
-zoom!(e, z) = (e.zoom = clamp(z, 0.6, 2.5); restyle!(e))
+zoom!(e, z) = (e.zoom = clamp(z, 0.6, 2.5); rerun!(e, :zoom); restyle!(e))
 
 "The one after `x` in `list`, going back to the start after the last"
 after(list, x) = list[mod1(findfirst(==(x), list) + 1, length(list))]
@@ -2460,6 +2485,9 @@ describe(e::Editor) = begin
   end
   refresh!(e.buf)
   layout!(e)
+  # A live block that changed the size of the text stays where it was in the window
+  hold = pop!(e.nodes, :hold, nothing)
+  hold === nothing || (e.scroll.offset = max(0px, item(e, hold[1]).top - hold[2]))
   e.reveal && (reveal!(e); e.reveal = false)
   # The window is drawn again as soon as a key or the mouse does something, so
   # typing shows without waiting for a frame that was already under way. Between
