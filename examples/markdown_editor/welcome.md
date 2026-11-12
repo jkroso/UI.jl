@@ -65,8 +65,8 @@ Counter()
 Meter(done=0.7)
 ```
 
-A file path shows as a list of files. Click a folder to go into it, and click
-a file to see a preview of it.
+A file path shows as a breadcrumb. Click its last name to list what's in the
+folder, and click a file in the list to see a preview of it.
 
 ```ui
 @use "github.com/jkroso/URI.jl/FSPath" @fs_str

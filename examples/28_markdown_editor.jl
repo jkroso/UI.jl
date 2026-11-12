@@ -897,37 +897,61 @@ a method to show a type of your own as a node.
 """
 present(value) = nothing
 present(node::Union{SemanticUI,GeometricUI}) = node
-present(p::FSPath) = FileList(at=realpath(abspath(string(p))))
+present(p::FSPath) = begin
+  path = abspath(string(p))
+  path = ispath(path) ? realpath(path) : path
+  Breadcrumb(at=length(path) > 1 ? String(rstrip(path, '/')) : path)
+end
 
 note(text, colour) = Box(width(grow=grow), padding(BLOCK_X, 10px), background(colours.block),
   Text(String(text), size=13px, family=MONO, color=colour))
 
 # --- files in a live block ---------------------------------------------------------------
 #
-# An FSPath shows as the list of what's in its folder. Click a folder to go
-# into it. Click a file to see a preview of it under its line: a picture, or
+# An FSPath shows as a breadcrumb: the name of each folder on the way to it,
+# in a row. Click the last name to list what's in that folder under the
+# breadcrumb, and click an earlier name to go to that folder. In the list,
+# click a folder to go into it and a file to see a preview of it: a picture, or
 # the first lines of a text file. Click a Markdown file a second time to open
 # it in the editor.
 
-"One line of a FileList: a file, a folder, or the way up to the folder above"
+"One line of the list under a Breadcrumb: a file or a folder"
 @def mutable struct FileEntry <: SemanticUI
   path::String = ""
-  up::Bool = false
 end
 
-"What's in the folder `at`. A path to a file shows that one file."
-@def mutable struct FileList <: SemanticUI
+"One name in a Breadcrumb"
+@def mutable struct Crumb <: SemanticUI
+  path::String = ""
+  name::String = ""
+end
+
+"The path `at`, as the names of the folders on the way to it"
+@def mutable struct Breadcrumb <: SemanticUI
   at::String = ""
+  open::Bool = false     # is the list of what's in the folder showing?
   picked::String = ""    # the file whose preview shows
-  entries::Dict{String,FileEntry} = Dict{String,FileEntry}()   # kept so each line knows when the mouse is over it
+  # Kept so each name and each line knows when the mouse is over it
+  crumbs::Dict{String,Crumb} = Dict{String,Crumb}()
+  entries::Dict{String,FileEntry} = Dict{String,FileEntry}()
 end
 
 const MOST_FILES = 100
 
-entry(l::FileList, key, path; up=false) = begin
-  r = get!(() -> own!(l, FileEntry(up=up)), l.entries, key)
-  r.path = path
-  r
+entry(l::Breadcrumb, path) = get!(() -> own!(l, FileEntry(path=path)), l.entries, path)
+
+"The name and the path of each step on the way to `path`. The home folder is one step, named ~."
+steps(path) = begin
+  home = homedir()
+  inside = path == home || startswith(path, home * "/")
+  at = inside ? home : "/"
+  out = [(inside ? "~" : "/", at)]
+  for name in splitpath(relpath(path, at))
+    name == "." && continue
+    at = joinpath(at, name)
+    push!(out, (name, at))
+  end
+  out
 end
 
 "The files and folders in `dir` that aren't hidden, folders first"
@@ -936,30 +960,55 @@ listing(dir) = begin
   sort!(names, by=n -> (!isdir(joinpath(dir, n)), lowercase(n)))
 end
 
-describe(l::FileList) = begin
-  dir = isdir(l.at) ? l.at : dirname(l.at)
-  names = isdir(l.at) ? listing(dir) : [basename(l.at)]
+describe(l::Breadcrumb) = begin
+  names = [get!(() -> own!(l, Crumb(path=path, name=name)), l.crumbs, path) for (name, path) in steps(l.at)]
+  arrow() = Icon("chevron-right", size=9px, color=colours.faint)
+  trail = Row(width(grow=grow), height(30px), child_gap=2px, clip=true,
+    Iterators.flatten(i == 1 ? (c,) : (arrow(), c) for (i, c) in enumerate(names))...)
+  l.open || return Column(width(grow=grow), Alignment.Start, trail)
+  Column(width(grow=grow), Alignment.Start, child_gap=4px, trail,
+    Column(width(grow=grow), Alignment.Start, padding(6px), radius(8px), background(colours.block), child_gap=1px,
+      contents(l)...))
+end
+
+"What shows under an open breadcrumb: the lines of a folder, or the preview of a file"
+contents(l::Breadcrumb) = begin
+  isdir(l.at) || return (preview(l.at),)
+  names = listing(l.at)
   shown = first(names, MOST_FILES)
-  above = dirname(dir)
-  Column(width(grow=grow), Alignment.Start, padding(6px), radius(8px), background(colours.block), child_gap=1px,
-    Row(width(grow=grow), height(26px), padding(10px, 0px), clip=true,
-      label(replace(dir, homedir() => "~"), 12px, color=colours.dim)),
-    (isdir(l.at) && above != dir ? (entry(l, "..", above, up=true),) : ())...,
-    Iterators.flatten((joinpath(dir, n) == l.picked ? (entry(l, n, l.picked), preview(l.picked)) : (entry(l, n, joinpath(dir, n)),)
-                       for n in shown))...,
-    (length(names) > length(shown) ? (Row(width(grow=grow), height(26px), padding(10px, 0px),
-       label("and $(length(names) - length(shown)) more", 12px, color=colours.dim)),) : ())...)
+  isempty(names) && return (Row(width(grow=grow), height(26px), padding(10px, 0px), label("This folder is empty", 12px, color=colours.dim)),)
+  (Iterators.flatten((joinpath(l.at, n) == l.picked ? (entry(l, l.picked), preview(l.picked)) : (entry(l, joinpath(l.at, n)),)
+                      for n in shown))...,
+   (length(names) > length(shown) ? (Row(width(grow=grow), height(26px), padding(10px, 0px),
+      label("and $(length(names) - length(shown)) more", 12px, color=colours.dim)),) : ())...)
+end
+
+describe(c::Crumb) = begin
+  l = c.parent::Breadcrumb
+  last = c.path == l.at
+  Row(height(24px), padding(6px, 0px), radius(5px), child_gap=6px,
+      background(last && l.open ? colours.active : ishovered(c) ? colours.hover : clear),
+    (last ? (Icon(isdir(c.path) ? "folder" : "file-earmark", size=13px, color=colours.dim),) : ())...,
+    Box(label(c.name, color=last ? colours.ink : colours.dim, weight=last ? "Semibold" : "")))
+end
+
+cursor(::Crumb) = :hand
+
+# The last name shows and hides the list. An earlier name goes to its folder.
+onkey(c::Crumb, ::KeyPress{Keys.mouse_left}) = begin
+  l = c.parent::Breadcrumb
+  c.path == l.at ? (l.open = !l.open) : (l.at = c.path; l.picked = ""; l.open = true)
 end
 
 describe(r::FileEntry) = begin
   folder = isdir(r.path)
   opens = folder || ismarkdown(r.path)
-  picked = !r.up && r.path == (r.parent::FileList).picked
+  picked = r.path == (r.parent::Breadcrumb).picked
   Row(width(grow=grow), height(26px), padding(10px, 0px), radius(5px), child_gap=8px, clip=true,
       background(picked ? colours.active : ishovered(r) ? colours.hover : clear),
-    Icon(r.up ? "arrow-90deg-up" : folder ? "folder" : ismarkdown(r.path) ? "file-earmark-text" : "file-earmark",
+    Icon(folder ? "folder" : ismarkdown(r.path) ? "file-earmark-text" : "file-earmark",
          size=13px, color=colours.dim),
-    Box(width(grow=grow), Alignment.Start, label(r.up ? ".." : basename(r.path), color=opens ? colours.ink : colours.dim)),
+    Box(width(grow=grow), Alignment.Start, label(basename(r.path), color=opens ? colours.ink : colours.dim)),
     (folder ? () : (Box(label(bytes(filesize(r.path)), 12px, color=colours.dim)),))...)
 end
 
@@ -1012,7 +1061,7 @@ end
 cursor(::FileEntry) = :hand
 
 onkey(r::FileEntry, ::KeyPress{Keys.mouse_left}) = begin
-  l = r.parent::FileList
+  l = r.parent::Breadcrumb
   if isdir(r.path)
     l.at, l.picked = r.path, ""
   elseif l.picked != r.path
