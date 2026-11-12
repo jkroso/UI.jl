@@ -502,6 +502,38 @@ set_tool!(w::AbstractWindow, tool) = (_tools[objectid(w)] = tool; invalidate_lay
 clear_tool!(w::AbstractWindow) = (delete!(_tools, objectid(w)); invalidate_layout!(w))
 window_tool(w::AbstractWindow) = get(_tools, objectid(w), nothing)
 
+# A window draws only when something happens to it. A node that changes with
+# time, like one that animates, asks for the next frame on each frame until it
+# stops changing. The window then wakes that soon, and when the node stops
+# asking, it goes back to the wake it had.
+const _soon = Dict{UInt, Float64}()
+const _hurried = Dict{UInt, Tuple{Float64,Float64}}()   # the wake the window had, and the wake it was given
+
+"Ask the window that shows `node` to draw again within `seconds`"
+redraw_in!(node::UITree, seconds) = begin
+  w = window_of(node)
+  w === nothing && return
+  id = objectid(w)
+  _soon[id] = min(get(_soon, id, Inf), Float64(seconds))
+  nothing
+end
+
+"Make the window wake as soon as a node asked it to in this frame, or give it back its own wake"
+hurry!(w::AbstractWindow) = begin
+  id = objectid(w)
+  soon = pop!(_soon, id, nothing)
+  last = get(_hurried, id, nothing)
+  if soon !== nothing
+    # The app may set the wake on each frame. If it didn't, the wake is still the one given last frame.
+    had = last !== nothing && w.wake == last[2] ? last[1] : w.wake
+    w.wake = had > 0 ? min(had, soon) : max(soon, 0.001)
+    _hurried[id] = (had, w.wake)
+  elseif last !== nothing
+    delete!(_hurried, id)
+    w.wake == last[2] && (w.wake = last[1])
+  end
+end
+
 "How long each stage of a window's last frame took, in milliseconds"
 @def mutable struct FrameStats
   describe::Float64 = 0.0
@@ -548,6 +580,7 @@ frame(window::Window) = begin
   stats.layout = (t2 - t1) / 1e6
   stats.draw = (time_ns() - t2) / 1e6
   stats.elements = count_elements(scene)
+  hurry!(window)
   pixels
 end
 
@@ -899,4 +932,4 @@ end
 
 export draw, ui, hittest, emit, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
        invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, inside, offset!,
-       frame_stats, FrameStats, semantic_source, viewport
+       frame_stats, FrameStats, semantic_source, viewport, redraw_in!
