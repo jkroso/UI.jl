@@ -11,6 +11,8 @@
 @def mutable struct RadioGroup <: SemanticUI
   selected::Int = 1
   labels::Vector{String} = String[]
+  # Called after a click picks a choice. `group.selected` is the new choice.
+  onchange::Function = group -> nothing
 end
 
 @def mutable struct RadioItem <: SemanticUI
@@ -18,7 +20,10 @@ end
   index::Int
 end
 
-onkey(item::RadioItem, ::KeyPress{Keys.mouse_left}) = (item.group.selected = item.index)
+onkey(item::RadioItem, ::KeyPress{Keys.mouse_left}) = begin
+  item.group.selected = item.index
+  item.group.onchange(item.group)
+end
 
 describe(item::RadioItem) = begin
   selected = item.index == item.group.selected
