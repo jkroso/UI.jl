@@ -12,6 +12,8 @@
   value::Float64 = 0.5
   min::Float64 = 0.0
   max::Float64 = 1.0
+  # Called after the mouse or an arrow key changes `value`
+  onchange::Function = slider -> nothing
   cached_left::px = 0px
   cached_width::px = 0px
 end
@@ -27,6 +29,7 @@ fraction(s::Slider) = clamp((s.value - s.min) / (s.max - s.min), 0.0, 1.0)
 update_from_mouse!(s::Slider, mouse_x::px) = begin
   frac = clamp(Float64((mouse_x - s.cached_left) / s.cached_width), 0.0, 1.0)
   s.value = s.min + frac * (s.max - s.min)
+  s.onchange(s)
 end
 
 step(s::Slider) = (s.max - s.min) * 0.02
@@ -37,10 +40,10 @@ onkey(s::Slider, e::KeyPress{Keys.mouse_left}) = begin
 end
 
 onkey(s::Slider, ::KeyPress{Keys.left}) =
-  (s.value = clamp(s.value - step(s), s.min, s.max))
+  (s.value = clamp(s.value - step(s), s.min, s.max); s.onchange(s))
 
 onkey(s::Slider, ::KeyPress{Keys.right}) =
-  (s.value = clamp(s.value + step(s), s.min, s.max))
+  (s.value = clamp(s.value + step(s), s.min, s.max); s.onchange(s))
 
 onmouse(s::Slider, e::MouseMove) =
   Keys.mouse_left in e.window.keys && update_from_mouse!(s, e.position[1])
