@@ -3,3 +3,4 @@ Project.toml
 /clay
 .worktrees/
 /build
+.codegraph/
