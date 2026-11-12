@@ -33,7 +33,8 @@ You can write in **bold**, in *italic* or in ***both***. Use backticks for
 | ⌥← and ⌥→ | Move the caret a word at a time |
 | ⌘+ and ⌘- | Make the text bigger and smaller. ⌘0 puts it back to the size it started at. |
 
-Click a table to edit it. It shows as plain lines while the caret is in it.
+Click a cell and type. Tab goes to the next cell and Return goes down a row.
+Both add a row when they reach the end of the table.
 
 ## Code
 

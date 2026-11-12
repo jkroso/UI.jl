@@ -170,22 +170,39 @@ end
 "True for the line of dashes under a table's headings"
 isdivider(text::AbstractString) = occursin(DIVIDER, text) && occursin('-', text)
 
-"The cells of one row of a table, as (column, text) pairs"
-cells(text::AbstractString) = begin
+"""
+One cell of a row of a table. Its text runs from column `lo` to column `hi`,
+without the spaces around it. The caret can go as far as `limit`, which is
+past `hi` when spaces have been typed after the text.
+"""
+struct Cell
+  lo::Int
+  hi::Int
+  limit::Int
+end
+
+"The cells of one row of a table"
+tablecells(text::AbstractString) = begin
   chars = collect(text)
-  out = Tuple{Int,String}[]
-  start = findfirst(==('|'), chars)
-  start === nothing && return out
-  from = start + 1
-  for i in from:length(chars)+1
-    last = i > length(chars)
-    (last || (chars[i] == '|' && chars[i-1] != '\\')) || continue
-    cell = String(chars[from:i-1])
-    # Nothing after the last | isn't a cell
-    last && isempty(strip(cell)) && break
-    lead = length(cell) - length(lstrip(cell))
-    push!(out, (from - 1 + lead, String(strip(cell))))
-    from = i + 1
+  n = length(chars)
+  pipes = [i for i in 1:n if chars[i] == '|' && (i == 1 || chars[i-1] != '\\')]
+  out = Cell[]
+  isempty(pipes) && return out
+  ends = pipes[2:end]
+  # Text after the last | is a cell too
+  any(!isspace, chars[last(pipes)+1:end]) && push!(ends, n + 1)
+  for (p, q) in zip(pipes, ends)
+    # The cell is chars[p+1:q-1], and column p is just after the first |
+    a = findnext(!isspace, chars, p + 1)
+    if a === nothing || a >= q
+      size = q - 1 - p
+      lo = p + min(1, size)
+      push!(out, Cell(lo, lo, max(lo, q - 1 - (size >= 2 ? 1 : 0))))
+    else
+      z = findprev(!isspace, chars, q - 1)
+      # One space before the closing | is left alone
+      push!(out, Cell(a - 1, z, q > n ? n : z + max(0, q - 2 - z)))
+    end
   end
   out
 end
@@ -193,4 +210,4 @@ end
 "How many words are in a document"
 words(lines) = sum(text -> count(_ -> true, eachmatch(r"[\p{L}\p{N}][\p{L}\p{N}'’-]*", text)), lines, init=0)
 
-export Kind, Line, Span, classify, spans, cells, isdivider, words
+export Kind, Line, Span, Cell, classify, spans, tablecells, isdivider, words

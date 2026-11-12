@@ -3,7 +3,7 @@
 # A writing app modelled on Constly. You type Markdown, and each line is drawn
 # the way it will read: headings are big, **bold** is bold, tables are tables.
 # The markup characters show again on the line the caret is in, so you can
-# change them. It opens the real files on your disk, and ⌘S writes your changes
+# change them. A table stays a table while you type in its cells. It opens the real files on your disk, and ⌘S writes your changes
 # to the file. It never writes anything until you press ⌘S.
 #
 # Give it a Markdown file or a folder, or it opens its own welcome page:
@@ -12,6 +12,8 @@
 #
 # Things to try:
 #   - Type. Return carries a list on. Tab and shift-Tab indent a list item.
+#   - Click a cell of a table and type. Tab and shift-Tab go to the next and the
+#     last cell, and Return goes down a row. Both add a row at the end.
 #   - ⌘B and ⌘I make the selection bold or italic. ⌘Z and ⌘⇧Z undo and redo.
 #   - Double-click selects a word, triple-click a line. ⌘-click opens a link.
 #   - The button at the top left, or ⌘\, shows the other Markdown files in the
@@ -42,7 +44,7 @@
 @use "../Interface/window" hide_titlebar! drag_window! set_dark!
 @use "../Interface/Semantic/Icon" Icon
 @use "../Interface/Semantic/TextInput" TextInput
-@use "./markdown_editor/markdown" Kind Line Span classify spans cells isdivider words
+@use "./markdown_editor/markdown" Kind Line Span Cell classify spans tablecells isdivider words
 @use Colors: @colorant_str, RGBA, Colorant
 @use InteractiveUtils: clipboard
 
@@ -399,7 +401,8 @@ struct Grid
   rows::Vector{Int}            # the line of the document each row comes from
   widths::Vector{px}
   heights::Vector{px}
-  cells::Vector{Vector{Flow}}
+  cells::Vector{Vector{Cell}}  # where each cell's text is in its line
+  flows::Vector{Vector{Flow}}  # one for each column, even where a row has no cell
 end
 
 @def mutable struct Editor <: SemanticUI
@@ -603,20 +606,114 @@ end
 restyle!(e) = (empty!(e.flows); e.reveal = true; e)
 
 # --- tables ----------------------------------------------------------------------------
+#
+# A table is a line of cells, a line of dashes, then more lines of cells. It's
+# drawn as a grid, and the caret moves from cell to cell. The line of dashes
+# isn't drawn. If the caret gets onto it, the table shows as plain lines.
+
+"The first and last line of the table that line `i` is part of, or nothing"
+table(b::Buffer, i::Int) = begin
+  ks = kinds(b)
+  ks[i].kind == Kind.table || return nothing
+  s = t = i
+  while s > 1 && ks[s-1].kind == Kind.table; s -= 1 end
+  while t < length(ks) && ks[t+1].kind == Kind.table; t += 1 end
+  t > s && isdivider(b.lines[s+1]) ? (s, t) : nothing
+end
+
+"The lines of a table that are rows of cells"
+tablerows((s, t)) = [s; s+2:t]
+
+"The cells of the row that `p` is in, when that row is drawn in a grid"
+rowcells(b::Buffer, p::Pos) = begin
+  run = table(b, p[1])
+  (run === nothing || p[1] == run[1] + 1) ? Cell[] : tablecells(b.lines[p[1]])
+end
+
+within(c::Cell, col::Int) = c.lo <= col <= c.limit
+
+"The cell that `p` is in, or nothing"
+cellat(b::Buffer, p::Pos) = begin
+  cs = rowcells(b, p)
+  i = findfirst(c -> within(c, p[2]), cs)
+  i === nothing ? nothing : cs[i]
+end
+
+"Which of `cs` column `col` is in, or is nearest to"
+nearest(cs, col::Int) = argmin(i -> within(cs[i], col) ? 0 : min(abs(col - cs[i].lo), abs(col - cs[i].limit)), eachindex(cs))
+
+"""
+Where the caret goes when it's sent to `p`. In a table that's the same place
+if `p` is in a cell. Otherwise it's the next cell in the direction `by`, or the
+nearest cell when `by` is 0.
+"""
+settle(b::Buffer, p::Pos, by::Int=0) = begin
+  run = table(b, p[1])
+  run === nothing && return p
+  s, t = run
+  i, col = p
+  if i == s + 1
+    # The line of dashes. Step over it, unless that's where a click put the caret.
+    by == 0 && return p
+    j = by < 0 ? s : s + 2
+    return j > t ? (t < length(b.lines) ? (t + 1, 0) : p) : settle(b, (j, col))
+  end
+  cs = tablecells(b.lines[i])
+  (isempty(cs) || any(c -> within(c, col), cs)) && return p
+  rows = tablerows(run)
+  r = findfirst(==(i), rows)
+  if by < 0
+    c = findlast(c -> c.limit < col, cs)
+    c === nothing || return (i, cs[c].hi)
+    r > 1 && return row_edge(b, rows[r-1], 1)
+    s > 1 ? line_end(b, s - 1) : (i, cs[1].lo)
+  elseif by > 0
+    c = findfirst(c -> c.lo > col, cs)
+    c === nothing || return (i, cs[c].lo)
+    r < length(rows) && return row_edge(b, rows[r+1], -1)
+    t < length(b.lines) ? (t + 1, 0) : (i, cs[end].hi)
+  else
+    c = cs[nearest(cs, col)]
+    (i, clamp(col, c.lo, c.limit))
+  end
+end
+
+"The start of the first cell of row `i`, or with `by` of 1 the end of its last cell"
+row_edge(b::Buffer, i::Int, by::Int) = begin
+  cs = tablecells(b.lines[i])
+  isempty(cs) ? (i, 0) : by < 0 ? (i, cs[1].lo) : (i, cs[end].hi)
+end
+
+"The runs of text in a cell that shows columns `lo` to `hi` of `text`"
+cellpieces(text::String, lo::Int, hi::Int, base::Face, raw::Bool) = begin
+  out = Piece[]
+  for s in spans(rest(head(text, hi), lo), lo)
+    s.markup && !raw && continue
+    symbols!(out, s.text, s.col, face(base, s), s.link)
+  end
+  out
+end
 
 "Lay out the table in lines `from` to `to` of the document"
 grid(e, from::Int, to::Int) = begin
-  texts = e.buf.lines[from:to]
-  get!(e.flows, (:grid, texts)) do
+  b = e.buf
+  caret = from <= b.caret[1] <= to ? b.caret : nothing
+  get!(e.flows, (:grid, b.lines[from:to], caret)) do
     base = Face(body(e), size=body(e).size * 0.94)
     lh = base.size * 1.5
-    rows = [i for i in from:to if !isdivider(e.buf.lines[i])]
-    contents = [cells(e.buf.lines[i]) for i in rows]
-    ncols = max(1, maximum(length, contents, init=1))
-    parts = [[c <= length(row) ?
-                foldl((out, s) -> s.markup ? out : symbols!(out, s.text, s.col, face(r == 1 ? Face(base, style="Bold") : base, s), s.link),
-                      spans(row[c][2], row[c][1]), init=Piece[]) : Piece[]
-              for c in 1:ncols] for (r, row) in enumerate(contents)]
+    rows = tablerows((from, to))
+    cells = [tablecells(b.lines[i]) for i in rows]
+    ncols = max(1, maximum(length, cells))
+    parts = map(enumerate(rows)) do (r, i)
+      map(1:ncols) do c
+        c <= length(cells[r]) || return Piece[]
+        cell = cells[r][c]
+        # The cell with the caret shows its markup, and the spaces typed after its text
+        active = caret !== nothing && caret[1] == i && within(cell, caret[2])
+        cellpieces(b.lines[i], cell.lo, active ? max(cell.hi, caret[2]) : cell.hi,
+                   r == 1 ? Face(base, style="Bold") : base, active)
+      end
+    end
     # Each column gets room in proportion to its longest cell
     natural = [maximum(row -> sum(p -> measure(p.face, p.text), row[c], init=0px), parts, init=0px) + 2CELL_X for c in 1:ncols]
     natural = [clamp(w, 60px, e.width * 0.75) for w in natural]
@@ -624,12 +721,28 @@ grid(e, from::Int, to::Int) = begin
     widths = natural .* (num(space) / num(sum(natural)))
     flows = [[wrap(row[c], widths[c] - 2CELL_X; lh, size=base.size, left=CELL_X) for c in 1:ncols] for row in parts]
     heights = [maximum(f -> tall(f), row) + 2CELL_Y for row in flows]
-    Grid(rows, widths, heights, flows)
+    Grid(rows, widths, heights, cells, flows)
   end
 end
 
 const TABLE_GAP = 8px   # above and below a table
 tall(g::Grid) = sum(g.heights) + 1px * (length(g.heights) + 1) + 2TABLE_GAP
+
+"Where the text of row `r`, column `c` starts, from the top left of the table's item"
+cell_origin(g::Grid, r::Int, c::Int) =
+  (1px * c + sum(g.widths[1:c-1], init=0px),
+   TABLE_GAP + 1px * r + sum(g.heights[1:r-1], init=0px) + (g.heights[r] - tall(g.flows[r][c]))/2)
+
+"The column in `cell` nearest to `x` on line `k` of its flow"
+cellcol(f::Flow, k::Int, x::px, cell::Cell) =
+  isempty(f.lines[k].segs) ? cell.lo : clamp(colat(f, k, x), cell.lo, cell.limit)
+
+"The row and column of `g` that holds the caret at `p`, or nothing"
+gridcell(g::Grid, p::Pos) = begin
+  r = findfirst(==(p[1]), g.rows)
+  (r === nothing || isempty(g.cells[r])) && return nothing
+  (r, nearest(g.cells[r], p[2]))
+end
 
 # --- the page's layout ---------------------------------------------------------------
 
@@ -651,8 +764,8 @@ layout!(e) = begin
         j += 1
       end
     end
-    # A table shows as plain lines while the caret is in it, so it can be edited
-    if j > i && !(i <= b.caret[1] <= j) && !(i <= b.anchor[1] <= j)
+    # A table needs its line of dashes. It shows as plain lines while the caret is on that line.
+    if j > i && isdivider(b.lines[i+1]) && b.caret[1] != i + 1 && b.anchor[1] != i + 1
       content = grid(e, i, j)
       push!(items, Item(i, j, top, tall(content), content))
       top += tall(content)
@@ -718,7 +831,7 @@ describe(e::Editor, it::Item, g::Grid) = begin
   table = Column(width(grow=grow), Alignment.Start, line, name="Table",
     [Row(width(grow=grow), height(g.heights[r]), Alignment.Start, line[:between],
          background(r == 1 ? colours.head : iseven(r) ? colours.bg : colours.stripe),
-       [Column(fixed(g.widths[c]), height(grow=grow), Alignment.Start, justify=Alignment.Center, rows(g.cells[r][c])...)
+       [Column(fixed(g.widths[c]), height(grow=grow), Alignment.Start, justify=Alignment.Center, rows(g.flows[r][c])...)
         for c in eachindex(g.widths)]...)
      for r in eachindex(g.rows)]...)
   Box(width(grow=grow), padding(0px, TABLE_GAP), table)
@@ -756,40 +869,53 @@ selected(b::Buffer, i::Int) = begin
   (i == lo[1] ? lo[2] : 0, i == hi[1] ? hi[2] : length(b.lines[i]), i < hi[1])
 end
 
+"Draw the selection over the lines of `f`, whose top left corner is at (x, y)"
+highlight(ctx, f::Flow, x, y, (from, to, more)) =
+  for (k, vl) in enumerate(f.lines)
+    (from <= vl.to && to >= vl.from) || continue
+    x1 = from <= vl.from ? vl.x : xcol(vl, from)
+    x2 = xcol(vl, min(to, vl.to))
+    # A little extra shows that the end of the line is selected too
+    (to > vl.to || (more && k == length(f.lines))) && (x2 += 7px)
+    x2 > x1 && rectangle(ctx, x + x1, y + f.above + f.lh * (k - 1), x2 - x1, f.lh, background=colours.select, border=0px)
+  end
+
+"Draw the caret at column `col` of `f`, whose top left corner is at (x, y)"
+caret(ctx, e, f::Flow, x, y, col) = begin
+  w = window_of(e)
+  (w !== nothing && w.focus === e) || return
+  since = time() - e.blink
+  (since < 0.5 || mod(since - 0.5, 1.0) >= 0.5) || return
+  k, cx = spot(f, col)
+  high = f.size * 1.25
+  rectangle(ctx, x + cx - 0.75px, y + f.above + f.lh * (k - 1) + (f.lh - high)/2, 1.5px, high, background=colours.ink, border=0px)
+end
+
 # The caret and the selection are drawn over the text, once it has been placed
 draw(ctx, size, ui::ConcreteRect, d::Document) = begin
   e = editor(d)
   b = e.buf
   e.origin = (ui.left, ui.top)
-  w = window_of(e)
   for it in e.layout[e.shown]
     top = ui.top + it.top
     if it.content isa Grid
-      any(i -> selected(b, i) !== nothing, it.first:it.last) &&
-        rectangle(ctx, ui.left, top + TABLE_GAP, e.width, it.tall - 2TABLE_GAP, background=colours.select, border=0px)
+      g = it.content
+      at = gridcell(g, b.caret)
+      for (r, i) in enumerate(g.rows), (c, cell) in enumerate(g.cells[r])
+        f = g.flows[r][c]
+        x, y = cell_origin(g, r, c)
+        sel = selected(b, i)
+        if sel !== nothing && sel[1] < cell.limit && sel[2] > cell.lo
+          highlight(ctx, f, ui.left + x, top + y, (max(sel[1], cell.lo), min(sel[2], cell.limit), false))
+        end
+        at == (r, c) && caret(ctx, e, f, ui.left + x, top + y, b.caret[2])
+      end
       continue
     end
     f = it.content::Flow
     sel = selected(b, it.first)
-    if sel !== nothing
-      from, to, more = sel
-      for (k, vl) in enumerate(f.lines)
-        (from <= vl.to && to >= vl.from) || continue
-        x1 = from <= vl.from ? vl.x : xcol(vl, from)
-        x2 = xcol(vl, min(to, vl.to))
-        # A little extra shows that the end of the line is selected too
-        (to > vl.to || (more && k == length(f.lines))) && (x2 += 7px)
-        x2 > x1 && rectangle(ctx, ui.left + x1, top + f.above + f.lh * (k - 1), x2 - x1, f.lh, background=colours.select, border=0px)
-      end
-    end
-    if it.first == b.caret[1] && w !== nothing && w.focus === e
-      since = time() - e.blink
-      (since < 0.5 || mod(since - 0.5, 1.0) >= 0.5) || continue
-      k, x = spot(f, b.caret[2])
-      high = f.size * 1.25
-      y = top + f.above + f.lh * (k - 1) + (f.lh - high)/2
-      rectangle(ctx, ui.left + x - 0.75px, y, 1.5px, high, background=colours.ink, border=0px)
-    end
+    sel === nothing || highlight(ctx, f, ui.left, top, sel)
+    it.first == b.caret[1] && caret(ctx, e, f, ui.left, top, b.caret[2])
   end
 end
 
@@ -802,12 +928,17 @@ locate(e, (x, y)) = begin
   it = items[something(findlast(it -> it.top <= dy, items), 1)]
   if it.content isa Grid
     g = it.content
-    edge = it.top + TABLE_GAP
-    for (r, h) in enumerate(g.heights)
-      edge += h + 1px
-      dy < edge && return (g.rows[r], 0)
-    end
-    return (it.last, length(e.buf.lines[it.last]))
+    # The row and the column under the point
+    r = something(findfirst(r -> dy < it.top + cell_origin(g, r, 1)[2] + g.heights[r], eachindex(g.rows)), length(g.rows))
+    c = something(findlast(c -> dx >= cell_origin(g, r, c)[1], eachindex(g.widths)), 1)
+    cells = g.cells[r]
+    isempty(cells) && return line_end(e.buf, g.rows[r])
+    # A row can have fewer cells than the table has columns
+    c = min(c, length(cells))
+    f = g.flows[r][c]
+    x, y = cell_origin(g, r, c)
+    k = clamp(floor(Int, num(dy - it.top - y) / num(f.lh)) + 1, 1, length(f.lines))
+    return (g.rows[r], cellcol(f, k, dx - x, cells[c]))
   end
   f = it.content::Flow
   k = clamp(floor(Int, num(dy - it.top - f.above) / num(f.lh)) + 1, 1, length(f.lines))
@@ -854,7 +985,7 @@ press!(e, pos) = begin
     url = link_at(e, pos)
     url === nothing || return open_url(url)
   end
-  at = locate(e, pos)
+  at = settle(b, locate(e, pos))
   t, before, count = e.clicked
   count = time() - t < 0.4 && before == at ? count % 3 + 1 : 1
   e.clicked = (time(), at, count)
@@ -862,7 +993,10 @@ press!(e, pos) = begin
     lo, hi = word_at(b.lines[at[1]], at[2])
     b.anchor, b.caret = (at[1], lo), (at[1], hi)
   elseif count == 3
-    b.anchor, b.caret = (at[1], 0), (at[1], length(b.lines[at[1]]))
+    # Three clicks select the line, or in a table the cell
+    cell = cellat(b, at)
+    lo, hi = cell === nothing ? (0, length(b.lines[at[1]])) : (cell.lo, cell.hi)
+    b.anchor, b.caret = (at[1], lo), (at[1], hi)
   else
     b.caret = at
     held(e, Keys.shft) || (b.anchor = at)
@@ -872,7 +1006,7 @@ end
 
 drag!(e, pos) = begin
   held(e, Keys.mouse_left) && e.clicked[3] == 1 || return
-  at = locate(e, pos)
+  at = settle(e.buf, locate(e, pos))
   at == e.buf.caret && return
   e.buf.caret = at
   touch!(e)
@@ -901,8 +1035,16 @@ end
 
 "Put `new` where the selection is, or at the caret"
 type!(e, new; typing=false) = begin
-  lo, hi = selection(e.buf)
-  edit!(e.buf, lo, hi, new; typing)
+  b = e.buf
+  cell = cellat(b, b.caret)
+  if cell !== nothing
+    # In a table, typing only ever changes the cell the caret is in
+    lo, hi = selection(b)
+    (lo[1] == hi[1] && within(cell, lo[2]) && within(cell, hi[2])) || (b.anchor = b.caret)
+    new = replace(new, '\n' => ' ')
+  end
+  lo, hi = selection(b)
+  edit!(b, lo, hi, new; typing)
   touch!(e)
 end
 
@@ -932,6 +1074,9 @@ end
 vertical(e, by::Int) = begin
   b = e.buf
   i, col = b.caret
+  it = item(e, i)
+  at = it.content isa Grid ? gridcell(it.content, b.caret) : nothing
+  at === nothing || return vertical(e, it, at, by)
   f = flow(e, i, true)
   k, x = spot(f, col)
   x = e.goal = something(e.goal, x)
@@ -943,8 +1088,32 @@ vertical(e, by::Int) = begin
   (j, colat(f, by < 0 ? length(f.lines) : 1, x))
 end
 
+"The place one line up or down from the caret, which is in row `r`, column `c` of a table"
+vertical(e, it::Item, (r, c), by::Int) = begin
+  b = e.buf
+  g = it.content::Grid
+  f = g.flows[r][c]
+  k, x = spot(f, b.caret[2])
+  x = e.goal = something(e.goal, x)
+  1 <= k + by <= length(f.lines) && return (b.caret[1], cellcol(f, k + by, x, g.cells[r][c]))
+  r += by
+  if r < 1
+    return it.first > 1 ? line_end(b, it.first - 1) : b.caret
+  elseif r > length(g.rows)
+    # ↓ on the last row of a table at the end of the document starts a line below it
+    it.last == length(b.lines) && edit!(b, line_end(b, it.last), line_end(b, it.last), "\n")
+    return (it.last + 1, 0)
+  end
+  isempty(g.cells[r]) && return (g.rows[r], 0)
+  c = min(c, length(g.cells[r]))
+  f = g.flows[r][c]
+  (g.rows[r], cellcol(f, by < 0 ? length(f.lines) : 1, x, g.cells[r][c]))
+end
+
 "The start or end of the line of the screen that the caret is on"
 screen_edge(e, by::Int) = begin
+  cell = cellat(e.buf, e.buf.caret)
+  cell === nothing || return (e.buf.caret[1], by < 0 ? cell.lo : cell.hi)
   i, col = e.buf.caret
   f = flow(e, i, true)
   k, _ = spot(f, col)
@@ -952,8 +1121,9 @@ screen_edge(e, by::Int) = begin
   by < 0 ? (i, vl.from) : (i, k < length(f.lines) ? max(vl.from, vl.to - 1) : vl.to)
 end
 
-"Move the caret to `p`. With `extend`, the selection grows to it."
-move!(e, p::Pos, extend::Bool; keep_goal=false) = begin
+"Move the caret to `p`, which was reached by going in the direction `by`. With `extend`, the selection grows to it."
+move!(e, p::Pos, extend::Bool; keep_goal=false, by=0) = begin
+  p = settle(e.buf, p, by)
   e.buf.caret = p
   extend || (e.buf.anchor = p)
   touch!(e; keep_goal)
@@ -961,6 +1131,9 @@ end
 
 erase!(e, to::Pos) = begin
   b = e.buf
+  cell = cellat(b, b.caret)
+  # In a table, a cell's edges can't be deleted
+  cell === nothing || selecting(b) || (to[1] == b.caret[1] && within(cell, to[2])) || return
   selecting(b) || (b.anchor = to)
   type!(e, "")
 end
@@ -971,6 +1144,7 @@ newline!(e) = begin
   i, col = b.caret
   text, line = b.lines[i], kinds(b)[i]
   k = line.kind
+  isempty(rowcells(b, b.caret)) || return next_cell!(e, false, down=true)
   if selecting(b) || col < line.prefix || !(k in (Kind.bullet, Kind.ordered, Kind.blockquote, Kind.paragraph))
     return type!(e, "\n")
   end
@@ -990,10 +1164,45 @@ indent!(e, out::Bool) = begin
   b = e.buf
   i, col = b.caret
   k = kinds(b)[i].kind
+  isempty(rowcells(b, b.caret)) || return next_cell!(e, out)
   k in (Kind.bullet, Kind.ordered) && !selecting(b) || return out ? nothing : type!(e, "  ")
   n = out ? min(2, kinds(b)[i].level) : 2
   edit!(b, (i, 0), (i, out ? n : 0), out ? "" : "  ")
   b.caret = b.anchor = (i, max(0, col + (out ? -n : n)))
+  touch!(e)
+end
+
+"""
+Go to the next cell of a table and select what's in it, or with `back` the one
+before. With `down`, go to the same cell of the next row. Going on from the end
+of the table adds a row.
+"""
+next_cell!(e, back::Bool; down=false) = begin
+  b = e.buf
+  i, col = b.caret
+  s, t = table(b, i)
+  rows = tablerows((s, t))
+  r = findfirst(==(i), rows)
+  cs = tablecells(b.lines[i])
+  c = nearest(cs, col)
+  if down
+    r += 1
+  elseif back
+    c -= 1
+    c < 1 && (r -= 1; c = 0)
+  else
+    c += 1
+    c > length(cs) && (r += 1; c = 1)
+  end
+  r < 1 && return
+  if r > length(rows)
+    edit!(b, line_end(b, t), line_end(b, t), "\n|" * repeat("  |", length(tablecells(b.lines[s]))))
+    push!(rows, t + 1)
+  end
+  cs = tablecells(b.lines[rows[r]])
+  isempty(cs) && return move!(e, (rows[r], 0), false)
+  cell = cs[c == 0 ? length(cs) : min(c, length(cs))]
+  b.anchor, b.caret = (rows[r], cell.lo), (rows[r], cell.hi)
   touch!(e)
 end
 
@@ -1071,14 +1280,15 @@ onkey(e::Editor, ev::KeyPress{K}) where K = begin
     lo, hi = selection(b)
     to = cmd ? screen_edge(e, by) : opt ? word_step(b, b.caret, by) :
          selecting(b) && !shift ? (by < 0 ? lo : hi) : beside(b, b.caret, by)
-    move!(e, to, shift)
+    move!(e, to, shift; by)
   elseif K == Keys.up || K == Keys.down
     by = K == Keys.up ? -1 : 1
     to = cmd ? (by < 0 ? (1, 0) : line_end(b, length(b.lines))) : vertical(e, by)
-    move!(e, to, shift, keep_goal=!cmd)
+    move!(e, to, shift; keep_goal=!cmd, by)
   elseif K == Keys.pageup || K == Keys.pagedown
     for _ in 1:20
-      move!(e, vertical(e, K == Keys.pageup ? -1 : 1), shift, keep_goal=true)
+      by = K == Keys.pageup ? -1 : 1
+      move!(e, vertical(e, by), shift; keep_goal=true, by)
     end
   elseif K == Keys.home || K == Keys._end
     move!(e, screen_edge(e, K == Keys.home ? -1 : 1), shift)
