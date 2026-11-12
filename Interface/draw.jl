@@ -378,8 +378,8 @@ end
 
 hide_tooltip!(window) = delete!(_tooltip, objectid(window))
 
-"Draw the tooltip overlay"
-draw_tooltip(ctx, ov::TooltipOverlay) = begin
+"Draw the tooltip overlay, keeping it inside a window `room` wide"
+draw_tooltip(ctx, ov::TooltipOverlay, room) = begin
   ov.content === nothing && return
   # resolve content through normal pipeline
   concrete = describe(ov.content, (9999px, 9999px))
@@ -401,13 +401,17 @@ draw_tooltip(ctx, ov::TooltipOverlay) = begin
   end
   bg = colorant"rgb(50,50,50)"
   arrow_size = 5px
+  # A tooltip above or below a target near the edge of the window moves in from
+  # the edge, and its arrow still points at the middle of the target
+  above_below = ov.placement in (:top, :bottom)
+  above_below && (tx = clamp(tx, 4px, max(4px, room - tw - 4px)))
   # shadow
   rounded_rectangle(ctx, tx + 1px, ty + 1px, tw, th, 6px,
                     background=RGBA(0,0,0,0.15))
   # background
   rounded_rectangle(ctx, tx, ty, tw, th, 6px, background=bg)
   # arrow
-  cx = tx + tw/2
+  cx = above_below ? clamp(ov.x + ov.target_w/2, tx + 6px + arrow_size, tx + tw - 6px - arrow_size) : tx + tw/2
   cy = ty + th/2
   path(ctx, close=true, background=bg) do p
     if ov.placement == :bottom
@@ -537,7 +541,7 @@ frame(window::Window) = begin
   pixels = drawing(window, scene) do ctx, size, scene
     draw(ctx, size, scene)
     ov !== nothing && draw_menu(ctx, ov)
-    tt !== nothing && draw_tooltip(ctx, tt)
+    tt !== nothing && draw_tooltip(ctx, tt, scene.width)
     t === nothing || draw_tool(ctx, window, t, scene)
   end
   stats.describe = (t1 - t0) / 1e6

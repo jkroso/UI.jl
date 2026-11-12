@@ -251,7 +251,7 @@ badge(label, seen=true) = begin
 end
 
 "The vertical line that joins a parent to its children"
-guide() = Box(width(INDENT), height(grow=GrowType.Grow), Alignment.Start, padding(0px, 0px, 0px, 5px),
+guide() = Box(width(preferred=INDENT, min=INDENT), height(grow=GrowType.Grow), Alignment.Start, padding(0px, 0px, 0px, 5px),
   Box(width(1px), height(grow=GrowType.Grow), background(C_GUIDE)))
 
 # The −, + and × are drawn as lines once the panel is laid out. As text they sit off centre.
@@ -280,8 +280,9 @@ function tree_row(ins, entry, fill, seen)
     Any[(isempty(name) ? () : (small(name, seen ? C_TEXT : C_FADED, size=13px),))...,
         (badge(b, seen) for b in badges(entry.node))...]
   end
+  # A row that's too long for the panel is cut off at the panel's edge. Its guides keep their width.
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), padding(0px, 10px, 0px, 8px),
-            background(fill), Alignment.Center,
+            background(fill), Alignment.Center, clip=true,
     (guide() for _ in 1:entry.depth)...,
     Row(child_gap=7px, Alignment.Center, marker, label...))
   row, marker

@@ -40,7 +40,7 @@
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
 @use "../Interface/abstract" SemanticUI GeometricUI WrapMode describe reuse! detach! window_of focus
-@use "../Interface/draw" ui draw ishovered cursor open_url viewport
+@use "../Interface/draw" ui draw ishovered cursor open_url viewport show_tooltip! hide_tooltip!
 @use "../Interface/fonts" skia_font
 @use "../Interface/inspector" toggle_inspector!
 @use "../Interface/window" hide_titlebar! drag_window! set_dark!
@@ -447,6 +447,8 @@ end
   folder::String = ""
   files::Vector{String} = String[]      # the Markdown files in the folder
   panel::Bool = false                   # is the file panel showing?
+  slid::Float64 = 0.0                   # when the file panel last started to slide in or out
+  slid_from::Float64 = 0.0              # how far open it was then, from 0 to 1
   theme::Symbol = :sepia
   applied::Symbol = :none               # the theme the window was last told about
   serif::Bool = true
@@ -471,7 +473,6 @@ end
 end
 
 @def mutable struct TopBar <: SemanticUI end
-@def mutable struct PanelTop <: SemanticUI end   # the top of the file panel, under the close, minimise and zoom buttons
 @def mutable struct Page <: SemanticUI end       # the scrolling area around the text
 @def mutable struct Document <: SemanticUI end   # the text itself
 @def mutable struct Backdrop <: SemanticUI end   # catches clicks outside a popup
@@ -479,8 +480,13 @@ end
 @def mutable struct ToolButton <: SemanticUI
   icon::String = ""
   action::Symbol = :none
+  rect::NTuple{4,px} = (0px, 0px, 0px, 0px)   # where it was last drawn, to put its tooltip under it
+  quiet::Bool = false                         # clicked, so no tooltip until the mouse leaves it
 end
-@def mutable struct Count <: SemanticUI end
+@def mutable struct Count <: SemanticUI       # the word count in the top bar
+  rect::NTuple{4,px} = (0px, 0px, 0px, 0px)
+  quiet::Bool = false
+end
 
 # The parts of the document. Each one holds the items that show its lines.
 @def mutable struct Paragraph <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
@@ -875,7 +881,9 @@ layout!(e) = begin
   b = e.buf
   ks = kinds(b)
   w, _ = window_size(e)
-  width = clamp(w - (e.panel ? PANEL_W : 0px) - 2PAGE_X, 240px, PROSE_W * e.zoom)
+  # While the file panel slides, the text keeps the width it has beside the
+  # panel, so it doesn't wrap again on each frame
+  width = clamp(w - (e.panel || sliding(e) ? PANEL_W : 0px) - 2PAGE_X, 240px, PROSE_W * e.zoom)
   width == e.width || (e.width = width; empty!(e.flows))
   items = Item[]
   top = 0px
@@ -1519,11 +1527,30 @@ paste!(e) = type!(e, replace(clipboard(), "\r\n" => "\n", '\r' => '\n', '\t' => 
 
 zoom!(e, z) = (e.zoom = clamp(z, 0.6, 2.5); restyle!(e))
 
+"The one after `x` in `list`, going back to the start after the last"
+after(list, x) = list[mod1(findfirst(==(x), list) + 1, length(list))]
+
 const THEME_ORDER = (:sepia, :paper, :night)
-next_theme!(e) = (e.theme = THEME_ORDER[mod1(findfirst(==(e.theme), THEME_ORDER) + 1, 3)]; restyle!(e))
+next_theme!(e) = (e.theme = after(THEME_ORDER, e.theme); restyle!(e))
 
 const STATS = (:words, :chars, :minutes)
-next_stat!(e) = (e.stat = STATS[mod1(findfirst(==(e.stat), STATS) + 1, 3)])
+next_stat!(e) = (e.stat = after(STATS, e.stat))
+
+const SLIDE_TIME = 0.25   # seconds for the file panel to slide in or out
+
+"Show the file panel if it's hidden, or hide it. It slides from where it is now."
+toggle_panel!(e) = (e.slid_from = opened(e); e.slid = time(); e.panel = !e.panel)
+
+sliding(e) = time() - e.slid < SLIDE_TIME
+
+"How far the file panel is open, from 0 to 1"
+opened(e) = begin
+  to = e.panel ? 1.0 : 0.0
+  sliding(e) || return to
+  t = (time() - e.slid) / SLIDE_TIME
+  t = t < 0.5 ? 4t^3 : 1 - (2 - 2t)^3 / 2   # slow at the start and the end
+  e.slid_from + (to - e.slid_from) * t
+end
 
 ismouse(k) = k in (Keys.mouse_left, Keys.mouse_right, Keys.mouse_middle)
 
@@ -1558,7 +1585,7 @@ onkey(e::Editor, ev::KeyPress{K}) where K = begin
   elseif cmd && K == Keys.p
     open_finder!(e)
   elseif cmd && K == Keys.backslash
-    e.panel = !e.panel
+    toggle_panel!(e)
   elseif cmd && K == Keys.equal
     zoom!(e, e.zoom + 0.1)
   elseif cmd && K == Keys.minus
@@ -1600,6 +1627,7 @@ end
 
 describe(b::ToolButton) = begin
   e = editor(b)
+  ishovered(b) || (b.quiet = false)
   on = (b.action == :panel && e.panel) || (b.action == :outline && e.popup == :outline)
   Box(width(30px), height(28px), radius(6px), Alignment.Center, name="Button",
       background(on ? colours.active : ishovered(b) ? colours.hover : clear),
@@ -1609,12 +1637,43 @@ end
 onkey(b::ToolButton, ::KeyPress{Keys.mouse_left}) = begin
   e = editor(b)
   a = b.action
-  a == :panel ? (e.panel = !e.panel) :
+  a == :panel ? toggle_panel!(e) :
   a == :outline ? (e.popup = e.popup == :outline ? :none : :outline) :
   a == :font ? (e.serif = !e.serif; restyle!(e)) :
   a == :theme ? next_theme!(e) : nothing
+  hush!(b)
   focus(e)
 end
+
+# Each button in the top bar says what it does while the mouse is over it. A
+# click hides what it says until the mouse leaves the button.
+
+const Tipped = Union{ToolButton,Count}
+const TIP_INK = colorant"rgb(240,240,240)"   # on the dark grey that every tooltip has
+
+"What the tooltip of a button in the top bar says"
+tip(b::ToolButton) = begin
+  e = editor(b)
+  a = b.action
+  a == :panel ? (e.panel ? "Hide sidebar  ⌘\\" : "Show sidebar  ⌘\\") :
+  a == :outline ? (e.popup == :outline ? "Hide outline" : "Show outline") :
+  a == :font ? (e.serif ? "Use a sans-serif font" : "Use a serif font") :
+  a == :theme ? "Use the $(titlecase(string(after(THEME_ORDER, e.theme)))) colours" : ""
+end
+tip(c::Count) = begin
+  s = after(STATS, editor(c).stat)
+  s == :words ? "Count words" : s == :chars ? "Count characters" : "Show reading time"
+end
+
+draw(ctx, size, ui::ConcreteRect, b::Tipped) = (b.rect = (ui.left, ui.top, ui.width, ui.height); nothing)
+
+onmouse(b::Tipped, ev::MouseMove) = begin
+  b.quiet && return
+  show_tooltip!(ev.window, Box(padding(8px, 5px), label(tip(b), 12px, color=TIP_INK)), b.rect...,
+                placement=:bottom, gap=6px)
+end
+
+hush!(b::Tipped) = (b.quiet = true; hide_tooltip!(window_of(b)))
 
 commas(n::Int) = replace(string(n), r"(?<=\d)(?=(\d{3})+$)" => ",")
 
@@ -1624,24 +1683,25 @@ describe(c::Count) = begin
   kinds(b)
   s = e.stat == :words ? "$(commas(b.words)) $(b.words == 1 ? "word" : "words")" :
       e.stat == :chars ? "$(commas(b.chars)) characters" : "$(max(1, round(Int, b.words / 230))) min read"
+  ishovered(c) || (c.quiet = false)
   Box(height(28px), padding(8px, 0px), radius(6px), background(ishovered(c) ? colours.hover : clear),
     label(s, 12px, color=colours.dim))
 end
 
-onkey(c::Count, ::KeyPress{Keys.mouse_left}) = next_stat!(editor(c))
+onkey(c::Count, ::KeyPress{Keys.mouse_left}) = (next_stat!(editor(c)); hush!(c))
 
 button(e, action, icon) = node!(() -> ToolButton(icon=icon, action=action), e, action)
-
-# The close, minimise and zoom buttons sit over the first 78px of the window
-lights(e) = Row(fixed(PANEL_W), height(TOPBAR_H), padding(0px, 0px, 0px, 78px), button(e, :panel, "layout-sidebar"))
 
 describe(t::TopBar) = begin
   e = editor(t)
   b = e.buf
   side = 250px
-  # With the file panel open, the panel button is in the top of the panel
+  # The top bar lies over the top of the file panel. The file's name is in the
+  # middle of the space beside the panel, so it moves as the panel slides.
   Row(width(grow=grow), height(TOPBAR_H), name="TopBar",
-    Row(fixed(side), height(grow=grow), (e.panel ? () : (lights(e),))...),
+    # The close, minimise and zoom buttons sit over the first 78px
+    Row(fixed(side + PANEL_W * opened(e)), height(grow=grow), padding(0px, 0px, 0px, 78px),
+      button(e, :panel, "layout-sidebar")),
     Box(width(grow=grow), height(grow=grow), clip=true,
       Row(child_gap=6px,
         label(name(b), 13px, color=colours.dim),
@@ -1653,8 +1713,8 @@ describe(t::TopBar) = begin
       button(e, :theme, "circle-half")))
 end
 
-# The window has no title bar, so you move it by dragging the top bar or the top of the file panel
-onkey(t::Union{TopBar,PanelTop}, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(t))
+# The window has no title bar, so you move it by dragging the top bar
+onkey(t::TopBar, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(t))
 
 # --- the file panel -----------------------------------------------------------------------
 
@@ -1673,17 +1733,22 @@ end
 
 onkey(r::FileRow, ::KeyPress{Keys.mouse_left}) = open!(editor(r), r.path)
 
-describe(t::PanelTop) = lights(editor(t))
-
-panel(e) =
-  Column(fixed(PANEL_W), height(grow=grow), Alignment.Start, background(colours.panel), name="Files",
-         border(1px, :solid, colours.line)[:right],
-    node!(PanelTop, e, :panel_top),
-    Row(width(grow=grow), height(30px), padding(16px, 0px), clip=true,
-      label(uppercase(basename(e.folder)), 11px, color=colours.dim, weight="Semibold")),
-    reuse!(e.files_scroll,
-      Column(width(grow=grow), Alignment.Start, padding(0px, 8px, 12px, 8px), child_gap=1px,
-        [node!(() -> FileRow(path=p), e, (:file, p)) for p in e.files]...)))
+"""
+The file panel, `open` of the way out from the left edge of the window. It
+keeps its width as it slides, so only its right part shows while it's partly out.
+"""
+panel(e, open) = begin
+  shows = PANEL_W * open
+  Row(fixed(shows), height(grow=grow), Alignment.Start, clip=true,
+    Column(fixed(PANEL_W), height(grow=grow), Alignment.Start, background(colours.panel), name="Files",
+           border(1px, :solid, colours.line)[:right], offset_x=shows - PANEL_W,
+      Box(width(grow=grow), height(TOPBAR_H)),   # under the top bar
+      Row(width(grow=grow), height(30px), padding(16px, 0px), clip=true,
+        label(uppercase(basename(e.folder)), 11px, color=colours.dim, weight="Semibold")),
+      reuse!(e.files_scroll,
+        Column(width(grow=grow), Alignment.Start, padding(0px, 8px, 12px, 8px), child_gap=1px,
+          [node!(() -> FileRow(path=p), e, (:file, p)) for p in e.files]...))))
+end
 
 # --- the outline ----------------------------------------------------------------------------
 
@@ -1804,18 +1869,21 @@ describe(e::Editor) = begin
   # typing shows without waiting for a frame that was already under way. Between
   # times it only wakes to blink the caret.
   if win !== nothing
-    win.animating = false
+    # While the file panel slides, each frame is drawn as soon as it can be
+    win.animating = sliding(e)
     win.wake = win.focus === e ? 0.51 - mod(time() - e.blink, 0.5) : win.focus === input(e) ? 0.25 : 0.0
   end
-  # The file panel runs from the top of the window to the bottom, beside the top bar
-  window = Row(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg), name="Editor",
-    (e.panel ? (panel(e),) : ())...,
+  # The file panel runs from the top of the window to the bottom, and the top
+  # bar lies over the top of the panel and the page
+  open = opened(e)
+  body = Row(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg),
+    (open > 0 ? (panel(e, open),) : ())...,
     Column(width(grow=grow), height(grow=grow), Alignment.Start,
-      node!(TopBar, e, :topbar),
+      Box(width(grow=grow), height(TOPBAR_H)),   # under the top bar
       node!(Page, e, :page)))
-  e.popup == :none && return window
+  popup = e.popup == :none ? () : (node!(Backdrop, e, :backdrop), e.popup == :outline ? outline(e) : finder(e))
   Stack(width(grow=grow), height(grow=grow), Alignment.Start, name="Editor",
-    window, node!(Backdrop, e, :backdrop), e.popup == :outline ? outline(e) : finder(e))
+    body, node!(TopBar, e, :topbar), popup...)
 end
 
 # --- window -------------------------------------------------------------------------------
