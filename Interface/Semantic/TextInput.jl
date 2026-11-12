@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe window_of
+@use "../abstract" SemanticUI describe window_of focus
 @use "../draw" draw
 @use Colors: @colorant_str, Colorant, RGBA
 @use GeometryBasics: Vec2
@@ -187,7 +187,8 @@ end
 
 # --- event handlers ---
 
-onkey(input::TextInput, e::KeyPress{Keys.mouse_left}) = handle_click!(input, e.window.mouse[1])
+# A click puts the caret where it lands, and gives the field the keyboard
+onkey(input::TextInput, e::KeyPress{Keys.mouse_left}) = (focus(input); handle_click!(input, e.window.mouse[1]))
 onkey(input::TextInput, e::KeyPress{K}) where K = handle_key!(input, K, e.window)
 onmouse(input::TextInput, e::MouseMove) = Keys.mouse_left in e.window.keys && handle_drag!(input, e.position[1])
 
