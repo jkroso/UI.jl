@@ -34,7 +34,8 @@
 # `hide_titlebar!` for a window without a title bar.
 
 @use "github.com/jkroso/Prospects.jl" @def
-@use "github.com/jkroso/MiniFB.jl/skia" measure_text rectangle
+@use "github.com/jkroso/MiniFB.jl/skia" measure_text rectangle sk_color
+@use Skia
 @use "github.com/jkroso/MiniFB.jl"...
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
@@ -913,16 +914,89 @@ selected(b::Buffer, i::Int) = begin
   (i == lo[1] ? lo[2] : 0, i == hi[1] ? hi[2] : length(b.lines[i]), i < hi[1])
 end
 
-"Draw the selection over the lines of `f`, whose top left corner is at (x, y)"
-highlight(ctx, f::Flow, x, y, (from, to, more)) =
+const Rect = NTuple{4,Float64}   # left, top, right and bottom, in px
+
+"""
+The boxes that cover the selected part of each line of `f`, whose top left
+corner is at (x, y). The first and last boxes take in the space above and below
+the lines, so the boxes of one line of the document meet those of the next.
+"""
+marks(f::Flow, x, y, (from, to, more)) = begin
+  out = Rect[]
+  n = length(f.lines)
   for (k, vl) in enumerate(f.lines)
     (from <= vl.to && to >= vl.from) || continue
     x1 = from <= vl.from ? vl.x : xcol(vl, from)
     x2 = xcol(vl, min(to, vl.to))
     # A little extra shows that the end of the line is selected too
-    (to > vl.to || (more && k == length(f.lines))) && (x2 += 7px)
-    x2 > x1 && rectangle(ctx, x + x1, y + f.above + f.lh * (k - 1), x2 - x1, f.lh, background=colours.select, border=0px)
+    (to > vl.to || (more && k == n)) && (x2 += 7px)
+    x2 > x1 || continue
+    top = k == 1 ? 0px : f.above + f.lh * (k - 1)
+    bottom = f.above + f.lh * k + (k == n ? f.below : 0px)
+    push!(out, (num(x + x1), num(y + top), num(x + x2), num(y + bottom)))
   end
+  out
+end
+
+const SELECTION_RADIUS = 4.0
+
+"""
+Fill the selection. Boxes that sit on top of each other are joined into one
+shape, and every corner of that shape is rounded, the ones that point in as
+well as the ones that point out.
+"""
+fill_selection(ctx, rects::Vector{Rect}) = begin
+  isempty(rects) && return
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  Skia.sk_paint_set_color(paint, sk_color(colours.select))
+  from = 1
+  for i in 2:length(rects)+1
+    # A box joins the one above it when they touch and share some width
+    joined = i <= length(rects) && abs(rects[i][2] - rects[i-1][4]) < 1 &&
+             rects[i][1] < rects[i-1][3] && rects[i][3] > rects[i-1][1]
+    joined && continue
+    outline = rounded(corners(rects[from:i-1]), SELECTION_RADIUS)
+    Skia.sk_canvas_draw_path(ctx, outline, paint)
+    Skia.sk_path_delete(outline)
+    from = i
+  end
+  Skia.sk_paint_delete(paint)
+end
+
+"The corners of the shape made by a stack of boxes: down its right side, then back up its left"
+corners(rects) = begin
+  points = NTuple{2,Float64}[]
+  add(p) = (isempty(points) || points[end] != p) && push!(points, p)
+  top = rects[1][2]
+  for (l, t, r, b) in rects
+    add((r, top)); add((r, b))
+    top = b
+  end
+  for (i, (l, t, r, b)) in Iterators.reverse(enumerate(rects))
+    add((l, b)); add((l, i == 1 ? t : rects[i-1][4]))
+  end
+  points
+end
+
+"A Skia path around `points`, with each corner rounded by up to `radius`"
+rounded(points, radius) = begin
+  path = Skia.sk_path_new()
+  n = length(points)
+  for i in 1:n
+    before, corner, after = points[mod1(i - 1, n)], points[i], points[mod1(i + 1, n)]
+    d1, d2 = hypot((before .- corner)...), hypot((after .- corner)...)
+    # A short edge has room for less of a curve at each end
+    r = min(radius, d1 / 2, d2 / 2)
+    a = corner .+ (before .- corner) .* (r / max(d1, 1e-6))
+    b = corner .+ (after .- corner) .* (r / max(d2, 1e-6))
+    i == 1 ? Skia.sk_path_move_to(path, Float32(a[1]), Float32(a[2])) : Skia.sk_path_line_to(path, Float32(a[1]), Float32(a[2]))
+    # A conic with this weight is a quarter of a circle
+    Skia.sk_path_conic_to(path, Float32(corner[1]), Float32(corner[2]), Float32(b[1]), Float32(b[2]), Float32(sqrt(0.5)))
+  end
+  Skia.sk_path_close(path)
+  path
+end
 
 "Draw the caret at column `col` of `f`, whose top left corner is at (x, y)"
 caret(ctx, e, f::Flow, x, y, col) = begin
@@ -940,26 +1014,36 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
   e = editor(d)
   b = e.buf
   e.origin = (ui.left, ui.top)
+  # The selection goes under the caret, as one shape for each run of lines that touch
+  rects = Rect[]
+  for it in e.layout[e.shown]
+    top = ui.top + it.top
+    if it.content isa Grid
+      g = it.content
+      for (r, i) in enumerate(g.rows), (c, cell) in enumerate(g.cells[r])
+        sel = selected(b, i)
+        (sel !== nothing && sel[1] < cell.limit && sel[2] > cell.lo) || continue
+        x, y = cell_origin(g, r, c)
+        fill_selection(ctx, marks(g.flows[r][c], ui.left + x, top + y, (max(sel[1], cell.lo), min(sel[2], cell.limit), false)))
+      end
+    else
+      sel = selected(b, it.first)
+      sel === nothing || append!(rects, marks(it.content, ui.left, top, sel))
+    end
+  end
+  fill_selection(ctx, rects)
   for it in e.layout[e.shown]
     top = ui.top + it.top
     if it.content isa Grid
       g = it.content
       at = gridcell(g, b.caret)
       for (r, i) in enumerate(g.rows), (c, cell) in enumerate(g.cells[r])
-        f = g.flows[r][c]
         x, y = cell_origin(g, r, c)
-        sel = selected(b, i)
-        if sel !== nothing && sel[1] < cell.limit && sel[2] > cell.lo
-          highlight(ctx, f, ui.left + x, top + y, (max(sel[1], cell.lo), min(sel[2], cell.limit), false))
-        end
-        at == (r, c) && caret(ctx, e, f, ui.left + x, top + y, b.caret[2])
+        at == (r, c) && caret(ctx, e, g.flows[r][c], ui.left + x, top + y, b.caret[2])
       end
       continue
     end
-    f = it.content::Flow
-    sel = selected(b, it.first)
-    sel === nothing || highlight(ctx, f, ui.left, top, sel)
-    it.first == b.caret[1] && caret(ctx, e, f, ui.left, top, b.caret[2])
+    it.first == b.caret[1] && caret(ctx, e, it.content::Flow, ui.left, top, b.caret[2])
   end
 end
 
