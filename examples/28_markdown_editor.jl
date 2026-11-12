@@ -42,6 +42,7 @@
 @use "../Interface/abstract" SemanticUI GeometricUI WrapMode describe reuse! detach! window_of focus
 @use "../Interface/draw" ui draw ishovered cursor open_url viewport show_tooltip! hide_tooltip!
 @use "../Interface/fonts" skia_font
+@use "../Interface/image" image_aspect
 @use "../Interface/inspector" toggle_inspector!
 @use "../Interface/window" hide_titlebar! drag_window! set_dark!
 @use "../Interface/Semantic/Icon" Icon
@@ -904,7 +905,9 @@ note(text, colour) = Box(width(grow=grow), padding(BLOCK_X, 10px), background(co
 # --- files in a live block ---------------------------------------------------------------
 #
 # An FSPath shows as the list of what's in its folder. Click a folder to go
-# into it, and click a Markdown file to open it in the editor.
+# into it. Click a file to see a preview of it under its line: a picture, or
+# the first lines of a text file. Click a Markdown file a second time to open
+# it in the editor.
 
 "One line of a FileList: a file, a folder, or the way up to the folder above"
 @def mutable struct FileEntry <: SemanticUI
@@ -915,6 +918,7 @@ end
 "What's in the folder `at`. A path to a file shows that one file."
 @def mutable struct FileList <: SemanticUI
   at::String = ""
+  picked::String = ""    # the file whose preview shows
   entries::Dict{String,FileEntry} = Dict{String,FileEntry}()   # kept so each line knows when the mouse is over it
 end
 
@@ -941,7 +945,8 @@ describe(l::FileList) = begin
     Row(width(grow=grow), height(26px), padding(10px, 0px), clip=true,
       label(replace(dir, homedir() => "~"), 12px, color=colours.dim)),
     (isdir(l.at) && above != dir ? (entry(l, "..", above, up=true),) : ())...,
-    [entry(l, n, joinpath(dir, n)) for n in shown]...,
+    Iterators.flatten((joinpath(dir, n) == l.picked ? (entry(l, n, l.picked), preview(l.picked)) : (entry(l, n, joinpath(dir, n)),)
+                       for n in shown))...,
     (length(names) > length(shown) ? (Row(width(grow=grow), height(26px), padding(10px, 0px),
        label("and $(length(names) - length(shown)) more", 12px, color=colours.dim)),) : ())...)
 end
@@ -949,8 +954,9 @@ end
 describe(r::FileEntry) = begin
   folder = isdir(r.path)
   opens = folder || ismarkdown(r.path)
+  picked = !r.up && r.path == (r.parent::FileList).picked
   Row(width(grow=grow), height(26px), padding(10px, 0px), radius(5px), child_gap=8px, clip=true,
-      background(opens && ishovered(r) ? colours.hover : clear),
+      background(picked ? colours.active : ishovered(r) ? colours.hover : clear),
     Icon(r.up ? "arrow-90deg-up" : folder ? "folder" : ismarkdown(r.path) ? "file-earmark-text" : "file-earmark",
          size=13px, color=colours.dim),
     Box(width(grow=grow), Alignment.Start, label(r.up ? ".." : basename(r.path), color=opens ? colours.ink : colours.dim)),
@@ -966,11 +972,56 @@ bytes(n) = begin
   end
 end
 
-cursor(r::FileEntry) = isdir(r.path) || ismarkdown(r.path) ? :hand : :arrow
+const PICTURES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+const PREVIEW_LINES = 12
+
+"The first lines of the file at `path`, or nothing if it isn't text"
+opening(path) = begin
+  bytes = open(io -> read(io, 4000), path)
+  (0x00 in bytes || isempty(bytes)) && return nothing
+  s = String(bytes)
+  # The 4000 bytes can stop part way through a character
+  while !isvalid(s) && sizeof(s) > length(bytes) - 4; s = chop(s) end
+  isvalid(s) || return nothing
+  [first(replace(line, '\t' => "  "), 110) for line in first(split(s, '\n'), PREVIEW_LINES)]
+end
+
+"What shows under the line of a file that was clicked: the picture, or the start of the text, and when it last changed"
+preview(path) = begin
+  isfile(path) || return Box(height(0px))
+  ext = lowercase(splitext(path)[2])
+  changed = Libc.strftime("%-d %b %Y, %H:%M", mtime(path))
+  about = "Changed $changed" * (ismarkdown(path) ? ". Click it again to open it." : "")
+  content = try
+    if ext in PICTURES
+      w = min(420px, 260px * image_aspect(path))
+      Image(path, fixed(w), height(w / image_aspect(path)), radius(4px))
+    else
+      lines = opening(path)
+      lines === nothing ? label("This file has no preview", 12px, color=colours.dim) :
+        Column(width(grow=grow), Alignment.Start, padding(10px, 8px), radius(5px), background(colours.bg), clip=true,
+          [Row(height(18px), Text(String(line), size=12px, family=MONO, color=colours.ink, wrap=WrapMode.none)) for line in lines]...)
+    end
+  catch
+    label("This file has no preview", 12px, color=colours.dim)
+  end
+  Column(width(grow=grow), Alignment.Start, padding(4px, 10px, 10px, 31px), child_gap=8px,
+    content, label(about, 12px, color=colours.dim))
+end
+
+cursor(::FileEntry) = :hand
 
 onkey(r::FileEntry, ::KeyPress{Keys.mouse_left}) = begin
   l = r.parent::FileList
-  isdir(r.path) ? (l.at = r.path) : ismarkdown(r.path) ? open!(editor(r), r.path) : nothing
+  if isdir(r.path)
+    l.at, l.picked = r.path, ""
+  elseif l.picked != r.path
+    l.picked = r.path
+  elseif ismarkdown(r.path)
+    open!(editor(r), r.path)
+  else
+    l.picked = ""
+  end
 end
 
 "What the live block with this code shows"
