@@ -13,20 +13,24 @@ struct Line
   kind::Kind
   level::Int   # a heading's level, or how many spaces indent the line
   prefix::Int  # how many characters of indent and markup start the line
+  lang::String # the language of the code block that a line of code is in
 end
+
+Line(kind::Kind, level::Int, prefix::Int) = Line(kind, level, prefix, "")
 
 const HEADING = r"^(#{1,6})\s+"
 const BULLET  = r"^(\s*)[-*+]\s+"
 const ORDERED = r"^(\s*)\d+[.)]\s+"
 const QUOTE   = r"^\s*>\s?"
-const FENCE   = r"^\s*(```|~~~)"
+const FENCE   = r"^\s*(```|~~~)\s*([^\s`]*)"
 const RULE    = r"^\s*([-*_])(\s*\1){2,}\s*$"
 const DIVIDER = r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$"
 
-"What `text` is, given whether it's inside a fenced code block"
-Line(text::AbstractString, fenced::Bool=false) = begin
-  occursin(FENCE, text) && return Line(Kind.fence, 0, 0)
-  fenced && return Line(Kind.code, 0, 0)
+"What `text` is. `lang` is the language of the code block it's inside, or nothing outside one."
+Line(text::AbstractString, lang::Union{Nothing,AbstractString}=nothing) = begin
+  m = match(FENCE, text)
+  m === nothing || return Line(Kind.fence, 0, 0, m[2])
+  lang === nothing || return Line(Kind.code, 0, 0, lang)
   isempty(strip(text)) && return Line(Kind.blank, 0, 0)
   m = match(HEADING, text)
   m === nothing || return Line(Kind.heading, length(m[1]), length(m.match))
@@ -44,10 +48,11 @@ end
 
 "What each line of a document is"
 classify(lines) = begin
-  fenced = false
+  lang = nothing
   map(lines) do text
-    line = Line(text, fenced)
-    line.kind == Kind.fence && (fenced = !fenced)
+    line = Line(text, lang)
+    # The line that opens a code block names its language
+    line.kind == Kind.fence && (lang = lang === nothing ? line.lang : nothing)
     line
   end
 end

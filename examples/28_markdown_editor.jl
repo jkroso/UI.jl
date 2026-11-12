@@ -29,8 +29,9 @@
 #
 # The example uses these UI.jl features: a `Scroll` that only builds the lines
 # on screen, a `draw` method that adds the caret and selection over a node,
-# italic and bold fonts by name, a `Stack` to float the outline and the file
-# finder over the page, and `hide_titlebar!` for a window without a title bar.
+# italic and bold fonts by name, a colour for each part of a line of code, a
+# `Stack` to float the outline and the file finder over the page, and
+# `hide_titlebar!` for a window without a title bar.
 
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl/skia" measure_text rectangle
@@ -45,6 +46,7 @@
 @use "../Interface/Semantic/Icon" Icon
 @use "../Interface/Semantic/TextInput" TextInput
 @use "./markdown_editor/markdown" Kind Line Span Cell classify spans tablecells isdivider words
+@use "./markdown_editor/highlight" tokens
 @use Colors: @colorant_str, RGBA, Colorant
 @use InteractiveUtils: clipboard
 
@@ -75,6 +77,13 @@ Base.@kwdef mutable struct Palette
   active::Colorant    # the open file in the file panel
   float::Colorant     # the outline and the file finder
   shade::Colorant     # dims the window behind the file finder
+  # In a code block
+  comment::Colorant
+  string::Colorant
+  number::Colorant
+  keyword::Colorant
+  call::Colorant      # the name of a function being called
+  type::Colorant
 end
 
 const SEPIA = Palette(bg=colorant"rgb(243,236,218)", ink=colorant"rgb(60,52,42)", dim=colorant"rgb(128,116,98)",
@@ -85,7 +94,10 @@ const SEPIA = Palette(bg=colorant"rgb(243,236,218)", ink=colorant"rgb(60,52,42)"
                       accent=colorant"rgb(156,86,38)", select=RGBA(0.72, 0.52, 0.2, 0.28),
                       panel=colorant"rgb(236,228,208)", hover=colorant"rgb(228,220,198)",
                       active=colorant"rgb(222,213,189)", float=colorant"rgb(248,243,229)",
-                      shade=RGBA(0.2, 0.15, 0.05, 0.18))
+                      shade=RGBA(0.2, 0.15, 0.05, 0.18),
+                      comment=colorant"rgb(150,138,115)", string=colorant"rgb(84,116,44)",
+                      number=colorant"rgb(170,98,20)", keyword=colorant"rgb(150,58,108)",
+                      call=colorant"rgb(48,98,140)", type=colorant"rgb(36,116,110)")
 
 const PAPER = Palette(bg=colorant"rgb(255,255,255)", ink=colorant"rgb(36,36,36)", dim=colorant"rgb(120,120,120)",
                       faint=colorant"rgb(178,178,178)", marker=colorant"rgb(140,140,140)",
@@ -95,7 +107,10 @@ const PAPER = Palette(bg=colorant"rgb(255,255,255)", ink=colorant"rgb(36,36,36)"
                       accent=colorant"rgb(22,100,210)", select=RGBA(0.26, 0.52, 0.96, 0.28),
                       panel=colorant"rgb(246,246,246)", hover=colorant"rgb(236,236,236)",
                       active=colorant"rgb(226,226,226)", float=colorant"rgb(255,255,255)",
-                      shade=RGBA(0, 0, 0, 0.16))
+                      shade=RGBA(0, 0, 0, 0.16),
+                      comment=colorant"rgb(140,140,140)", string=colorant"rgb(30,120,60)",
+                      number=colorant"rgb(180,95,0)", keyword=colorant"rgb(170,40,130)",
+                      call=colorant"rgb(30,90,180)", type=colorant"rgb(0,120,130)")
 
 const NIGHT = Palette(bg=colorant"rgb(30,30,32)", ink=colorant"rgb(222,220,214)", dim=colorant"rgb(150,148,142)",
                       faint=colorant"rgb(100,99,96)", marker=colorant"rgb(132,130,124)",
@@ -105,7 +120,10 @@ const NIGHT = Palette(bg=colorant"rgb(30,30,32)", ink=colorant"rgb(222,220,214)"
                       accent=colorant"rgb(110,170,255)", select=RGBA(0.35, 0.58, 1.0, 0.35),
                       panel=colorant"rgb(38,38,41)", hover=colorant"rgb(52,52,56)",
                       active=colorant"rgb(62,62,68)", float=colorant"rgb(44,44,48)",
-                      shade=RGBA(0, 0, 0, 0.4))
+                      shade=RGBA(0, 0, 0, 0.4),
+                      comment=colorant"rgb(112,112,118)", string=colorant"rgb(160,200,120)",
+                      number=colorant"rgb(230,170,100)", keyword=colorant"rgb(200,130,220)",
+                      call=colorant"rgb(120,170,250)", type=colorant"rgb(110,200,200)")
 
 const THEMES = (sepia=SEPIA, paper=PAPER, night=NIGHT)
 const colours = deepcopy(SEPIA)
@@ -542,8 +560,15 @@ pieces(e, text::String, line::Line, raw::Bool) = begin
   base = face(e, line)
   out = Piece[]
   k = line.kind
-  if k in (Kind.code, Kind.fence, Kind.table, Kind.rule)
-    isempty(text) || push!(out, piece(text, 0, k == Kind.code || k == Kind.table ? base : Face(base, color=colours.faint)))
+  if k == Kind.code
+    # Each part of a line of code has its own colour, and comments slant
+    for t in tokens(text, line.lang)
+      colour = t.kind == :plain ? base.color : getfield(colours, t.kind)
+      push!(out, piece(t.text, t.col, Face(base, color=colour, style=t.kind == :comment ? "Italic" : "")))
+    end
+    return out
+  elseif k in (Kind.fence, Kind.table, Kind.rule)
+    isempty(text) || push!(out, piece(text, 0, k == Kind.table ? base : Face(base, color=colours.faint)))
     return out
   end
   lead = head(text, line.prefix)

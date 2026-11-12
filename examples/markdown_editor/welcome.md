@@ -39,11 +39,16 @@ Both add a row when they reach the end of the table.
 ## Code
 
 ```julia
+# Only the lines on screen are built
 describe(d::Document) = begin
   e = editor(d)
-  Column(fixed(e.width), [describe(e, item) for item in e.layout[e.shown]]...)
+  title = "Lines $(first(e.shown)) to $(last(e.shown))"
+  Column(fixed(e.width), spacer(28px), map(describe, e.layout[e.shown])...)
 end
 ```
+
+The line that opens a code block names its language, and the code is coloured to
+match. Try changing `julia` to `python`.
 
 ---
 
