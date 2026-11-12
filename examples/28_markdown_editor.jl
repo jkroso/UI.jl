@@ -988,12 +988,16 @@ end
 blocktype(it::Item) = begin
   c = it.content
   c isa Grid && return Table
-  c isa Live && return LiveBlock
-  k = c.kind
+  c isa Live ? LiveBlock : blocktype(c.kind)
+end
+
+blocktype(k::Kind) =
   k == Kind.paragraph ? Paragraph : k == Kind.heading ? Heading : k in (Kind.bullet, Kind.ordered) ? List :
   k == Kind.blockquote ? Quote : k in (Kind.code, Kind.fence) ? CodeBlock : k == Kind.table ? Table :
   k == Kind.rule ? Rule : nothing
-end
+
+"The kind of block that line `i` is in. The keys that edit the text do different things in different blocks."
+block(b::Buffer, i::Int) = blocktype(kinds(b)[i].kind)
 
 "The items as the nodes of the document: one for each paragraph, list, table and so on"
 blocks(d::Document, items) = begin
@@ -1436,16 +1440,22 @@ erase!(e, to::Pos) = begin
   type!(e, "")
 end
 
-"Return starts a new line. In a list or a quote, the new line carries it on."
+"Return starts a new line. What else it does depends on the block the caret is in."
 newline!(e) = begin
+  b = e.buf
+  isempty(rowcells(b, b.caret)) || return next_cell!(e, false, down=true)
+  selecting(b) ? type!(e, "\n") : newline!(e, block(b, b.caret[1]))
+end
+
+newline!(e, block) = type!(e, "\n")
+
+# In a list or a quote, the new line carries it on
+newline!(e, ::Type{<:Union{List,Quote,Paragraph}}) = begin
   b = e.buf
   i, col = b.caret
   text, line = b.lines[i], kinds(b)[i]
   k = line.kind
-  isempty(rowcells(b, b.caret)) || return next_cell!(e, false, down=true)
-  if selecting(b) || col < line.prefix || !(k in (Kind.bullet, Kind.ordered, Kind.blockquote, Kind.paragraph))
-    return type!(e, "\n")
-  end
+  col < line.prefix && return type!(e, "\n")
   lead = head(text, line.prefix)
   # Return on an empty list item ends the list
   if length(text) == line.prefix && k != Kind.paragraph
@@ -1457,13 +1467,63 @@ newline!(e) = begin
   type!(e, "\n" * lead)
 end
 
-"Tab moves a list item in, and shift-Tab moves it back out"
-indent!(e, out::Bool) = begin
+# In code, the new line starts under the text of the line before. It starts
+# one step further in after a line that opens a block.
+newline!(e, ::Type{CodeBlock}) = begin
   b = e.buf
   i, col = b.caret
-  k = kinds(b)[i].kind
+  line = kinds(b)[i]
+  line.kind == Kind.fence && return type!(e, "\n")
+  before = head(b.lines[i], col)
+  type!(e, "\n" * match(r"^ *", before).match * (opens(before, line.lang) ? STEP : ""))
+end
+
+const STEP = "  "   # one step of indentation
+const OPENERS = r"^\s*(function|if|elseif|else|for|while|let|try|catch|finally|struct|mutable struct|module|macro|quote)\b"
+
+"True when a line of code that ends with `text` opens a block, so the next line goes further in"
+opens(text::AbstractString, lang::AbstractString) = begin
+  s = rstrip(text)
+  isempty(s) && return false
+  last(s) in "([{" && return true
+  lowercase(lang) in ("python", "py") && return last(s) == ':'
+  lowercase(lang) in ("julia", "jl", LIVE) || return false
+  occursin(r"\b(begin|do( [\w, ]+)?)$", s) || (occursin(OPENERS, s) && !occursin(r"\bend$", s))
+end
+
+"Tab moves text in, and shift-Tab moves it back out. What they move depends on the block the caret is in."
+indent!(e, out::Bool) = begin
+  b = e.buf
   isempty(rowcells(b, b.caret)) || return next_cell!(e, out)
-  k in (Kind.bullet, Kind.ordered) && !selecting(b) || return out ? nothing : type!(e, "  ")
+  indent!(e, out, block(b, b.caret[1]))
+end
+
+indent!(e, out::Bool, block) = out ? nothing : type!(e, STEP)
+
+# In code, Tab goes to the next step. With a selection, or with shift, it moves every line the selection touches.
+indent!(e, out::Bool, ::Type{CodeBlock}) = begin
+  b = e.buf
+  out || selecting(b) || return type!(e, " " ^ (length(STEP) - b.caret[2] % length(STEP)))
+  ends = Dict(:caret => b.caret, :anchor => b.anchor)
+  lo, hi = minmax(b.caret, b.anchor)
+  for i in lo[1]:hi[1]
+    kinds(b)[i].kind == Kind.code || continue
+    n = out ? min(length(STEP), length(match(r"^ *", b.lines[i]).match)) : length(STEP)
+    isempty(b.lines[i]) && continue
+    edit!(b, (i, 0), (i, out ? n : 0), out ? "" : STEP)
+    for (name, (l, col)) in ends
+      l == i && (ends[name] = (i, max(0, col + (out ? -n : n))))
+    end
+  end
+  b.caret, b.anchor = ends[:caret], ends[:anchor]
+  touch!(e)
+end
+
+# In a list, Tab moves the item in and shift-Tab moves it back out
+indent!(e, out::Bool, ::Type{List}) = begin
+  b = e.buf
+  i, col = b.caret
+  selecting(b) && return out ? nothing : type!(e, STEP)
   n = out ? min(2, kinds(b)[i].level) : 2
   edit!(b, (i, 0), (i, out ? n : 0), out ? "" : "  ")
   b.caret = b.anchor = (i, max(0, col + (out ? -n : n)))
