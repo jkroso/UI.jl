@@ -73,9 +73,9 @@ Base.@kwdef mutable struct Palette
   stripe::Colorant    # every second row of a table
   accent::Colorant    # links
   select::Colorant
-  panel::Colorant     # the file panel
+  panel::Colorant     # the sidebar
   hover::Colorant
-  active::Colorant    # the open file in the file panel
+  active::Colorant    # the open file in the sidebar
   float::Colorant     # the outline and the file finder
   shade::Colorant     # dims the window behind the file finder
   # In a code block
@@ -446,8 +446,8 @@ end
   buffers::Dict{String,Buffer} = Dict{String,Buffer}()
   folder::String = ""
   files::Vector{String} = String[]      # the Markdown files in the folder
-  panel::Bool = false                   # is the file panel showing?
-  slid::Float64 = 0.0                   # when the file panel last started to slide in or out
+  panel::Bool = false                   # is the sidebar showing?
+  slid::Float64 = 0.0                   # when the sidebar last started to slide in or out
   slid_from::Float64 = 0.0              # how far open it was then, from 0 to 1
   theme::Symbol = :sepia
   applied::Symbol = :none               # the theme the window was last told about
@@ -473,6 +473,7 @@ end
 end
 
 @def mutable struct TopBar <: SemanticUI end
+@def mutable struct Sidebar <: SemanticUI end    # the list of files down the left of the window
 @def mutable struct Page <: SemanticUI end       # the scrolling area around the text
 @def mutable struct Document <: SemanticUI end   # the text itself
 @def mutable struct Backdrop <: SemanticUI end   # catches clicks outside a popup
@@ -501,7 +502,7 @@ end
 const Block = Union{Paragraph,Heading,List,Quote,CodeBlock,Table,Rule,LiveBlock}
 @def mutable struct FileRow <: SemanticUI
   path::String = ""
-  finder::Int = 0    # its place in the file finder's list, or 0 in the file panel
+  finder::Int = 0    # its place in the file finder's list, or 0 in the sidebar
 end
 @def mutable struct OutlineRow <: SemanticUI
   line::Int = 0
@@ -881,8 +882,8 @@ layout!(e) = begin
   b = e.buf
   ks = kinds(b)
   w, _ = window_size(e)
-  # While the file panel slides, the text keeps the width it has beside the
-  # panel, so it doesn't wrap again on each frame
+  # While the sidebar slides, the text keeps the width it has beside the
+  # sidebar, so it doesn't wrap again on each frame
   width = clamp(w - (e.panel || sliding(e) ? PANEL_W : 0px) - 2PAGE_X, 240px, PROSE_W * e.zoom)
   width == e.width || (e.width = width; empty!(e.flows))
   items = Item[]
@@ -1606,14 +1607,14 @@ next_theme!(e) = (e.theme = after(THEME_ORDER, e.theme); restyle!(e))
 const STATS = (:words, :chars, :minutes)
 next_stat!(e) = (e.stat = after(STATS, e.stat))
 
-const SLIDE_TIME = 0.25   # seconds for the file panel to slide in or out
+const SLIDE_TIME = 0.25   # seconds for the sidebar to slide in or out
 
-"Show the file panel if it's hidden, or hide it. It slides from where it is now."
+"Show the sidebar if it's hidden, or hide it. It slides from where it is now."
 toggle_panel!(e) = (e.slid_from = opened(e); e.slid = time(); e.panel = !e.panel)
 
 sliding(e) = time() - e.slid < SLIDE_TIME
 
-"How far the file panel is open, from 0 to 1"
+"How far the sidebar is open, from 0 to 1"
 opened(e) = begin
   to = e.panel ? 1.0 : 0.0
   sliding(e) || return to
@@ -1766,8 +1767,8 @@ describe(t::TopBar) = begin
   e = editor(t)
   b = e.buf
   side = 250px
-  # The top bar lies over the top of the file panel. The file's name is in the
-  # middle of the space beside the panel, so it moves as the panel slides.
+  # The top bar lies over the top of the sidebar. The file's name is in the
+  # middle of the space beside the sidebar, so it moves as the sidebar slides.
   Row(width(grow=grow), height(TOPBAR_H), name="TopBar",
     # The close, minimise and zoom buttons sit over the first 78px
     Row(fixed(side + PANEL_W * opened(e)), height(grow=grow), padding(0px, 0px, 0px, 78px),
@@ -1786,7 +1787,7 @@ end
 # The window has no title bar, so you move it by dragging the top bar
 onkey(t::TopBar, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(t))
 
-# --- the file panel -----------------------------------------------------------------------
+# --- the sidebar --------------------------------------------------------------------------
 
 title(path) = splitext(basename(path))[1]
 
@@ -1804,11 +1805,12 @@ end
 onkey(r::FileRow, ::KeyPress{Keys.mouse_left}) = open!(editor(r), r.path)
 
 """
-The file panel, `open` of the way out from the left edge of the window. It
-keeps its width as it slides, so only its right part shows while it's partly out.
+The sidebar keeps its width as it slides in and out from the left edge of the
+window, so only its right part shows while it's partly out.
 """
-panel(e, open) = begin
-  shows = PANEL_W * open
+describe(s::Sidebar) = begin
+  e = editor(s)
+  shows = PANEL_W * opened(e)
   Row(fixed(shows), height(grow=grow), Alignment.Start, clip=true,
     Column(fixed(PANEL_W), height(grow=grow), Alignment.Start, background(colours.panel), name="Files",
            border(1px, :solid, colours.line)[:right], offset_x=shows - PANEL_W,
@@ -1817,7 +1819,7 @@ panel(e, open) = begin
         label(uppercase(basename(e.folder)), 11px, color=colours.dim, weight="Semibold")),
       reuse!(e.files_scroll,
         Column(width(grow=grow), Alignment.Start, padding(0px, 8px, 12px, 8px), child_gap=1px,
-          [node!(() -> FileRow(path=p), e, (:file, p)) for p in e.files]...))))
+          [get!(() -> own!(s, FileRow(path=p)), e.nodes, (:file, p)) for p in e.files]...))))
 end
 
 # --- the outline ----------------------------------------------------------------------------
@@ -1939,15 +1941,14 @@ describe(e::Editor) = begin
   # typing shows without waiting for a frame that was already under way. Between
   # times it only wakes to blink the caret.
   if win !== nothing
-    # While the file panel slides, each frame is drawn as soon as it can be
+    # While the sidebar slides, each frame is drawn as soon as it can be
     win.animating = sliding(e)
     win.wake = win.focus === e ? 0.51 - mod(time() - e.blink, 0.5) : win.focus === input(e) ? 0.25 : 0.0
   end
-  # The file panel runs from the top of the window to the bottom, and the top
-  # bar lies over the top of the panel and the page
-  open = opened(e)
+  # The sidebar runs from the top of the window to the bottom, and the top bar
+  # lies over the top of the sidebar and the page
   body = Row(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg),
-    (open > 0 ? (panel(e, open),) : ())...,
+    (opened(e) > 0 ? (node!(Sidebar, e, :sidebar),) : ())...,
     Column(width(grow=grow), height(grow=grow), Alignment.Start,
       Box(width(grow=grow), height(TOPBAR_H)),   # under the top bar
       node!(Page, e, :page)))
