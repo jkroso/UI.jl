@@ -963,8 +963,11 @@ end
 describe(l::Breadcrumb) = begin
   names = [get!(() -> own!(l, Crumb(path=path, name=name)), l.crumbs, path) for (name, path) in steps(l.at)]
   arrow() = Icon("chevron-right", size=9px, color=colours.faint)
-  trail = Row(width(grow=grow), height(30px), child_gap=2px, clip=true,
-    Iterators.flatten(i == 1 ? (c,) : (arrow(), c) for (i, c) in enumerate(names))...)
+  # The first name and as many of the last names as fit. An … stands for the names left out.
+  n = fitting(map(wide, names), editor(l).width)
+  kept = n < length(names) - 1 ? Any[names[1], Box(width(DOTS_W), label("…", color=colours.dim)), names[end-n+1:end]...] : names
+  trail = Row(width(grow=grow), height(30px), child_gap=CRUMB_GAP, clip=true,
+    Iterators.flatten(i == 1 ? (c,) : (arrow(), c) for (i, c) in enumerate(kept))...)
   l.open || return Column(width(grow=grow), Alignment.Start, trail)
   Column(width(grow=grow), Alignment.Start, child_gap=4px, trail,
     Column(width(grow=grow), Alignment.Start, padding(6px), radius(8px), background(colours.block), child_gap=1px,
@@ -983,13 +986,42 @@ contents(l::Breadcrumb) = begin
       label("and $(length(names) - length(shown)) more", 12px, color=colours.dim)),) : ())...)
 end
 
+const CRUMB_GAP = 2px
+const ARROW_W = 9px
+const DOTS_W = 18px
+const LONGEST_NAME = 28   # characters. A longer name loses its middle.
+
+"A name with its middle left out if it's long, like 8ebf6aee-d8a…e60dbee0e511"
+short(name) = length(name) <= LONGEST_NAME ? name :
+  first(name, LONGEST_NAME ÷ 2 - 1) * "…" * last(name, LONGEST_NAME ÷ 2)
+
+"How wide a name of a breadcrumb is. The last name is bold and has an icon."
+wide(c::Crumb) = begin
+  last = c.path == (c.parent::Breadcrumb).at
+  measure(Face(SANS, last ? "Semibold" : "", 13px, colours.ink, false), short(c.name)) + 12px + (last ? 19px : 0px)
+end
+
+"How many of the last names fit in `room` after the first name, when an … stands for the rest"
+fitting(widths, room) = begin
+  step = ARROW_W + 2CRUMB_GAP
+  sum(widths) + step * (length(widths) - 1) <= room && return length(widths) - 1
+  used = widths[1] + step + DOTS_W
+  n = 0
+  for w in Iterators.reverse(widths[2:end])
+    used += step + w
+    used > room && n > 0 && break
+    n += 1
+  end
+  min(n, length(widths) - 2)
+end
+
 describe(c::Crumb) = begin
   l = c.parent::Breadcrumb
   last = c.path == l.at
   Row(height(24px), padding(6px, 0px), radius(5px), child_gap=6px,
       background(last && l.open ? colours.active : ishovered(c) ? colours.hover : clear),
     (last ? (Icon(isdir(c.path) ? "folder" : "file-earmark", size=13px, color=colours.dim),) : ())...,
-    Box(label(c.name, color=last ? colours.ink : colours.dim, weight=last ? "Semibold" : "")))
+    Box(label(short(c.name), color=last ? colours.ink : colours.dim, weight=last ? "Semibold" : "")))
 end
 
 cursor(::Crumb) = :hand
