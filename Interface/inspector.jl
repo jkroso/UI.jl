@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl"... int
 @use "github.com/jkroso/Font.jl/units" em
-@use "github.com/jkroso/MiniFB.jl/skia" rounded_rectangle
+@use "github.com/jkroso/MiniFB.jl/skia" rounded_rectangle line
 @use GeometryBasics: Vec2
 @use Colors: Colorant, RGB, RGBA, @colorant_str, alpha, hex, red, green, blue
 @use "./Geometric"... Dimension
@@ -254,15 +254,25 @@ end
 guide() = Box(width(INDENT), height(grow=GrowType.Grow), Alignment.Start, padding(0px, 0px, 0px, 5px),
   Box(width(1px), height(grow=GrowType.Grow), background(C_GUIDE)))
 
-toggle(collapsed) = Box(width(11px), height(11px), radius(2px), border(1px, :solid, C_DIM), Alignment.Center,
-  small(collapsed ? "+" : "−", C_TEXT, size=10px))
+# The −, + and × are drawn as lines once the panel is laid out. As text they sit off centre.
+toggle() = Box(width(11px), height(11px), radius(2px), border(1px, :solid, C_DIM))
+
+"Draw a −, + or × in the middle of `box`, with arms `r` long"
+symbol(ctx, box::ConcreteRect, what::Symbol, r=2.5px) = begin
+  x, y = box.left + box.width/2, box.top + box.height/2
+  arms = what == :cross ? (((-r, -r), (r, r)), ((-r, r), (r, -r))) :
+         what == :plus ? (((-r, 0px), (r, 0px)), ((0px, -r), (0px, r))) : (((-r, 0px), (r, 0px)),)
+  for ((x1, y1), (x2, y2)) in arms
+    line(ctx, (x + x1, y + y1), (x + x2, y + y2), 1px, C_TEXT)
+  end
+end
 
 bullet() = Box(width(11px), height(11px), Alignment.Center, Box(width(5px), height(5px), background(C_DIM)))
 
 "A row of the tree. Elements that are out of view are drawn faded, like Clay does."
 function tree_row(ins, entry, fill, seen)
   marker = entry.kind == :content ? Box(width(11px)) :
-           entry.haschildren ? toggle(entry.path in ins.collapsed) : bullet()
+           entry.haschildren ? toggle() : bullet()
   label = if entry.kind == :content
     Any[small(repr(preview(entry.node.from.content)), seen ? C_DIM : C_FADED)]
   else
@@ -412,8 +422,7 @@ function panel(ins::LayoutInspector, entries, marked, pinned, shown, areas)
     push!(rows, row)
   end
   push!(rows, Box(width(grow=GrowType.Grow), height((length(entries) - last_row) * ROW_HEIGHT)))
-  close = Box(width(18px), height(18px), radius(3px), border(1px, :solid, C_CLOSE), Alignment.Center,
-    small("×", C_TEXT, size=13px))
+  close = Box(width(18px), height(18px), radius(3px), border(1px, :solid, C_CLOSE))
   owners[close] = (:close, Int[])
   # The pick button: a box with a dot in it, lit while the next click picks an element
   lit = ins.picking ? C_HOVER_APP : C_DIM
@@ -487,17 +496,20 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
   offset!(concrete, app_w, 0px)
   draw(ctx, concrete.size, concrete)
   # Remember where everything landed so the mouse can find it next time
+  tree = nothing
+  # A −/+ box that's scrolled half out of the tree doesn't get its symbol
+  shows(tree, box) = tree !== nothing && tree.top <= box.top && box.top + box.height <= tree.top + tree.height
   empty!(ins.rows); empty!(ins.toggles); empty!(ins.tabs); ins.close = nothing; ins.pick = nothing
   for (node, _) in flatten(concrete)
     node isa ConcreteRect || continue
-    node.from === ins.scroll && (ins.viewport = node.height)
+    node.from === ins.scroll && (ins.viewport = node.height; tree = node)
     target = get(owners, node.from, nothing)
     target === nothing && continue
     what, path = target
     what == :row && push!(ins.rows, (node, path))
-    what == :toggle && push!(ins.toggles, (node, path))
+    what == :toggle && (push!(ins.toggles, (node, path)); shows(tree, node) && symbol(ctx, node, path in ins.collapsed ? :plus : :minus))
     what == :tab && push!(ins.tabs, (node, path))
-    what == :close && (ins.close = node)
+    what == :close && (ins.close = node; symbol(ctx, node, :cross, 3.5px))
     what == :pick && (ins.pick = node)
   end
 end
