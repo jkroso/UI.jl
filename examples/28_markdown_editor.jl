@@ -346,7 +346,28 @@ end
 
 const stamp = Ref(0)
 
-load(path) = Buffer(path=path, lines=String.(split(replace(read(path, String), "\r\n" => "\n"), '\n')))
+load(path) = (READ[path] = mtime(path); Buffer(path=path, lines=text(path)))
+text(path) = String.(split(replace(read(path, String), "\r\n" => "\n"), '\n'))
+
+const READ = Dict{String,Float64}()   # when each open file was last read or written, as the disk tells it
+
+"""
+Read the file again if something else changed it on the disk. A document with
+changes that aren't saved is left alone.
+"""
+refresh!(b::Buffer) = begin
+  (isempty(b.path) || dirty(b) || !isfile(b.path)) && return
+  at = mtime(b.path)
+  at == get(READ, b.path, 0.0) && return
+  READ[b.path] = at
+  lines = text(b.path)
+  lines == b.lines && return
+  b.lines = lines
+  empty!(b.undo); empty!(b.redo)
+  b.saved = b.version += 1
+  clamp_to(p) = (i = clamp(p[1], 1, length(lines)); (i, clamp(p[2], 0, length(lines[i]))))
+  b.caret, b.anchor = clamp_to(b.caret), clamp_to(b.anchor)
+end
 
 kinds(b::Buffer) = begin
   if b.kinds_at != b.version
@@ -413,6 +434,7 @@ redo!(b::Buffer) = isempty(b.redo) || (push!(b.undo, snapshot(b)); restore!(b, p
 save!(b::Buffer) = begin
   isempty(b.path) && return
   write(b.path, join(b.lines, "\n"))
+  READ[b.path] = mtime(b.path)
   b.saved = b.version
 end
 
@@ -2047,6 +2069,7 @@ describe(e::Editor) = begin
     set_dark!(win, e.theme == :night)
     e.applied = e.theme
   end
+  refresh!(e.buf)
   layout!(e)
   e.reveal && (reveal!(e); e.reveal = false)
   # The window is drawn again as soon as a key or the mouse does something, so
