@@ -360,7 +360,18 @@ end
 dirty(b::Buffer) = b.version != b.saved
 name(b::Buffer) = isempty(b.path) ? "Untitled" : basename(b.path)
 selecting(b::Buffer) = b.caret != b.anchor
-selection(b::Buffer) = minmax(b.caret, b.anchor)
+"""
+The two ends of the selection, first end first. A selection that covers several
+lines takes the whole of each table row that it touches.
+"""
+selection(b::Buffer) = begin
+  lo, hi = minmax(b.caret, b.anchor)
+  lo[1] == hi[1] && return (lo, hi)
+  ks = kinds(b)
+  ks[lo[1]].kind == Kind.table && (lo = (lo[1], 0))
+  ks[hi[1]].kind == Kind.table && (hi = (hi[1], length(b.lines[hi[1]])))
+  (lo, hi)
+end
 
 head(s, n) = String(first(s, n))
 rest(s, n) = String(chop(s, head=n, tail=0))
@@ -1026,6 +1037,19 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
     top = ui.top + it.top
     if it.content isa Grid
       g = it.content
+      if b.caret[1] != b.anchor[1]
+        # A selection that covers several lines takes each row whole
+        lo, hi = selection(b)
+        y = top + TABLE_GAP
+        lo[1] < it.first && hi[1] >= it.first && push!(rects, (num(ui.left), num(top), num(ui.left + 7px), num(y)))
+        for (r, i) in enumerate(g.rows)
+          h = g.heights[r] + (r == length(g.rows) ? 2px : 1px)
+          lo[1] <= i <= hi[1] && push!(rects, (num(ui.left), num(y), num(ui.left + e.width), num(y + h)))
+          y += h
+        end
+        hi[1] > it.last && push!(rects, (num(ui.left), num(y), num(ui.left + 7px), num(y + TABLE_GAP)))
+        continue
+      end
       for (r, i) in enumerate(g.rows), (c, cell) in enumerate(g.cells[r])
         sel = selected(b, i)
         (sel !== nothing && sel[1] < cell.limit && sel[2] > cell.lo) || continue
@@ -1171,10 +1195,10 @@ end
 type!(e, new; typing=false) = begin
   b = e.buf
   cell = cellat(b, b.caret)
-  if cell !== nothing
-    # In a table, typing only ever changes the cell the caret is in
+  if cell !== nothing && b.caret[1] == b.anchor[1]
+    # In a row of a table, typing only ever changes the cell the caret is in
     lo, hi = selection(b)
-    (lo[1] == hi[1] && within(cell, lo[2]) && within(cell, hi[2])) || (b.anchor = b.caret)
+    (within(cell, lo[2]) && within(cell, hi[2])) || (b.anchor = b.caret)
     new = replace(new, '\n' => ' ')
   end
   lo, hi = selection(b)
