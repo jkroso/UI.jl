@@ -68,7 +68,7 @@ Containers also take:
 - `Link(url) do hovered ... end` opens `url` when clicked. The block returns its geometry, so it can change style on hover.
 - `viewport(node)` gives the size the window lays the app out at. Use it to switch layouts by width.
 - `frame_stats(window)` gives the time the last frame spent in each stage.
-- `toggle_inspector!(window)` opens the layout inspector. It shows the layout tree beside the app. Click a row, or click its pick button and then an element in the app, to select an element and list how it was sized.
+- `toggle_inspector!(window)` opens the layout inspector. It shows the app's tree beside the app. The Layout tab lists every element the layout made, and the Semantic tab lists only the app's own `SemanticUI` nodes and their fields. Click a row, or click its pick button and then an element in the app, to select an element and list how it was sized.
 - `Stack(...)` puts its children on top of each other. Later children draw over earlier ones and get clicks first. Use it to float a panel, like a dialog, over a window.
 - `scroll_into_view!(scroll, top, bottom)` scrolls the shortest distance that shows that part of a Scroll's content.
 - `register_image(key, bytes)` makes PNG or JPEG bytes that are in memory drawable as `Image(key)`.

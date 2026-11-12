@@ -41,8 +41,9 @@ const BADGES = Dict(
   "Clip" => colorant"rgb(156,92,146)")
 
 """
-A panel down the right of the window that shows the app's layout tree while it
-runs. Click a row to select its element and see how it was sized. To select an
+A panel down the right of the window that shows the app's tree while it runs.
+The Layout tab shows every element the layout made. The Semantic tab shows only
+the app's own nodes, the ones that are a SemanticUI. Click a row to select its element and see how it was sized. To select an
 element by pointing at it, click the pick button at the top left of the panel,
 then click the element in the app. Escape puts the pick button back. Hover a row
 to highlight its element's box, and click a row's −/+ box to collapse or expand it.
@@ -61,6 +62,8 @@ to highlight its element's box, and click a row's −/+ box to collapse or expan
   toggles::Vector{Tuple{ConcreteRect,Vector{Int}}} = Tuple{ConcreteRect,Vector{Int}}[]
   close::Any = nothing
   pick::Any = nothing
+  view::Symbol = :layout   # :layout shows every element, :semantic only the app's own nodes
+  tabs::Vector{Tuple{ConcreteRect,Symbol}} = Tuple{ConcreteRect,Symbol}[]
   hovered::Any = nothing
   selected::Vector{Int} = Int[]
   picking::Bool = false    # true while the next click in the app selects an element
@@ -94,6 +97,34 @@ function tree_entries(ins::LayoutInspector, node::ConcreteUI, depth=0, path=Int[
     end
   end
   out
+end
+
+"""
+The rows the Semantic tab shows: one for each element that a semantic node made,
+set under the semantic node around it.
+"""
+function semantic_entries(ins::LayoutInspector, node::ConcreteUI, depth=0, path=Int[], out=NamedTuple[])
+  node isa ConcreteRect || return out
+  owned = semantic_owner(node) !== nothing
+  inner = owned ? NamedTuple[] : out
+  for (i, child) in enumerate(node.children)
+    semantic_entries(ins, child, depth + owned, [path; i], inner)
+  end
+  owned || return out
+  push!(out, (kind=:element, node=node, depth=depth, path=path, haschildren=!isempty(inner)))
+  path in ins.collapsed || append!(out, inner)
+  out
+end
+
+inspector_entries(ins::LayoutInspector, scene) = ins.view == :semantic ? semantic_entries(ins, scene) : tree_entries(ins, scene)
+
+"The element a semantic node made that's nearest around `node`, or `node` itself"
+owned(node) = begin
+  while node isa ConcreteUI
+    semantic_owner(node) === nothing || return node
+    node = node.parent isa ConcreteRect && node.parent.from !== nothing ? node.parent : nothing
+  end
+  nothing
 end
 
 """
@@ -235,7 +266,7 @@ function tree_row(ins, entry, fill, seen)
   label = if entry.kind == :content
     Any[small(repr(preview(entry.node.from.content)), seen ? C_DIM : C_FADED)]
   else
-    name = element_name(entry.node)
+    name = ins.view == :semantic ? string(nameof(typeof(semantic_owner(entry.node)))) : element_name(entry.node)
     Any[(isempty(name) ? () : (small(name, seen ? C_TEXT : C_FADED, size=13px),))...,
         (badge(b, seen) for b in badges(entry.node))...]
   end
@@ -311,6 +342,23 @@ fields(node::ConcreteRect) = begin
   out
 end
 
+"What a field of a semantic node holds, in a few words"
+value_text(x::Union{Number,Symbol,Nothing,Bool,Enum}) = repr(x)
+value_text(x::AbstractString) = repr(preview(x, 60))
+value_text(x::Union{Tuple,NamedTuple}) = preview(repr(x), 60)
+value_text(x::Union{AbstractArray,AbstractDict,AbstractSet}) = "$(nameof(typeof(x))) of $(length(x))"
+value_text(x) = string(nameof(typeof(x)))
+
+const TREE_FIELDS = (:parent, :firstchild, :nextsibling, :prevsibling, :stale)
+
+"The fields of the semantic node that made `node`, and the box its element got"
+semantic_fields(node::ConcreteRect) = begin
+  owner = semantic_owner(node)
+  Any[field("Bounding box", box_text(node)),
+      field("Drawn as", kind(node) * (isempty(node.from.name) ? "" : " named $(repr(node.from.name))")),
+      (field(string(f), value_text(getfield(owner, f))) for f in fieldnames(typeof(owner)) if !(f in TREE_FIELDS))...]
+end
+
 fields(node::ConcreteText) = begin
   t = node.from
   [field("Bounding box", box_text(node)),
@@ -320,11 +368,13 @@ fields(node::ConcreteText) = begin
    field("Colour", swatch(t.color))]
 end
 
-function details(node, seen)
-  title = node === nothing ? "" : String(strip(element_name(node) * " " * kind(node)))
+function details(node, seen, semantic=false)
+  semantic &= node isa ConcreteRect && semantic_owner(node) !== nothing
+  title = node === nothing ? "" : semantic ? string(nameof(typeof(semantic_owner(node)))) :
+          String(strip(element_name(node) * " " * kind(node)))
   header = Row(width(grow=GrowType.Grow), height(30px), padding(12px, 0px), background(C_HEADER),
                border(1px, :solid, C_LINE)[:top, :bottom],
-    Box(small("Layout config", size=13px)),
+    Box(small(semantic ? "Semantic node" : "Layout config", size=13px)),
     Box(width(grow=GrowType.Grow)),
     Box(small(title, C_DIM)))
   body = node === nothing ?
@@ -333,7 +383,7 @@ function details(node, seen)
            size=12px, family=FONT, color=C_DIM, lineheight=1.4em)) :
     Column(width(grow=GrowType.Grow), padding(12px), child_gap=12px, Alignment.Start,
       (seen ? () : (field("In view", "No. It's scrolled or clipped out of view."),))...,
-      fields(node)...)
+      (semantic ? semantic_fields(node) : fields(node))...)
   Column(width(grow=GrowType.Grow), Alignment.Start, background(C_PANEL), header, body)
 end
 
@@ -371,6 +421,14 @@ function panel(ins::LayoutInspector, entries, marked, pinned, shown, areas)
              background(ins.picking ? fade(C_HOVER_APP, 0.25) : RGBA(0, 0, 0, 0)),
     Box(width(6px), height(6px), radius(3px), background(lit)))
   owners[pick] = (:pick, Int[])
+  tabs = map((:semantic => "Semantic", :layout => "Layout")) do (view, label)
+    on = ins.view == view
+    tab = Box(height(grow=GrowType.Grow), padding(12px, 0px), Alignment.Center,
+              border(2px, :solid, on ? C_HOVER_APP : RGBA(0, 0, 0, 0))[:bottom],
+      small(label, on ? C_TEXT : C_DIM))
+    owners[tab] = (:tab, view)
+    tab
+  end
   geo = Column(width(ins.panel_width), height(grow=GrowType.Grow), background(C_PANEL),
                border(1px, :solid, C_LINE)[:left], Alignment.Start,
     Row(width(grow=GrowType.Grow), height(34px), padding(12px, 0px), background(C_HEADER),
@@ -379,8 +437,10 @@ function panel(ins::LayoutInspector, entries, marked, pinned, shown, areas)
       Box(small(ins.picking ? "Click an element in the app" : "Layout inspector", size=13px)),
       Box(width(grow=GrowType.Grow)),
       close),
+    Row(width(grow=GrowType.Grow), height(28px), background(C_HEADER), border(1px, :solid, C_LINE)[:bottom],
+        Alignment.Start, tabs...),
     reuse!(ins.scroll, Column(width(grow=GrowType.Grow), Alignment.Start, rows...)),
-    details(shown, shown === nothing || inview(shown)))
+    details(shown, shown === nothing || inview(shown), ins.view == :semantic))
   geo, owners
 end
 
@@ -397,6 +457,8 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
     i === nothing ? nothing : follow(scene, ins.rows[i][2])
   end
   pinned = isempty(ins.selected) ? nothing : follow(scene, ins.selected)
+  # The Semantic tab shows the semantic node that an element belongs to
+  ins.view == :semantic && (ins.hovered = owned(ins.hovered); pinned = owned(pinned))
   areas = visible_areas(scene, app_w, h)
   # Only the part you can see gets highlighted, so an element scrolled out of
   # view doesn't paint over the header or the panel
@@ -407,7 +469,7 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
     l, t, r, b = area
     rounded_rectangle(ctx, l, t, r - l, b - t, 0px, background=colour)
   end
-  entries = tree_entries(ins, scene)
+  entries = inspector_entries(ins, scene)
   row = ins.hovered === nothing ? nothing : row_index(entries, ins.hovered)
   # Hovering the app scrolls the tree to the hovered element's row. Hovering
   # the tree itself leaves it where it is, or it would jump under the cursor.
@@ -425,7 +487,7 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
   offset!(concrete, app_w, 0px)
   draw(ctx, concrete.size, concrete)
   # Remember where everything landed so the mouse can find it next time
-  empty!(ins.rows); empty!(ins.toggles); ins.close = nothing; ins.pick = nothing
+  empty!(ins.rows); empty!(ins.toggles); empty!(ins.tabs); ins.close = nothing; ins.pick = nothing
   for (node, _) in flatten(concrete)
     node isa ConcreteRect || continue
     node.from === ins.scroll && (ins.viewport = node.height)
@@ -434,6 +496,7 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
     what, path = target
     what == :row && push!(ins.rows, (node, path))
     what == :toggle && push!(ins.toggles, (node, path))
+    what == :tab && push!(ins.tabs, (node, path))
     what == :close && (ins.close = node)
     what == :pick && (ins.pick = node)
   end
@@ -458,6 +521,7 @@ tool_input(ins::LayoutInspector, window, ::KeyPress{Keys.mouse_left}) = begin
     # The click picks the element under it, and the app never sees it
     scene = get(_scenes, objectid(window), nothing)
     node = scene === nothing ? nothing : deepest_at(scene, mouse)
+    ins.view == :semantic && (node = owned(node))
     node === nothing || select!(ins, path_to(scene, node))
     ins.picking = false
     ins.swallow = true
@@ -469,6 +533,13 @@ tool_input(ins::LayoutInspector, window, ::KeyPress{Keys.mouse_left}) = begin
   end
   if ins.close !== nothing && inside(ins.close, mouse)
     clear_tool!(window)
+    return true
+  end
+  i = findfirst(((rect, _),) -> inside(rect, mouse), ins.tabs)
+  if i !== nothing
+    ins.view = ins.tabs[i][2]
+    ins.scroll.offset = 0px
+    ins.reveal = true
     return true
   end
   # The −/+ box collapses or expands an element
