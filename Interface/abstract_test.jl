@@ -1,7 +1,7 @@
 @use Test: @test
 @use "github.com/jkroso/Prospects.jl" @def
-@use "./abstract" SemanticUI GeometricUI describe describe_children integrate detach!
-@use "./Geometric" Box width height px
+@use "./abstract" SemanticUI GeometricUI describe describe_children integrate detach! mixin!
+@use "./Geometric" Box Row width height background radius px
 
 @def mutable struct TestRoot <: SemanticUI end
 @def mutable struct TestChild <: SemanticUI end
@@ -41,3 +41,9 @@ const state = TestState(TestChild(); label="ready")
 const detached = detach!(state.firstchild)
 @test detached.parent === nothing
 @test state.firstchild === nothing
+
+# Several styles mixed in at once all go to the node
+let row = Row()
+  mixin!(row, background("red"), radius(4px))
+  @test row.radius.tl == 4px
+end

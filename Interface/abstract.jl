@@ -242,6 +242,7 @@ mixin!(r::UITree, s::StyleNode) = begin
   field = propertyname(r, s)
   old = getproperty(r, field)
   setproperty!(r, field, mixin!(old, s))
+  r   # so that `mixin!(node, a, b)` gives `b` to the node too, not to `a`
 end
 mixin!(r::UITree, d::UITree) = add_child!(r, d)
 mixin!(r::GeometricUI, d::SemanticUI) =
