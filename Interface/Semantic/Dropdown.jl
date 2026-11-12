@@ -12,6 +12,7 @@
 @def mutable struct Dropdown <: SemanticUI
   selected::Int = 1
   options::Vector{String} = String[]
+  onchange::Function = dropdown -> nothing   # called with the dropdown after a click picks another option
   open::Bool = false
   cached_left::px = 0px
   cached_top::px = 0px
@@ -42,8 +43,10 @@ onkey(d::Dropdown, e::KeyPress{Keys.mouse_left}) = begin
                d.cached_left, d.cached_top + d.cached_height + 2px, d.cached_width,
                theme=theme(d),
                onselect=idx -> begin
-                 idx > 0 && (d.selected = idx)
                  d.open = false
+                 (idx > 0 && idx != d.selected) || return
+                 d.selected = idx
+                 d.onchange(d)
                end)
   end
 end

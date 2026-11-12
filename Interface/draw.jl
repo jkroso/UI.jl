@@ -111,7 +111,7 @@ function scrollbar_geometry(ui::ConcreteRect, scroll::Scroll)
   content > viewport || return nothing
   w = scroll.scrollbar_width
   margin = 4px
-  track_x = ui.left + ui.width - w - margin
+  track_x = ui.left + ui.width - w - scroll.scrollbar_inset
   track_y = ui.top + margin
   track_h = ui.height - 2margin
   thumb_h = max(24px, track_h * (viewport / content))
@@ -356,14 +356,20 @@ offset!(ui::ConcreteText, dx::px, dy::px) = begin
 end
 
 """
-A faint shadow that fades out around a floating box, a little further below
-it. A hard shadow to one side looks like a thicker border on that side.
+A faint shadow under a floating box, like a menu: the box's shape, 2px lower
+and blurred. It's light, so that the box's own border still marks its edge.
 """
-soft_shadow(ctx, x, y, w, h, r) =
-  for grow in 1px:1px:8px
-    rounded_rectangle(ctx, x - grow, y - grow + 1px, w + 2grow, h + 2grow, r + grow,
-                      background=RGBA(0, 0, 0, 0.016))
-  end
+function soft_shadow(ctx, x, y, w, h, r)
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  Skia.sk_paint_set_color(paint, sk_color(RGBA(0, 0, 0, 0.1)))
+  blur = Skia.sk_maskfilter_new_blur_with_flags(Skia.SK_BLUR_STYLE_NORMAL, 5f0, true)
+  Skia.sk_paint_set_maskfilter(paint, blur)
+  rect = Ref(Skia.sk_rect_t(flt(x), flt(y + 2px), flt(x + w), flt(y + h + 2px)))
+  Skia.sk_canvas_draw_round_rect(ctx, rect, flt(r), flt(r), paint)
+  Skia.sk_maskfilter_unref(blur)
+  Skia.sk_paint_delete(paint)
+end
 
 "Draw a Menu component overlay"
 draw_menu_source(ctx, ov) = begin

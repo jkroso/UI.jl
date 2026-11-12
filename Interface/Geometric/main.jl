@@ -197,6 +197,8 @@ scroll position will reset every frame.
 
 The scrollbar thumb can be dragged. `scrollbar` says when it shows:
 `hover` (only while the cursor is inside), `always` or `never`.
+`scrollbar_inset` is the gap between the scrollbar and the Scroll's right
+edge. Make it 0px to put the scrollbar against the edge of a window.
 """
 @def mutable struct Scroll <: Container
   offset::px=0px
@@ -204,6 +206,7 @@ The scrollbar thumb can be dragged. `scrollbar` says when it shows:
   hover::Bool=false
   scrollbar::ScrollbarMode=ScrollbarMode.hover
   scrollbar_width::px=6px
+  scrollbar_inset::px=4px
   scrollbar_color::Colorant=RGBA(0, 0, 0, 0.38)
   scrollbar_track::Colorant=RGBA(0, 0, 0, 0.06)
   thumb_hover::Bool=false
