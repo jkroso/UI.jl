@@ -757,10 +757,10 @@ update_hover!(w::Window, scene::ConcreteRect, pos=w.mouse) = begin
   id = objectid(w)
   chain = hover_chain(hittest(scene, pos))
   old = get(_hovered, id, SemanticUI[])
+  # A node can change its cursor while the mouse stays over it, e.g. when a key goes down
+  set_cursor!(w, something((cursor(n) for n in chain)..., :arrow))
   length(chain) == length(old) && all(a === b for (a, b) in zip(chain, old)) && return false
   _hovered[id] = chain
-  shape = something((cursor(n) for n in chain)..., :arrow)
-  set_cursor!(w, shape)
   # The hover style changes the next frame, so make sure there is one
   isempty(w.glfw) || GLFW.PostEmptyEvent()
   true
