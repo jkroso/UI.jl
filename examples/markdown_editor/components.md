@@ -28,8 +28,12 @@ Column(Alignment.Start, child_gap=8px, switch("Wi-Fi", true), switch("Bluetooth"
 
 ```ui
 @use "../../Interface/Semantic" RadioGroup
-RadioGroup(labels=["Sepia", "Paper", "Night"], selected=1)
+names = ["Sepia", "Paper", "Night"]
+RadioGroup(labels=names, selected=findfirst(==(page_theme()), names),
+           onchange=group -> page_theme!(names[group.selected]))
 ```
+
+These choices set the colours of the page. `page_theme()` gives the name of the colours in use, and `page_theme!("Night")` changes them.
 
 Click the box to open its menu.
 

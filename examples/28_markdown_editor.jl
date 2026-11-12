@@ -39,7 +39,7 @@
 @use "github.com/jkroso/MiniFB.jl"...
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
-@use "../Interface/abstract" SemanticUI GeometricUI WrapMode describe reuse! detach! window_of focus
+@use "../Interface/abstract" SemanticUI GeometricUI WrapMode Theme with_theme adopt_theme! light describe reuse! detach! window_of focus
 @use "../Interface/draw" ui draw ishovered cursor open_url viewport show_tooltip! hide_tooltip! hittest
 @use "../Interface/fonts" skia_font
 @use "../Interface/image" image_aspect
@@ -130,6 +130,13 @@ const NIGHT = Palette(bg=colorant"rgb(30,30,32)", ink=colorant"rgb(222,220,214)"
 
 const THEMES = (sepia=SEPIA, paper=PAPER, night=NIGHT)
 const colours = deepcopy(SEPIA)
+
+"The page's colours and font, for the components that a live block shows"
+component_theme() = Theme(surface=colours.float, text=colours.ink, dim=colours.dim, line=colours.line,
+                          track=colours.faint, hover=colours.hover, select=colours.active,
+                          accent=colours.accent, on_accent=colours.bg, family=SANS,
+                          number=colours.number, string=colours.string, symbol=colours.call,
+                          keyword=colours.keyword, type=colours.type)
 
 "Draw with the colours in `p` from now on"
 use!(p::Palette) = foreach(n -> setfield!(colours, n, getfield(p, n)), fieldnames(Palette))
@@ -907,7 +914,28 @@ const LIVE_GAP = 8px   # above and below what a live block shows
 sandbox(e) = get!(e.nodes, :sandbox) do
   m = Module(:Page)
   Core.eval(m, :(using Kip))
+  # A live block can read and set the page's colours: `page_theme()` gives "Sepia", "Paper" or "Night"
+  Core.eval(m, :(const page_theme = $(() -> read_theme(e))))
+  Core.eval(m, :(const page_theme! = $(name -> theme!(e, Symbol(lowercase(string(name)))))))
   m
+end
+
+"""
+The name of the page's colours, for a live block. A block that asks while it
+runs is run again when the colours change, so what it shows stays true.
+"""
+read_theme(e) = begin
+  code = get(e.nodes, :running, nothing)
+  code === nothing || push!(get!(() -> Set{Any}(), e.nodes, :theme_readers), (:live, e.buf.path, code))
+  titlecase(string(e.theme))
+end
+
+"Use the colours called `name` for the page"
+theme!(e, name::Symbol) = begin
+  name in THEME_ORDER || error("The page's colours are Sepia, Paper and Night. $name isn't one of them.")
+  e.theme = name
+  foreach(key -> delete!(e.nodes, key), pop!(e.nodes, :theme_readers, ()))
+  restyle!(e)
 end
 
 "Run the code of a live block and return a UI node that shows its value, or its error"
@@ -916,6 +944,7 @@ evaluate(e, code::String) = begin
   # The code can load the drawing methods of a node, and the frame that runs it
   # can't call them yet. So the window draws one more frame soon after.
   e.nodes[:ran] = true
+  e.nodes[:running] = code
   try
     # Kip finds a path like "./widgets.jl" from the folder of the document, and so does a relative FSPath
     cd(isdir(e.folder) ? e.folder : pwd()) do
@@ -926,6 +955,8 @@ evaluate(e, code::String) = begin
   catch err
     err = err isa LoadError ? err.error : err
     note(sprint(showerror, err), colours.accent)
+  finally
+    delete!(e.nodes, :running)
   end
 end
 
@@ -952,15 +983,26 @@ a click on a checkbox shows.
 """
 @def mutable struct Shown <: SemanticUI
   value::Any = nothing   # a SemanticUI or a GeometricUI
+  was::Theme = light     # the theme that the text in a GeometricUI value has now
 end
 
 cursor(::Shown) = :arrow
 
-describe(s::Shown) = Column(width(grow=grow), Alignment.Start,
-  s.value isa SemanticUI ? Base.invokelatest(convert, GeometricUI, s.value) : redescribe!(detach!(s.value)))
+# The components in the block get the page's colours
+describe(s::Shown) = begin
+  t = component_theme()
+  was, s.was = s.was, t
+  with_theme(t) do
+    Column(width(grow=grow), Alignment.Start,
+      s.value isa SemanticUI ? Base.invokelatest(convert, GeometricUI, s.value) : redescribe!(detach!(s.value), t, was))
+  end
+end
 
-"Describe again each semantic node in `geo`, and put the new geometry where the old geometry was"
-redescribe!(geo) = begin
+"""
+Describe again each semantic node in `geo`, and put the new geometry where the
+old geometry was. Text that has the colours of the theme `was` gets the colours of `t`.
+"""
+redescribe!(geo, t, was) = begin
   child = geo.firstchild
   while child !== nothing
     next = child.nextsibling
@@ -968,7 +1010,9 @@ redescribe!(geo) = begin
       new = Base.invokelatest(convert, GeometricUI, child.from)
       new === child || swap!(child, new)
     elseif child isa GeometricUI
-      redescribe!(child)
+      redescribe!(child, t, was)
+    elseif child isa Text
+      adopt_theme!(child, t, was)
     end
     child = next
   end
@@ -1978,7 +2022,7 @@ zoom!(e, z) = (e.zoom = clamp(z, 0.6, 2.5); restyle!(e))
 after(list, x) = list[mod1(findfirst(==(x), list) + 1, length(list))]
 
 const THEME_ORDER = (:sepia, :paper, :night)
-next_theme!(e) = (e.theme = after(THEME_ORDER, e.theme); restyle!(e))
+next_theme!(e) = theme!(e, after(THEME_ORDER, e.theme))
 
 const STATS = (:words, :chars, :minutes)
 next_stat!(e) = (e.stat = after(STATS, e.stat))
