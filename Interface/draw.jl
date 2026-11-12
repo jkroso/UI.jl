@@ -355,6 +355,16 @@ offset!(ui::ConcreteText, dx::px, dy::px) = begin
   ui.top += dy
 end
 
+"""
+A faint shadow that fades out around a floating box, a little further below
+it. A hard shadow to one side looks like a thicker border on that side.
+"""
+soft_shadow(ctx, x, y, w, h, r) =
+  for grow in 1px:1px:8px
+    rounded_rectangle(ctx, x - grow, y - grow + 1px, w + 2grow, h + 2grow, r + grow,
+                      background=RGBA(0, 0, 0, 0.016))
+  end
+
 "Draw a Menu component overlay"
 draw_menu_source(ctx, ov) = begin
   # Update hover states on Items
@@ -367,8 +377,7 @@ draw_menu_source(ctx, ov) = begin
   concrete = describe(geo, (ov.width, 9999px))
   offset!(concrete, ov.x, ov.y)
   # Shadow
-  rounded_rectangle(ctx, ov.x + 2px, ov.y + 2px, concrete.width, concrete.height, 6px,
-                    background=RGBA(0,0,0,0.15))
+  soft_shadow(ctx, ov.x, ov.y, concrete.width, concrete.height, 6px)
   # Draw the resolved component tree
   draw(ctx, concrete.size, concrete)
 end
@@ -382,8 +391,7 @@ draw_menu(ctx, ov::MenuOverlay) = begin
   n == 0 && return
   total_h = ov.item_height * n
   # shadow
-  rounded_rectangle(ctx, ov.x + 2px, ov.y + 2px, ov.width, total_h, 6px,
-                    background=RGBA(0,0,0,0.15))
+  soft_shadow(ctx, ov.x, ov.y, ov.width, total_h, 6px)
   # background
   rounded_rectangle(ctx, ov.x, ov.y, ov.width, total_h, 6px,
                     background=ov.theme.surface,
