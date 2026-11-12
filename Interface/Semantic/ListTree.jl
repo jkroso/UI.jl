@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme
+@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme light
 @use "../draw" draw hittest
 @use "./Icon" Icon
 @use Colors: @colorant_str
@@ -21,7 +21,7 @@ Item(label::UITree) = begin
   add_child!(item, label)
   item
 end
-Item(label::String) = Item(Box(Text(label, size=12pt)))
+Item(label::String) = Item(Box(Text(label, size=LABEL_SIZE)))
 
 @def mutable struct ItemGroup <: TreeItem
   collapsed::Bool = true
@@ -36,7 +36,7 @@ ItemGroup(label::UITree, children::TreeItem...) = begin
   group
 end
 ItemGroup(label::String, children::TreeItem...) =
-  ItemGroup(Box(Text(label, size=12pt)), children...)
+  ItemGroup(Box(Text(label, size=LABEL_SIZE)), children...)
 
 @def mutable struct ListTree <: SemanticUI
   focused::Union{Nothing,TreeItem} = nothing
@@ -123,9 +123,14 @@ const INDENT_WIDTH = 20px
 const ROW_HEIGHT = 28px
 const CHEVRON_WIDTH = 12px
 const CHEVRON_GAP = 3px
+const LABEL_SIZE = 12pt   # of a name, when the theme has its usual size. The sizes here fit it.
+
+"How much bigger the theme's text is than the usual size. Everything in a row grows by this much."
+scale() = convert(px, theme().size).value / convert(px, LABEL_SIZE).value
+const CONNECTOR_GAP = 4px   # between the line that points to an item and the item's label
 
 describe(tree::ListTree) = begin
-  col = Column(width(grow=GrowType.Grow), padding(6px, 4px),
+  col = Column(width(grow=GrowType.Grow), padding(4px),
                radius(6px), border(1px, :solid, theme(tree).line),
                background(theme(tree).surface))
   flatten_items!(col, tree, tree.focused)
@@ -148,49 +153,57 @@ describe_label(box::Container) = begin
   out = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow))
   for child in box.children
     if child isa Text
-      mixin!(out, adopt_theme!(Text(child.content, size=child.size, color=child.color,
-                                    family=child.family, weight=child.weight)))
+      mixin!(out, label_text(child))
     else
       mixin!(out, describe_label(child))
     end
   end
   out
 end
-describe_label(t::Text) =
-  Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      adopt_theme!(Text(t.content, size=t.size, color=t.color, family=t.family, weight=t.weight)))
+describe_label(t::Text) = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), label_text(t))
+
+"A copy of a label's text in the theme's colour and its font for code. Text that was given its own font keeps it."
+label_text(t::Text) = begin
+  own = t.family != light.family
+  adopt_theme!(Text(t.content, size=t.size * scale(), color=t.color, weight=t.weight,
+                    family=own ? t.family : theme().mono, subfamily=own ? t.subfamily : theme().mono_style))
+end
 
 "Create a Row for a single item"
 describe_item(item::TreeItem, focused) = begin
   d = depth(item)
-  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
+  k = scale()
+  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT * k), Alignment.Center)
   row.from = item
 
-  item === focused && mixin!(row, background(theme().select), radius(4px))
+  item === focused && mixin!(row, background(theme().select), radius(3px))
 
   # Ancestor through-line spacers: render the line as a colored Box
   for i in 1:d-1
     anc = ancestor(item, d - i)
     if !is_last_tree_item(anc)
-      mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT), Alignment.Center,
-                      Box(width(1.5px), height(ROW_HEIGHT), background(theme().line))))
+      mixin!(row, Box(width(INDENT_WIDTH * k), height(ROW_HEIGHT * k), Alignment.Center,
+                      Box(width(1.5px), height(ROW_HEIGHT * k), background(theme().line))))
     else
-      mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT)))
+      mixin!(row, Box(width(INDENT_WIDTH * k), height(ROW_HEIGHT * k)))
     end
   end
 
   # Self-connector spacer (L/T shape drawn by custom draw)
-  d > 0 && mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT)))
+  d > 0 && mixin!(row, Box(width(INDENT_WIDTH * k), height(ROW_HEIGHT * k)))
 
   # Chevron for ItemGroup
   if item isa ItemGroup
     name = item.collapsed ? "chevron-right" : "chevron-down"
     # The arrow belongs to its item, so a click on the arrow is a click on the item
-    arrow = Icon(name, size=12px, color=theme().dim)
+    arrow = Icon(name, size=12px * k, color=theme().dim)
     setfield!(arrow, :parent, item)
-    mixin!(row, Box(width(CHEVRON_GAP)))
-    mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT), Alignment.Center, describe!(arrow)))
-    mixin!(row, Box(width(CHEVRON_GAP)))
+    mixin!(row, Box(width(CHEVRON_GAP * k)))
+    mixin!(row, Box(width(CHEVRON_WIDTH * k), height(ROW_HEIGHT * k), Alignment.Center, describe!(arrow)))
+    mixin!(row, Box(width(CHEVRON_GAP * k)))
+  elseif d > 0
+    # A group's arrow has a gap before it already
+    mixin!(row, Box(width(CONNECTOR_GAP * k)))
   end
 
   # Label content

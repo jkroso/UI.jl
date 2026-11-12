@@ -224,7 +224,7 @@ const CHEVRON_GAP = 3px
 
 describe(ins::Inspector) = begin
   ins.state = nothing # reset click-consumed flag
-  col = Column(width(grow=GrowType.Grow), padding(6px, 4px),
+  col = Column(width(grow=GrowType.Grow), padding(4px),
                radius(6px), border(1px, :solid, theme(ins).line),
                background(theme(ins).surface))
   root = ins.firstchild
@@ -250,7 +250,7 @@ flatten_views!(col, lv::LeafView, depth, focused) = mixin!(col, describe_row(lv,
 describe_row(cv::CollectionView, depth, focused) = begin
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
   row.from = cv
-  cv === focused && mixin!(row, background(theme().select), radius(4px))
+  cv === focused && mixin!(row, background(theme().select), radius(3px))
   # indent
   depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth)))
   # label
@@ -273,7 +273,7 @@ end
 describe_row(lv::LeafView, depth, focused) = begin
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
   row.from = lv
-  lv === focused && mixin!(row, background(theme().select), radius(4px))
+  lv === focused && mixin!(row, background(theme().select), radius(3px))
   # indent
   depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth)))
   # label

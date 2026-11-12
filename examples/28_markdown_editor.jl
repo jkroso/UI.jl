@@ -134,10 +134,10 @@ const NIGHT = Palette(bg=colorant"rgb(30,30,32)", ink=colorant"rgb(222,220,214)"
 const THEMES = (sepia=SEPIA, paper=PAPER, night=NIGHT)
 const colours = deepcopy(SEPIA)
 
-"The page's colours and font, for the components that a live block shows"
-component_theme() = Theme(surface=colours.float, text=colours.ink, dim=colours.dim, line=colours.line,
+"The page's colours, font and text size, for the components that a live block shows"
+component_theme(zoom=1.0) = Theme(size=TEXT_SIZE * zoom, surface=colours.float, text=colours.ink, dim=colours.dim, line=colours.line,
                           track=colours.faint, hover=colours.hover, select=colours.active,
-                          accent=colours.accent, on_accent=colours.bg, family=SANS,
+                          accent=colours.accent, on_accent=colours.bg, family=SANS, mono=SHEET_FONT, mono_style=SHEET_WEIGHT,
                           number=colours.number, string=colours.string, symbol=colours.call,
                           keyword=colours.keyword, type=colours.type)
 
@@ -1586,7 +1586,7 @@ cursor(::Shown) = :arrow
 
 # The components in the block get the page's colours
 describe(s::Shown) = begin
-  t = component_theme()
+  t = component_theme(editor(s).zoom)
   was, s.was = s.was, t
   with_theme(t) do
     Column(width(grow=grow), Alignment.Start,

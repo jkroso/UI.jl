@@ -42,6 +42,9 @@ Base.@kwdef struct Theme
   accent::Colorant = RGB(0.23, 0.51, 0.96)         # a ticked box, a switch that's on, the full part of a slider
   on_accent::Colorant = RGB(1.0, 1.0, 1.0)         # what's drawn over the accent, like a tick or a knob
   family::String = "Helvetica"                     # the font of labels
+  mono::String = "Menlo"                           # the font of code, and of names in a tree
+  mono_style::String = ""                          # its weight or style, like "ExtraLight"
+  size::Length = 12pt                              # the size of the names in a tree. Its rows grow to fit.
   # The kinds of value in code and in the inspector
   number::Colorant = RGB(0.0, 0.59, 0.53)
   string::Colorant = RGB(0.83, 0.18, 0.18)
