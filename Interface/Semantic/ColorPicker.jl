@@ -5,7 +5,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! add_child! focus
+@use "../abstract" SemanticUI describe describe! add_child! focus theme
 @use "../draw" draw ishovered cursor show_tooltip! redraw_in!
 @use "./Icon" Icon
 @use Colors: @colorant_str, HSV, RGB, RGBA, hex
@@ -48,9 +48,9 @@ describe(btn::CopyButton) = begin
   # Each frame of the glow asks for the next one
   since_copy(btn) < GLOW && redraw_in!(btn, 1/60)
   Box(padding(6px, 4px), radius(6px), Alignment.Center,
-      background(ishovered(btn) ? colorant"rgb(243,244,246)" : colorant"white"),
-      border(1px, :solid, colorant"rgb(229,231,235)"),
-    describe!(Icon("copy", size=14px, color=colorant"rgb(140,140,140)")))
+      background(ishovered(btn) ? theme(btn).hover : theme(btn).surface),
+      border(1px, :solid, theme(btn).line),
+    describe!(Icon("copy", size=14px, color=theme(btn).dim)))
 end
 
 cursor(::CopyButton) = :hand
@@ -91,18 +91,18 @@ const PICKER_PAD = 12px
 describe(cp::ColorPicker) = begin
   rgb = convert(RGB, cp.color)
   Column(width(SHADE_SIZE + 2PICKER_PAD), padding(PICKER_PAD),
-         radius(8px), border(1px, :solid, colorant"rgb(200,200,200)"),
-         background(colorant"white"),
+         radius(8px), border(1px, :solid, theme(cp).line),
+         background(theme(cp).surface),
     Box(width(SHADE_SIZE), height(SHADE_SIZE)),
     Box(height(10px)),
     Box(width(SHADE_SIZE), height(HUE_HEIGHT)),
     Box(height(12px)),
     Row(width(SHADE_SIZE), height(28px), Alignment.Center,
       Box(width(24px), height(24px), radius(4px),
-          background(rgb), border(1px, :solid, colorant"rgb(180,180,180)")),
+          background(rgb), border(1px, :solid, theme(cp).line)),
       Box(width(8px)),
       Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-          Text("#" * hex(rgb), size=12pt, color=colorant"rgb(60,60,60)")),
+          Text("#" * hex(rgb), size=12pt)),
       describe!(copy_button(cp))))
 end
 
@@ -144,7 +144,7 @@ draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
   Skia.sk_canvas_restore(ctx)
   Skia.sk_path_delete(clip)
   rounded_rectangle(ctx, shade.left, shade.top, shade.width, shade.height, sr,
-                    color=colorant"rgb(200,200,200)", stroke_width=1px)
+                    color=theme(cp).line, stroke_width=1px)
 
   # Shade thumb
   sx = shade.left + cp.color.s * shade.width
@@ -170,7 +170,7 @@ draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
                       background=c)
   end
   rounded_rectangle(ctx, hue_bar.left, hue_bar.top, hue_bar.width, hue_bar.height,
-                    hr, color=colorant"rgb(200,200,200)", stroke_width=1px)
+                    hr, color=theme(cp).line, stroke_width=1px)
 
   # Hue thumb
   hx = hue_bar.left + cp.color.h / 360.0 * hue_bar.width

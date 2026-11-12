@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "github.com/jkroso/MiniFB.jl" MouseMove onmouse
 @use "../Geometric"...
-@use "../abstract" SemanticUI GeometricUI UITree describe mixin! add_child! describe!
+@use "../abstract" SemanticUI GeometricUI UITree describe mixin! add_child! describe! theme
 @use "../draw" draw show_tooltip! hide_tooltip!
 @use "../Specific"...
 @use "./Satellite" AbstractSatellite
@@ -38,9 +38,9 @@ describe(t::Tooltip) = begin
   isempty(t.label) && return describe(t.firstchild)
   Box(padding(18px, 15px, 15px, 15px), radius(4px),
       Alignment.Center,
-      border(1px, :solid, colorant"rgb(200,200,200)"),
-      background(colorant"white"),
-      Text(t.label, size=13pt, color=colorant"rgb(30,30,30)"))
+      border(1px, :solid, theme(t).line),
+      background(theme(t).surface),
+      Text(t.label, size=13pt))
 end
 
 onmouse(t::Tooltip, e::MouseMove) = begin

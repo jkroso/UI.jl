@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe window_of focus
+@use "../abstract" SemanticUI describe window_of focus theme
 @use "../draw" draw
 @use Colors: @colorant_str, Colorant, RGBA
 @use GeometryBasics: Vec2
@@ -18,8 +18,8 @@
   font_family::String = "Helvetica"
   font_size::pt = 14pt
   placeholder::String = "Type here..."
-  color::Colorant = colorant"rgb(30,30,30)"              # the typed text and the caret
-  placeholder_color::Colorant = colorant"rgb(160,160,160)"
+  color::Union{Colorant,Nothing} = nothing               # the typed text and the caret. `nothing` uses the theme's text
+  placeholder_color::Union{Colorant,Nothing} = nothing   # `nothing` uses the theme's dim
   # `look(input, text)` returns the geometry around `text`, the Text that shows
   # what's typed. Leave it as `nothing` for the standard bordered box.
   look::Any = nothing
@@ -32,19 +32,22 @@
   cached_font::Union{Nothing,SkiaFont} = nothing
 end
 
+"The colour of the typed text and the caret"
+ink(input::TextInput) = something(input.color, theme(input).text)
+
 "The typed text, or the placeholder in grey when nothing has been typed"
 content(input::TextInput) = begin
   empty = isempty(input.text)
   Text(empty ? input.placeholder : input.text,
        size=input.font_size, family=input.font_family,
-       color=empty ? input.placeholder_color : input.color)
+       color=empty ? something(input.placeholder_color, theme(input).dim) : ink(input))
 end
 
 describe(input::TextInput) = begin
   input.look === nothing || return input.look(input, content(input))
   Row(width(grow=GrowType.Grow), height(36px),
     padding(8px),
-    border(1px, :solid, colorant"rgb(180,180,180)"),
+    border(1px, :solid, theme(input).line),
     radius(4px),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), content(input)))
 end
@@ -206,7 +209,7 @@ draw_cursor(ctx, input::TextInput, ct::ConcreteText, offsets) = begin
   baseline = ct.top + input.cached_capheight
   top = baseline + input.cached_ascent
   bot = baseline + input.cached_descent
-  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, input.color)
+  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, ink(input))
 end
 
 draw_selection(ctx, input::TextInput, ct::ConcreteText, offsets) = begin
@@ -238,7 +241,7 @@ draw_empty_cursor(ctx, input::TextInput, ct::ConcreteText) = begin
   baseline = ct.top + input.cached_capheight
   top = baseline + input.cached_ascent
   bot = baseline + input.cached_descent
-  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, input.color)
+  line(ctx, Vec2{px}(x, top), Vec2{px}(x, bot), 1.5px, ink(input))
 end
 
 find_concrete_text(tree::ConcreteText) = tree

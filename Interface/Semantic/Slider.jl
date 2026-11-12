@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe focus
+@use "../abstract" SemanticUI describe focus theme
 @use "../draw" draw
 @use Colors: @colorant_str
 
@@ -20,7 +20,7 @@ describe(s::Slider) =
   Row(width(grow=GrowType.Grow), height(24px),
     Box(width(grow=GrowType.Grow), height(6px),
       radius(3px),
-      background(colorant"rgb(220,220,220)")))
+      background(theme(s).track)))
 
 fraction(s::Slider) = clamp((s.value - s.min) / (s.max - s.min), 0.0, 1.0)
 
@@ -54,16 +54,16 @@ draw(ctx, size, ui::ConcreteRect, s::Slider) = begin
   track_y = track.top
   fill_w = ui.width * fraction(s)
   fill_w > 0px && rounded_rectangle(ctx, track.left, track_y, fill_w, track.height, 3px,
-                                     background=colorant"rgb(59,130,246)")
+                                     background=theme(s).accent)
   # thumb
   thumb_r = 8px
   thumb_x = ui.left + fill_w - thumb_r
   thumb_y = ui.top + ui.height / 2 - thumb_r
   rounded_rectangle(ctx, thumb_x, thumb_y, 2thumb_r, 2thumb_r, thumb_r,
-                    background=colorant"rgb(59,130,246)")
+                    background=theme(s).accent)
   inner_r = 4px
   rounded_rectangle(ctx, thumb_x + thumb_r - inner_r, thumb_y + thumb_r - inner_r,
-                    2inner_r, 2inner_r, inner_r, background=colorant"white")
+                    2inner_r, 2inner_r, inner_r, background=theme(s).on_accent)
 end
 
 export Slider

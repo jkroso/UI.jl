@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe
+@use "../abstract" SemanticUI describe theme
 @use "../draw" draw
 @use "./SVG" SVG SVGPath parse_svg_file render_svg
 @use Colors: Colorant, @colorant_str
@@ -17,7 +17,7 @@ end
 
 @def mutable struct Icon <: SemanticUI
   name::String = ""
-  color::Colorant = black
+  color::Colorant = theme().text   # the theme's text colour, where the icon is made
   size::px = 16px
 end
 

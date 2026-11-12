@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe
+@use "../abstract" SemanticUI describe theme
 @use "../draw" draw show_menu! hide_menu!
 @use Colors: @colorant_str
 @use GeometryBasics: Vec2
@@ -24,11 +24,11 @@ current_label(d::Dropdown) = isempty(d.options) ? "" : d.options[clamp(d.selecte
 describe(d::Dropdown) =
   Row(width(grow=GrowType.Grow), height(36px),
     padding(8px),
-    border(1px, :solid, colorant"rgb(200,200,200)"),
+    border(1px, :solid, theme(d).line),
     radius(4px),
-    background(colorant"white"),
+    background(theme(d).surface),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      Text(current_label(d), size=13pt, color=colorant"rgb(30,30,30)")),
+      Text(current_label(d), size=13pt)),
     Box(width(20px), height(grow=GrowType.Grow)))
 
 onkey(d::Dropdown, e::KeyPress{Keys.mouse_left}) = begin
@@ -40,6 +40,7 @@ onkey(d::Dropdown, e::KeyPress{Keys.mouse_left}) = begin
     d.open = true
     show_menu!(e.window, d.options,
                d.cached_left, d.cached_top + d.cached_height + 2px, d.cached_width,
+               theme=theme(d),
                onselect=idx -> begin
                  idx > 0 && (d.selected = idx)
                  d.open = false
@@ -60,13 +61,13 @@ draw(ctx, size, ui::ConcreteRect, d::Dropdown) = begin
   hw = 4px
   hh = 3px
   if d.open
-    path(ctx, color=colorant"rgb(120,120,120)", width=2px) do p
+    path(ctx, color=theme(d).dim, width=2px) do p
       move_to(p, Vec2{px}(cx - hw, cy + hh))
       line_to(p, Vec2{px}(cx, cy - hh))
       line_to(p, Vec2{px}(cx + hw, cy + hh))
     end
   else
-    path(ctx, color=colorant"rgb(120,120,120)", width=2px) do p
+    path(ctx, color=theme(d).dim, width=2px) do p
       move_to(p, Vec2{px}(cx - hw, cy - hh))
       line_to(p, Vec2{px}(cx, cy + hh))
       line_to(p, Vec2{px}(cx + hw, cy - hh))

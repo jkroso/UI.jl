@@ -360,7 +360,7 @@ value_text(x::Union{Tuple,NamedTuple}) = preview(repr(x), 60)
 value_text(x::Union{AbstractArray,AbstractDict,AbstractSet}) = "$(nameof(typeof(x))) of $(length(x))"
 value_text(x) = string(nameof(typeof(x)))
 
-const TREE_FIELDS = (:parent, :firstchild, :nextsibling, :prevsibling, :stale)
+const TREE_FIELDS = (:parent, :firstchild, :nextsibling, :prevsibling, :stale, :inherited_theme)
 
 "The fields of the semantic node that made `node`, and the box its element got"
 semantic_fields(node::ConcreteRect) = begin

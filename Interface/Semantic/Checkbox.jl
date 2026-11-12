@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe add_child!
+@use "../abstract" SemanticUI describe add_child! theme
 @use "../draw" draw
 @use Colors: @colorant_str, RGBA
 @use GeometryBasics: Vec2
@@ -20,8 +20,9 @@
 end
 
 describe(c::Checkbox) = begin
-  box_color = c.checked ? colorant"rgb(59,130,246)" : colorant"rgb(255,255,255)"
-  border_color = c.checked ? colorant"rgb(59,130,246)" : colorant"rgb(180,180,180)"
+  t = theme(c)
+  box_color = c.checked ? t.accent : t.surface
+  border_color = c.checked ? t.accent : t.line
   inner = Row(width(grow=GrowType.Grow), height(24px), padding(2px),
     Box(width(20px), height(20px),
       border(2px, :solid, border_color),
@@ -30,7 +31,7 @@ describe(c::Checkbox) = begin
   if !isempty(c.label)
     add_child!(inner, Box(width(8px), height(20px)))
     add_child!(inner, Box(height(20px),
-      Text(c.label, size=13pt, color=colorant"rgb(30,30,30)")))
+      Text(c.label, size=13pt)))
   end
   inner
 end
@@ -50,8 +51,8 @@ draw(ctx, size, ui::ConcreteRect, c::Checkbox) = begin
   h = box.height - 8px
   mid_x = x + w * 0.35
   mid_y = y + h
-  line(ctx, Vec2{px}(x, y + h*0.5), Vec2{px}(mid_x, mid_y), 2px, colorant"white")
-  line(ctx, Vec2{px}(mid_x, mid_y), Vec2{px}(x + w, y), 2px, colorant"white")
+  line(ctx, Vec2{px}(x, y + h*0.5), Vec2{px}(mid_x, mid_y), 2px, theme(c).on_accent)
+  line(ctx, Vec2{px}(mid_x, mid_y), Vec2{px}(x + w, y), 2px, theme(c).on_accent)
 end
 
 export Checkbox

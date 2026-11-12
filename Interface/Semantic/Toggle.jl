@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe
+@use "../abstract" SemanticUI describe theme
 @use "../draw" draw
 @use Colors: @colorant_str
 
@@ -14,7 +14,7 @@ end
 
 describe(t::Toggle) =
   Row(width(44px), height(24px), radius(12px),
-      background(t.on ? colorant"rgb(59,130,246)" : colorant"rgb(200,200,200)"))
+      background(t.on ? theme(t).accent : theme(t).track))
 
 onkey(t::Toggle, ::KeyPress{Keys.mouse_left}) = (t.on = !t.on)
 
@@ -22,7 +22,7 @@ draw(ctx, size, ui::ConcreteRect, t::Toggle) = begin
   r = 9px
   cy = ui.top + ui.height / 2 - r
   cx = t.on ? ui.left + ui.width - 3px - 2r : ui.left + 3px
-  rounded_rectangle(ctx, cx, cy, 2r, 2r, r, background=colorant"white")
+  rounded_rectangle(ctx, cx, cy, 2r, 2r, r, background=theme(t).on_accent)
 end
 
 export Toggle

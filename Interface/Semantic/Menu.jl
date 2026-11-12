@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "./Icon" Icon
-@use "../abstract" SemanticUI describe add_child! mixin!
+@use "../abstract" SemanticUI describe add_child! mixin! theme
 @use "../draw" show_menu! hide_menu!
 @use Colors: @colorant_str
 
@@ -17,7 +17,7 @@ Item(label::String) = Item(label=label)
 
 describe(item::Item) = begin
   row = Row(height(32px), width(grow=GrowType.Grow), padding(10px, 0px), radius(4px))
-  item.hover && mixin!(row, background(colorant"rgb(220,228,240)"))
+  item.hover && mixin!(row, background(theme().select))
   if item.icon !== nothing
     icon_geo = describe(item.icon)
     icon_geo.from = item.icon
@@ -25,7 +25,7 @@ describe(item::Item) = begin
     mixin!(row, Box(width(8px)))
   end
   mixin!(row, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                  Text(item.label, size=13pt, color=colorant"rgb(30,30,30)")))
+                  Text(item.label, size=13pt)))
   row
 end
 
@@ -38,7 +38,7 @@ onselect(menu::Menu, idx::Int) = nothing
 
 describe(menu::Menu) = begin
   col_children = Any[width(grow=GrowType.Grow), padding(4px), radius(6px),
-                     background("white"), border(1px, :solid, colorant"rgb(200,200,200)")]
+                     background(theme().surface), border(1px, :solid, theme().line)]
   for item in menu.children
     geo = describe(item)
     geo.from = item
@@ -51,6 +51,7 @@ show_menu!(window, menu::Menu, x, y, w; item_height=32px) = begin
   show_menu!(window, String[], x, y, w,
              item_height=item_height,
              source=menu,
+             theme=theme(menu),
              onselect=idx -> onselect(menu, idx))
 end
 

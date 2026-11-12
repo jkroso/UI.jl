@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Sequences.jl" ["collections/Map" Map]
 @use "github.com/jkroso/Font.jl" Font ["units" pt px inch em]
 @use "github.com/jkroso/Units.jl" Length mm cm m
-@use Colors: Color, Colorant, RGB, hex
+@use Colors: Color, Colorant, RGB, RGBA, hex
 @use NamingConventions
 
 const black = parse(Colorant, "black")
@@ -25,14 +25,91 @@ end
 # subtype UITree are defined, because deftype reads the trait at expansion.
 mixin_constructor(::Type{<:UITree}) = true
 
+"""
+The colours and the font that components draw themselves with. A component
+doesn't choose its own colours. It asks for `theme(node)` and uses the role
+that fits, so the same component suits a white page, a sepia page and a dark
+page. Each field is one role:
+"""
+Base.@kwdef struct Theme
+  surface::Colorant = RGB(1.0, 1.0, 1.0)           # behind a component: a text field, a menu, a tree
+  text::Colorant = RGB(0.0, 0.0, 0.0)              # labels and values
+  dim::Colorant = RGB(0.47, 0.47, 0.47)            # less important text, arrows and icons
+  line::Colorant = RGB(0.78, 0.78, 0.78)           # borders and rules
+  track::Colorant = RGB(0.86, 0.86, 0.86)          # the empty part of a slider, a switch that's off
+  hover::Colorant = RGB(0.95, 0.96, 0.97)          # behind what the mouse is over
+  select::Colorant = RGB(0.82, 0.87, 0.94)         # behind the selected row
+  accent::Colorant = RGB(0.23, 0.51, 0.96)         # a ticked box, a switch that's on, the full part of a slider
+  on_accent::Colorant = RGB(1.0, 1.0, 1.0)         # what's drawn over the accent, like a tick or a knob
+  family::String = "Helvetica"                     # the font of labels
+  # The kinds of value in code and in the inspector
+  number::Colorant = RGB(0.0, 0.59, 0.53)
+  string::Colorant = RGB(0.83, 0.18, 0.18)
+  symbol::Colorant = RGB(0.25, 0.32, 0.71)
+  keyword::Colorant = RGB(0.56, 0.14, 0.67)        # `true` and `false` too
+  type::Colorant = RGB(0.25, 0.32, 0.71)
+end
+
+const light = Theme()
+const dark = Theme(surface=RGB(0.17, 0.17, 0.19), text=RGB(0.88, 0.88, 0.86), dim=RGB(0.6, 0.6, 0.58),
+                   line=RGB(0.3, 0.3, 0.32), track=RGB(0.28, 0.28, 0.3), hover=RGB(0.22, 0.22, 0.24),
+                   select=RGB(0.24, 0.3, 0.42), accent=RGB(0.4, 0.62, 1.0),
+                   number=RGB(0.9, 0.67, 0.39), string=RGB(0.63, 0.78, 0.47), symbol=RGB(0.47, 0.67, 0.98),
+                   keyword=RGB(0.78, 0.51, 0.86), type=RGB(0.43, 0.78, 0.78))
+
+# The theme that nodes described right now will get
+const THEME = Base.ScopedValues.ScopedValue{Theme}(light)
+
+"""
+Describe everything that `f` makes with `theme`. Call it inside a `describe`
+method, around the part of the UI that should have those colours:
+
+    describe(app::App) = with_theme(app.night ? dark : light) do
+      Column(Checkbox(label="Wrap lines"), Slider())
+    end
+
+Nodes inside can be given a different theme by another `with_theme`.
+"""
+with_theme(f, theme::Theme) = Base.ScopedValues.with(f, THEME => theme)
+
+"""
+The theme `node` was last described with. Use it in `describe`, in `draw` and
+in event handlers. A node that wasn't described itself, like a row of a tree,
+has the theme of the node it's in. Without a node it gives the theme being
+described with now.
+"""
+theme() = THEME[]
+theme(node) = begin
+  while node !== nothing
+    if node isa SemanticUI
+      t = getfield(node, :inherited_theme)
+      t === nothing || return t::Theme
+    end
+    node = node.parent
+  end
+  THEME[]
+end
+
 @Enum WrapMode words newlines none
+
+"""
+Text that's made outside a `describe`, like the label of a tree's item, gets
+the colour and the font of the default theme. This gives such text the colour
+and font of `t`. Text that was given its own colour or font keeps it.
+`was` is the theme the text has now.
+"""
+adopt_theme!(text, t::Theme=theme(), was::Theme=light) = begin
+  text.color == was.text && (text.color = t.text)
+  text.family == was.family && (text.family = t.family)
+  text
+end
 @Enum TextAlign Left Center Right
 
 @def mutable struct Text <: UITree
   content::String=""
-  color::Colorant=black
+  color::Colorant=THEME[].text
   size::Length=12pt
-  family::String="Helvetica"
+  family::String=THEME[].family
   subfamily::String=""
   lineheight::Length=1.5em
   weight::Int16=600
@@ -48,6 +125,7 @@ Base.convert(::Type{UI}, s::AbstractString) = Text(s)
   firstchild::Union{UI,Nothing}=nothing
   stale::Bool=true
   state::Any=nothing
+  inherited_theme::Any=nothing   # the Theme it was last described with. Read it with `theme(node)`
 end
 
 "Top-level node that connects the UI tree to a window"
@@ -97,6 +175,7 @@ describe_children(ui) = nothing
 end
 Base.convert(::Type{GeometricUI}, node::GeometricUI) = node
 Base.convert(::Type{GeometricUI}, node::SemanticUI) = begin
+  setfield!(node, :inherited_theme, THEME[])
   result = describe(node)
   result.from = node
   adopt_inline!(node, result)

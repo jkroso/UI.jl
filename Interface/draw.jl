@@ -6,7 +6,7 @@
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
 @use GLFW
-@use "./abstract" describe Root UITree SemanticUI GeometricUI ConcreteUI window_of
+@use "./abstract" theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI window_of
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
@@ -260,13 +260,14 @@ end
   width::px = 150px
   item_height::px = 32px
   onselect::Any = nothing
+  theme::Theme = theme()   # the theme of the node that opened the menu
 end
 
 const _overlay = Dict{UInt, MenuOverlay}()
 
 "Show a floating menu overlay on a window"
-show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, source=nothing) = begin
-  _overlay[objectid(window)] = MenuOverlay(source=source, items=items, x=x, y=y, width=w, item_height=item_height, onselect=onselect)
+show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, source=nothing, theme=theme()) = begin
+  _overlay[objectid(window)] = MenuOverlay(theme=theme, source=source, items=items, x=x, y=y, width=w, item_height=item_height, onselect=onselect)
 end
 
 "Hide the floating menu overlay"
@@ -309,7 +310,7 @@ draw_menu_source(ctx, ov) = begin
     item.hover = (i == ov.hover)
   end
   # Describe and resolve
-  geo = describe(ov.source)
+  geo = with_theme(() -> describe(ov.source), ov.theme)
   geo.from = ov.source
   concrete = describe(geo, (ov.width, 9999px))
   offset!(concrete, ov.x, ov.y)
@@ -333,29 +334,29 @@ draw_menu(ctx, ov::MenuOverlay) = begin
                     background=RGBA(0,0,0,0.15))
   # background
   rounded_rectangle(ctx, ov.x, ov.y, ov.width, total_h, 6px,
-                    background=colorant"white",
-                    color=colorant"rgb(200,200,200)", stroke_width=1px)
-  f = skia_font("Helvetica", 13pt)
+                    background=ov.theme.surface,
+                    color=ov.theme.line, stroke_width=1px)
+  f = skia_font(ov.theme.family, 13pt)
   for (i, item) in enumerate(ov.items)
     iy = ov.y + (i - 1) * ov.item_height
     if i == ov.hover
       # clip hover highlight to rounded rect bounds
       if n == 1
         rounded_rectangle(ctx, ov.x + 1px, iy + 1px, ov.width - 2px, ov.item_height - 2px, 5px,
-                          background=colorant"rgb(235,238,245)")
+                          background=ov.theme.select)
       elseif i == 1
         rounded_rectangle(ctx, ov.x + 1px, iy + 1px, ov.width - 2px, ov.item_height - 1px, 5px,
-                          background=colorant"rgb(235,238,245)")
+                          background=ov.theme.select)
       elseif i == n
         rounded_rectangle(ctx, ov.x + 1px, iy, ov.width - 2px, ov.item_height - 1px, 5px,
-                          background=colorant"rgb(235,238,245)")
+                          background=ov.theme.select)
       else
         rounded_rectangle(ctx, ov.x + 1px, iy, ov.width - 2px, ov.item_height, 0px,
-                          background=colorant"rgb(235,238,245)")
+                          background=ov.theme.select)
       end
     end
     text_y = iy + ov.item_height / 2 + 5px
-    text(ctx, (ov.x + 12px, text_y), f, colorant"rgb(30,30,30)", item)
+    text(ctx, (ov.x + 12px, text_y), f, ov.theme.text, item)
   end
 end
 

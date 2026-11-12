@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus
+@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme
 @use "../draw" draw hittest
 @use "./Icon" Icon
 @use Colors: @colorant_str
@@ -21,7 +21,7 @@ Item(label::UITree) = begin
   add_child!(item, label)
   item
 end
-Item(label::String) = Item(Box(Text(label, size=12pt, color=colorant"rgb(30,30,30)")))
+Item(label::String) = Item(Box(Text(label, size=12pt)))
 
 @def mutable struct ItemGroup <: TreeItem
   collapsed::Bool = true
@@ -36,7 +36,7 @@ ItemGroup(label::UITree, children::TreeItem...) = begin
   group
 end
 ItemGroup(label::String, children::TreeItem...) =
-  ItemGroup(Box(Text(label, size=12pt, color=colorant"rgb(30,30,30)")), children...)
+  ItemGroup(Box(Text(label, size=12pt)), children...)
 
 @def mutable struct ListTree <: SemanticUI
   focused::Union{Nothing,TreeItem} = nothing
@@ -120,16 +120,14 @@ ancestor(item, n) = n == 0 ? item : ancestor(item.parent, n - 1)
 # Describe
 
 const INDENT_WIDTH = 20px
-const LINE_COLOR = colorant"rgb(190,190,190)"
-const FOCUS_BG = colorant"rgb(210,222,240)"
 const ROW_HEIGHT = 28px
 const CHEVRON_WIDTH = 12px
 const CHEVRON_GAP = 3px
 
 describe(tree::ListTree) = begin
   col = Column(width(grow=GrowType.Grow), padding(6px, 4px),
-               radius(6px), border(1px, :solid, colorant"rgb(200,200,200)"),
-               background(colorant"white"))
+               radius(6px), border(1px, :solid, theme(tree).line),
+               background(theme(tree).surface))
   flatten_items!(col, tree, tree.focused)
   col
 end
@@ -150,8 +148,8 @@ describe_label(box::Container) = begin
   out = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow))
   for child in box.children
     if child isa Text
-      mixin!(out, Text(child.content, size=child.size, color=child.color,
-                       family=child.family, weight=child.weight))
+      mixin!(out, adopt_theme!(Text(child.content, size=child.size, color=child.color,
+                                    family=child.family, weight=child.weight)))
     else
       mixin!(out, describe_label(child))
     end
@@ -160,7 +158,7 @@ describe_label(box::Container) = begin
 end
 describe_label(t::Text) =
   Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      Text(t.content, size=t.size, color=t.color, family=t.family, weight=t.weight))
+      adopt_theme!(Text(t.content, size=t.size, color=t.color, family=t.family, weight=t.weight)))
 
 "Create a Row for a single item"
 describe_item(item::TreeItem, focused) = begin
@@ -168,14 +166,14 @@ describe_item(item::TreeItem, focused) = begin
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
   row.from = item
 
-  item === focused && mixin!(row, background(FOCUS_BG), radius(4px))
+  item === focused && mixin!(row, background(theme().select), radius(4px))
 
   # Ancestor through-line spacers: render the line as a colored Box
   for i in 1:d-1
     anc = ancestor(item, d - i)
     if !is_last_tree_item(anc)
       mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT), Alignment.Center,
-                      Box(width(1.5px), height(ROW_HEIGHT), background(LINE_COLOR))))
+                      Box(width(1.5px), height(ROW_HEIGHT), background(theme().line))))
     else
       mixin!(row, Box(width(INDENT_WIDTH), height(ROW_HEIGHT)))
     end
@@ -188,7 +186,7 @@ describe_item(item::TreeItem, focused) = begin
   if item isa ItemGroup
     name = item.collapsed ? "chevron-right" : "chevron-down"
     # The arrow belongs to its item, so a click on the arrow is a click on the item
-    arrow = Icon(name, size=12px, color=colorant"rgb(150,150,150)")
+    arrow = Icon(name, size=12px, color=theme().dim)
     setfield!(arrow, :parent, item)
     mixin!(row, Box(width(CHEVRON_GAP)))
     mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT), Alignment.Center, describe!(arrow)))
@@ -219,7 +217,7 @@ draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
   mid_y = spacer.top + spacer.height / 2
   r = 4px
   if is_last_tree_item(item)
-    path(ctx, color=LINE_COLOR, width=1.5px) do p
+    path(ctx, color=theme(item).line, width=1.5px) do p
       move_to(p, Vec2{px}(cx, spacer.top))
       line_to(p, Vec2{px}(cx, mid_y - r))
       line_to(p, Vec2{px}(cx + r * 0.1, mid_y - r * 0.5))
@@ -228,8 +226,8 @@ draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
       line_to(p, Vec2{px}(right, mid_y))
     end
   else
-    line(ctx, Vec2{px}(cx, spacer.top), Vec2{px}(cx, spacer.top + spacer.height), 1.5px, LINE_COLOR)
-    path(ctx, color=LINE_COLOR, width=1.5px) do p
+    line(ctx, Vec2{px}(cx, spacer.top), Vec2{px}(cx, spacer.top + spacer.height), 1.5px, theme(item).line)
+    path(ctx, color=theme(item).line, width=1.5px) do p
       move_to(p, Vec2{px}(cx, mid_y - r))
       line_to(p, Vec2{px}(cx + r * 0.1, mid_y - r * 0.5))
       line_to(p, Vec2{px}(cx + r * 0.5, mid_y - r * 0.1))

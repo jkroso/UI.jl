@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
-@use "../abstract" SemanticUI UITree describe mixin! add_child!
+@use "../abstract" SemanticUI UITree describe mixin! add_child! theme
 @use Colors: @colorant_str
 
 @def mutable struct TableCell <: SemanticUI
@@ -41,10 +41,10 @@ describe(cell::TableCell) = begin
   box = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), padding(8px, 6px))
   if cell.header
     mixin!(box, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                    Text(cell.value, size=13pt, weight=700, color=colorant"rgb(30,30,30)")))
+                    Text(cell.value, size=13pt, weight=700)))
   else
     mixin!(box, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                    Text(cell.value, size=13pt, color=colorant"rgb(60,60,60)")))
+                    Text(cell.value, size=13pt)))
   end
   box
 end
@@ -60,7 +60,7 @@ describe(row::TableRow) = begin
 end
 
 describe(hdr::TableHeader) = begin
-  r = Row(width(grow=GrowType.Grow), height(36px), background(colorant"rgb(245,245,248)"))
+  r = Row(width(grow=GrowType.Grow), height(36px), background(theme().hover))
   for cell in hdr.children
     geo = describe(cell)
     geo.from = cell
@@ -72,8 +72,8 @@ end
 describe(table::Table) = begin
   col = Column(width(grow=GrowType.Grow),
                radius(6px),
-               border(1px, :solid, colorant"rgb(220,220,220)", between=true),
-               background(colorant"white"))
+               border(1px, :solid, theme().line, between=true),
+               background(theme().surface))
   for child in table.children
     geo = describe(child)
     geo.from = child

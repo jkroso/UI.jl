@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus
+@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme
 @use "../draw" draw
 @use "./Icon" Icon
 @use "./TextInput" TextInput
@@ -118,24 +118,16 @@ end
 
 # --- format_value ---
 
-const COLOR_NUMBER  = colorant"rgb(0,150,136)"
-const COLOR_STRING  = colorant"rgb(211,47,47)"
-const COLOR_SYMBOL  = colorant"rgb(63,81,181)"
-const COLOR_BOOL    = colorant"rgb(142,36,170)"
-const COLOR_NOTHING = colorant"rgb(130,130,130)"
-const COLOR_TYPE    = colorant"rgb(63,81,181)"
-const COLOR_DEFAULT = colorant"rgb(80,80,80)"
-const COLOR_LABEL   = colorant"rgb(100,100,100)"
-const COLOR_BRIEF   = colorant"rgb(130,130,130)"
+# The text of a value, and its colour from the theme
 
-format_value(x::Number)         = (string(x), COLOR_NUMBER)
-format_value(x::AbstractString) = ("\"$x\"", COLOR_STRING)
-format_value(x::Symbol)         = (":$x", COLOR_SYMBOL)
-format_value(x::Bool)           = (string(x), COLOR_BOOL)
-format_value(::Nothing)         = ("nothing", COLOR_NOTHING)
-format_value(x::Char)           = ("'$x'", COLOR_STRING)
-format_value(x::Type)           = (string(x), COLOR_TYPE)
-format_value(x)                 = (repr(x), COLOR_DEFAULT)
+format_value(x::Number)         = (string(x), theme().number)
+format_value(x::AbstractString) = ("\"$x\"", theme().string)
+format_value(x::Symbol)         = (":$x", theme().symbol)
+format_value(x::Bool)           = (string(x), theme().keyword)
+format_value(::Nothing)         = ("nothing", theme().dim)
+format_value(x::Char)           = ("'$x'", theme().string)
+format_value(x::Type)           = (string(x), theme().type)
+format_value(x)                 = (repr(x), theme().text)
 
 # --- editability ---
 
@@ -229,13 +221,12 @@ const INDENT_WIDTH = 20px
 const ROW_HEIGHT = 28px
 const CHEVRON_WIDTH = 12px
 const CHEVRON_GAP = 3px
-const FOCUS_BG = colorant"rgb(210,222,240)"
 
 describe(ins::Inspector) = begin
   ins.state = nothing # reset click-consumed flag
   col = Column(width(grow=GrowType.Grow), padding(6px, 4px),
-               radius(6px), border(1px, :solid, colorant"rgb(200,200,200)"),
-               background(colorant"white"))
+               radius(6px), border(1px, :solid, theme(ins).line),
+               background(theme(ins).surface))
   root = ins.firstchild
   root !== nothing && flatten_views!(col, root, 0, ins.focused)
   col
@@ -259,36 +250,36 @@ flatten_views!(col, lv::LeafView, depth, focused) = mixin!(col, describe_row(lv,
 describe_row(cv::CollectionView, depth, focused) = begin
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
   row.from = cv
-  cv === focused && mixin!(row, background(FOCUS_BG), radius(4px))
+  cv === focused && mixin!(row, background(theme().select), radius(4px))
   # indent
   depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth)))
   # label
   if !isempty(cv.label)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(cv.label * ": ", size=12pt, color=COLOR_LABEL)))
+                    Text(cv.label * ": ", size=12pt, color=theme().dim)))
   end
   # chevron
   name = cv.collapsed ? "chevron-right" : "chevron-down"
   mixin!(row, Box(width(CHEVRON_GAP)))
   mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT), Alignment.Center,
-                  describe!(Icon(name, size=12px, color=colorant"rgb(150,150,150)"))))
+                  describe!(Icon(name, size=12px, color=theme().dim))))
   mixin!(row, Box(width(CHEVRON_GAP)))
   # type brief
   mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                  Text(type_brief(cv.data), size=11pt, color=COLOR_BRIEF)))
+                  Text(type_brief(cv.data), size=11pt, color=theme().dim)))
   row
 end
 
 describe_row(lv::LeafView, depth, focused) = begin
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
   row.from = lv
-  lv === focused && mixin!(row, background(FOCUS_BG), radius(4px))
+  lv === focused && mixin!(row, background(theme().select), radius(4px))
   # indent
   depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth)))
   # label
   if !isempty(lv.label)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(lv.label * ": ", size=12pt, color=COLOR_LABEL)))
+                    Text(lv.label * ": ", size=12pt, color=theme().dim)))
   end
   # value or editor
   if lv.editing && lv.editor !== nothing
