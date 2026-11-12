@@ -40,7 +40,7 @@
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
 @use "../Interface/abstract" SemanticUI GeometricUI WrapMode describe reuse! detach! window_of focus
-@use "../Interface/draw" ui draw ishovered cursor open_url viewport show_tooltip! hide_tooltip!
+@use "../Interface/draw" ui draw ishovered cursor open_url viewport show_tooltip! hide_tooltip! hittest
 @use "../Interface/fonts" skia_font
 @use "../Interface/image" image_aspect
 @use "../Interface/inspector" toggle_inspector!
@@ -913,6 +913,9 @@ end
 "Run the code of a live block and return a UI node that shows its value, or its error"
 evaluate(e, code::String) = begin
   path = e.buf.path
+  # The code can load the drawing methods of a node, and the frame that runs it
+  # can't call them yet. So the window draws one more frame soon after.
+  e.nodes[:ran] = true
   try
     # Kip finds a path like "./widgets.jl" from the folder of the document, and so does a relative FSPath
     cd(isdir(e.folder) ? e.folder : pwd()) do
@@ -940,6 +943,52 @@ end
 
 note(text, colour) = Box(width(grow=grow), padding(BLOCK_X, 10px), background(colours.block),
   Text(String(text), size=13px, family=MONO, color=colour))
+
+"""
+What a live block shows: the node that its code made. The code can make a
+layout with nodes in it, like `Column(Checkbox(), Checkbox())`. Making the
+Column describes each Checkbox once, so each frame describes them again, and
+a click on a checkbox shows.
+"""
+@def mutable struct Shown <: SemanticUI
+  value::Any = nothing   # a SemanticUI or a GeometricUI
+end
+
+cursor(::Shown) = :arrow
+
+describe(s::Shown) = Column(width(grow=grow), Alignment.Start,
+  s.value isa SemanticUI ? Base.invokelatest(convert, GeometricUI, s.value) : redescribe!(detach!(s.value)))
+
+"Describe again each semantic node in `geo`, and put the new geometry where the old geometry was"
+redescribe!(geo) = begin
+  child = geo.firstchild
+  while child !== nothing
+    next = child.nextsibling
+    if child isa GeometricUI && child.from isa SemanticUI
+      new = Base.invokelatest(convert, GeometricUI, child.from)
+      new === child || swap!(child, new)
+    elseif child isa GeometricUI
+      redescribe!(child)
+    end
+    child = next
+  end
+  geo
+end
+
+"Put `new` in the place of `old` among its siblings"
+swap!(old, new) = begin
+  parent, prev, next = old.parent, old.prevsibling, old.nextsibling
+  detach!(new)
+  setfield!(new, :parent, parent)
+  setfield!(new, :prevsibling, prev)
+  setfield!(new, :nextsibling, next)
+  prev === nothing ? setfield!(parent, :firstchild, new) : setfield!(prev, :nextsibling, new)
+  next === nothing || setfield!(next, :prevsibling, new)
+  setfield!(old, :parent, nothing)
+  setfield!(old, :prevsibling, nothing)
+  setfield!(old, :nextsibling, nothing)
+  new
+end
 
 # --- files in a live block ---------------------------------------------------------------
 #
@@ -1129,8 +1178,12 @@ end
 
 "What the live block with this code shows"
 live(e, code::String) = begin
-  node = get!(() -> evaluate(e, code), e.nodes, (:live, e.buf.path, code))
-  node isa SemanticUI && own!(node!(Document, e, :document), node)
+  node = get!(e.nodes, (:live, e.buf.path, code)) do
+    shown = Shown(value=evaluate(e, code))
+    shown.value isa SemanticUI && own!(shown, shown.value)
+    shown
+  end
+  own!(node!(Document, e, :document), node)
   # Lay it out once to learn how tall it is
   concrete = describe(Column(fixed(e.width), Alignment.Start, geometry(node)), (e.width, 9999px))
   Live(node, concrete.height + 2LIVE_GAP)
@@ -1538,17 +1591,23 @@ end
 
 press!(e, pos) = begin
   b = e.buf
+  it = e.layout[something(findlast(it -> it.top <= pos[2] - e.origin[2], e.layout), 1)]
+  if it.content isa Live && !held(e, Keys.opt)
+    # A live block takes its own clicks. A part of it that took the keyboard, like a text field, keeps it.
+    e.popup = :none
+    e.clicked = (time(), (it.first, 0), 0)
+    took(e) || focus(e)
+    return
+  end
   focus(e)
   e.popup = :none
   if held(e, Keys.cmd)
     url = link_at(e, pos)
-    url === nothing || return open_url(url)
+    url === nothing || return follow!(e, url)
   end
-  it = e.layout[something(findlast(it -> it.top <= pos[2] - e.origin[2], e.layout), 1)]
   if it.content isa Live
-    # A live block takes its own clicks. A click with ⌥ held shows its code.
+    # A click with ⌥ held shows the block's code
     e.clicked = (time(), (it.first, 0), 0)
-    held(e, Keys.opt) || return
     b.caret = b.anchor = (min(it.first + 1, it.last), 0)
     return touch!(e)
   end
@@ -1569,6 +1628,35 @@ press!(e, pos) = begin
     held(e, Keys.shft) || (b.anchor = at)
   end
   touch!(e)
+end
+
+"True when `a` is `b` or holds it"
+holds(a, b) = begin
+  while b !== nothing
+    b === a && return true
+    b = b.parent
+  end
+  false
+end
+
+"""
+True when the node that has the keyboard is something other than the text, and
+the click that is happening now is on that node, or on a part of it, or on a
+node that holds it. A click on a list in a live block gives the list the
+keyboard, and the click goes on to the page after the list has taken it.
+"""
+took(e) = begin
+  w = window_of(e)
+  w === nothing && return false
+  f, under = w.focus, hittest(w)
+  (f === nothing || f === e || f === input(e) || under === nothing) && return false
+  holds(f, under) || holds(under, f)
+end
+
+"Open a link: a Markdown file in this editor, and anything else in the app the system picks for it"
+follow!(e, url) = begin
+  path = abspath(e.folder, url)
+  ismarkdown(path) && isfile(path) ? open!(e, path) : open_url(url)
 end
 
 drag!(e, pos) = begin
@@ -1918,6 +2006,12 @@ onkey(e::Editor, ev::KeyPress{K}) where K = begin
   w = ev.window
   shift, cmd, opt, ctrl = Keys.shft in w.keys, Keys.cmd in w.keys, Keys.opt in w.keys, Keys.ctrl in w.keys
   b = e.buf
+  # While a part of a live block has the keyboard, the keys are its own and
+  # don't change the text. Escape gives the keyboard back to the text.
+  if w.focus !== e && w.focus !== input(e)
+    K == Keys.escape ? focus(e) : cmd && K == Keys.s && save!(b)
+    return
+  end
   e.popup == :finder && return finder_key!(e, K)
   if K == Keys.escape
     e.popup = :none
@@ -2327,7 +2421,9 @@ describe(e::Editor) = begin
   if win !== nothing
     # While the sidebar slides, each frame is drawn as soon as it can be
     win.animating = sliding(e)
-    win.wake = win.focus === e ? 0.51 - mod(time() - e.blink, 0.5) : win.focus === input(e) ? 0.25 : 0.0
+    # A part of a live block that has the keyboard, like a text field, blinks its own caret
+    win.wake = pop!(e.nodes, :ran, false) ? 0.05 : win.focus === e ? 0.51 - mod(time() - e.blink, 0.5) :
+               win.focus === nothing ? 0.0 : 0.25
   end
   # The sidebar runs from the top of the window to the bottom, and the top bar
   # lies over the top of the sidebar and the page

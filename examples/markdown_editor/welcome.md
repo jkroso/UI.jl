@@ -76,6 +76,10 @@ fs"."
 To change the code, move the caret into the block with ↑ or ↓, or hold ⌥ and
 click the block.
 
+The page [components.md](components.md) has a live block for each of UI.jl's
+components: checkboxes, switches, a slider, a menu, a colour picker, a text
+field, a tree and an inspector. Hold ⌘ and click the link to open it.
+
 ---
 
 The buttons at the top right list the headings, change the font and change the
