@@ -7,7 +7,7 @@
 @use "./Geometric"... Dimension
 @use "./Specific"...
 @use "./abstract" SemanticUI ConcreteUI WrapMode reuse!
-@use "./draw" draw set_tool! clear_tool! window_tool app_size draw_tool tool_input inside offset! semantic_source
+@use "./draw" draw set_tool! clear_tool! window_tool app_size draw_tool tool_input inside offset! semantic_source _scenes
 
 const C_PANEL = colorant"rgb(58,56,53)"
 const C_STRIPE = colorant"rgb(63,61,58)"
@@ -42,9 +42,10 @@ const BADGES = Dict(
 
 """
 A panel down the right of the window that shows the app's layout tree while it
-runs. Hover an element in the app, or a row in the panel, to highlight its box
-and see how it was sized. Click a row to pin it, and click a row's −/+ box to
-collapse or expand it.
+runs. Click a row to select its element and see how it was sized. To select an
+element by pointing at it, click the pick button at the top left of the panel,
+then click the element in the app. Escape puts the pick button back. Hover a row
+to highlight its element's box, and click a row's −/+ box to collapse or expand it.
 """
 @def mutable struct LayoutInspector
   panel_width::px = 400px
@@ -59,8 +60,12 @@ collapse or expand it.
   rows::Vector{Tuple{ConcreteRect,Vector{Int}}} = Tuple{ConcreteRect,Vector{Int}}[]
   toggles::Vector{Tuple{ConcreteRect,Vector{Int}}} = Tuple{ConcreteRect,Vector{Int}}[]
   close::Any = nothing
+  pick::Any = nothing
   hovered::Any = nothing
   selected::Vector{Int} = Int[]
+  picking::Bool = false    # true while the next click in the app selects an element
+  swallow::Bool = false    # true until the mouse button of that click comes back up
+  reveal::Bool = false     # scroll the tree to the selected element's row
 end
 
 "Open the layout inspector in `w`, or close it if it's already open"
@@ -146,6 +151,23 @@ deepest_at(node::ConcreteRect, pos) = begin
   node
 end
 deepest_at(node::ConcreteText, pos) = inside(node, pos) ? node : nothing
+
+"The path from `scene` down to `node`: which child to take at each level"
+path_to(scene::ConcreteUI, node::ConcreteUI) = begin
+  path = Int[]
+  while node !== scene
+    pushfirst!(path, findfirst(c -> c === node, node.parent.children))
+    node = node.parent
+  end
+  path
+end
+
+"Select the element at `path`, and open every element around it so its row shows"
+select!(ins, path) = begin
+  ins.selected = path
+  filter!(c -> !(length(c) < length(path) && c == path[1:length(c)]), ins.collapsed)
+  ins.reveal = true
+end
 
 follow(scene::ConcreteUI, path) = begin
   node = scene
@@ -307,7 +329,8 @@ function details(node, seen)
     Box(small(title, C_DIM)))
   body = node === nothing ?
     Column(width(grow=GrowType.Grow), padding(12px), Alignment.Start,
-      small("Hover an element to see how it was sized.", C_DIM)) :
+      Text("Click a row to see how its element was sized. Or click the pick button at the top left, then an element in the app.",
+           size=12px, family=FONT, color=C_DIM, lineheight=1.4em)) :
     Column(width(grow=GrowType.Grow), padding(12px), child_gap=12px, Alignment.Start,
       (seen ? () : (field("In view", "No. It's scrolled or clipped out of view."),))...,
       fields(node)...)
@@ -342,11 +365,18 @@ function panel(ins::LayoutInspector, entries, marked, pinned, shown, areas)
   close = Box(width(18px), height(18px), radius(3px), border(1px, :solid, C_CLOSE), Alignment.Center,
     small("×", C_TEXT, size=13px))
   owners[close] = (:close, Int[])
+  # The pick button: a box with a dot in it, lit while the next click picks an element
+  lit = ins.picking ? C_HOVER_APP : C_DIM
+  pick = Box(width(18px), height(18px), radius(3px), border(1px, :solid, lit), Alignment.Center,
+             background(ins.picking ? fade(C_HOVER_APP, 0.25) : RGBA(0, 0, 0, 0)),
+    Box(width(6px), height(6px), radius(3px), background(lit)))
+  owners[pick] = (:pick, Int[])
   geo = Column(width(ins.panel_width), height(grow=GrowType.Grow), background(C_PANEL),
                border(1px, :solid, C_LINE)[:left], Alignment.Start,
     Row(width(grow=GrowType.Grow), height(34px), padding(12px, 0px), background(C_HEADER),
-        border(1px, :solid, C_LINE)[:bottom],
-      Box(small("Layout inspector", size=13px)),
+        border(1px, :solid, C_LINE)[:bottom], child_gap=10px,
+      pick,
+      Box(small(ins.picking ? "Click an element in the app" : "Layout inspector", size=13px)),
       Box(width(grow=GrowType.Grow)),
       close),
     reuse!(ins.scroll, Column(width(grow=GrowType.Grow), Alignment.Start, rows...)),
@@ -358,9 +388,10 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
   w, h = window.size
   app_w = w - ins.panel_width
   mouse = window.mouse
-  # The element to highlight: under the cursor in the app, or the row under it in the panel
+  # The element to highlight: the row under the cursor in the panel or, while
+  # picking, the element under it in the app
   ins.hovered = if mouse[1] < app_w
-    deepest_at(scene, mouse)
+    ins.picking ? deepest_at(scene, mouse) : nothing
   else
     i = findfirst(((rect, _),) -> inside(rect, mouse), ins.rows)
     i === nothing ? nothing : follow(scene, ins.rows[i][2])
@@ -381,13 +412,20 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
   # Hovering the app scrolls the tree to the hovered element's row. Hovering
   # the tree itself leaves it where it is, or it would jump under the cursor.
   row !== nothing && mouse[1] < app_w && reveal!(ins, row, length(entries))
+  if ins.reveal
+    ins.reveal = false
+    chosen = pinned === nothing ? nothing : row_index(entries, pinned)
+    chosen === nothing || reveal!(ins, chosen, length(entries))
+  end
   marked = row === nothing ? nothing : entries[row].node
-  geo, owners = panel(ins, entries, marked, pinned, something(ins.hovered, pinned, Some(nothing)), areas)
+  # The layout config stays on the selected element. While picking it follows the cursor.
+  shown = ins.picking && ins.hovered !== nothing ? ins.hovered : pinned
+  geo, owners = panel(ins, entries, marked, pinned, shown, areas)
   concrete = describe(geo, (ins.panel_width, h))
   offset!(concrete, app_w, 0px)
   draw(ctx, concrete.size, concrete)
   # Remember where everything landed so the mouse can find it next time
-  empty!(ins.rows); empty!(ins.toggles); ins.close = nothing
+  empty!(ins.rows); empty!(ins.toggles); ins.close = nothing; ins.pick = nothing
   for (node, _) in flatten(concrete)
     node isa ConcreteRect || continue
     node.from === ins.scroll && (ins.viewport = node.height)
@@ -397,12 +435,16 @@ function draw_tool(ctx, window, ins::LayoutInspector, scene::ConcreteRect)
     what == :row && push!(ins.rows, (node, path))
     what == :toggle && push!(ins.toggles, (node, path))
     what == :close && (ins.close = node)
+    what == :pick && (ins.pick = node)
   end
 end
 
 in_panel(ins, window) = window.mouse[1] >= window.size[1] - ins.panel_width
 
-tool_input(ins::LayoutInspector, window, e::MouseMove) = in_panel(ins, window)
+# While picking, the app doesn't hear about the mouse
+tool_input(ins::LayoutInspector, window, e::MouseMove) = in_panel(ins, window) || ins.picking || ins.swallow
+tool_input(ins::LayoutInspector, window, ::KeyRelease{Keys.mouse_left}) = (was = ins.swallow; ins.swallow = false; was)
+tool_input(ins::LayoutInspector, window, ::KeyPress{Keys.escape}) = (was = ins.picking; ins.picking = false; was)
 tool_input(ins::LayoutInspector, window, delta::Vec2) = begin
   in_panel(ins, window) || return false
   max_offset = max(0px, ins.scroll.content_height - ins.viewport)
@@ -410,8 +452,21 @@ tool_input(ins::LayoutInspector, window, delta::Vec2) = begin
   true
 end
 tool_input(ins::LayoutInspector, window, ::KeyPress{Keys.mouse_left}) = begin
-  in_panel(ins, window) || return false
   mouse = window.mouse
+  if !in_panel(ins, window)
+    ins.picking || return false
+    # The click picks the element under it, and the app never sees it
+    scene = get(_scenes, objectid(window), nothing)
+    node = scene === nothing ? nothing : deepest_at(scene, mouse)
+    node === nothing || select!(ins, path_to(scene, node))
+    ins.picking = false
+    ins.swallow = true
+    return true
+  end
+  if ins.pick !== nothing && inside(ins.pick, mouse)
+    ins.picking = !ins.picking
+    return true
+  end
   if ins.close !== nothing && inside(ins.close, mouse)
     clear_tool!(window)
     return true
@@ -423,7 +478,7 @@ tool_input(ins::LayoutInspector, window, ::KeyPress{Keys.mouse_left}) = begin
     path in ins.collapsed ? delete!(ins.collapsed, path) : push!(ins.collapsed, path)
     return true
   end
-  # Anywhere else on a row pins that element
+  # Anywhere else on a row selects that element
   i = findfirst(((rect, _),) -> inside(rect, mouse), ins.rows)
   i === nothing && return true
   path = ins.rows[i][2]
