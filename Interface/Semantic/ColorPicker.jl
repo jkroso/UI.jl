@@ -6,10 +6,9 @@
 @use "../Geometric"...
 @use "../Specific"...
 @use "../abstract" SemanticUI describe describe! add_child! focus
-@use "../draw" draw
-@use "./Button" Button
+@use "../draw" draw ishovered cursor show_tooltip! redraw_in!
 @use "./Icon" Icon
-@use Colors: @colorant_str, HSV, RGB, hex
+@use Colors: @colorant_str, HSV, RGB, RGBA, hex, weighted_color_mean
 
 @def mutable struct ColorPicker <: SemanticUI
   color::HSV = HSV(225, 0.8, 0.8)
@@ -21,19 +20,74 @@
   hue_width::px = 0px
   hue_height::px = 0px
   dragging::Symbol = :none
+  copy::Any = nothing   # the copy button, kept so it remembers when it was clicked
 end
 
+"The button that copies the colour's hex code"
 @def mutable struct CopyButton <: SemanticUI
   picker::Any = nothing
+  copied::Float64 = 0.0                        # when it last copied, from time()
+  rect::NTuple{4,px} = (0px, 0px, 0px, 0px)    # where it was last drawn, to put its tooltip over it
 end
 
-describe(btn::CopyButton) = describe!(btn.firstchild)
+copy_button(cp::ColorPicker) = begin
+  cp.copy === nothing && (cp.copy = CopyButton(picker=cp))
+  setfield!(cp.copy, :parent, cp)
+  cp.copy
+end
 
-onkey(btn::CopyButton, ::KeyPress{Keys.mouse_left}) = begin
-  hex_str = "#" * hex(convert(RGB, btn.picker.color))
+# After a click the button shows a tick for TICK seconds, and a ring spreads out
+# from it and fades for RING seconds
+const TICK = 0.6
+const RING = 0.3
+const GREEN = colorant"rgb(22,163,74)"
+const PALE_GREEN = colorant"rgb(220,252,231)"
+
+since_copy(btn::CopyButton) = time() - btn.copied
+hexcode(btn::CopyButton) = "#" * hex(convert(RGB, btn.picker.color))
+
+describe(btn::CopyButton) = begin
+  t = since_copy(btn)
+  ticked = t < TICK
+  # Each frame of the ring asks for the next one, and the tick asks for the frame that takes it away
+  t < RING ? redraw_in!(btn, 1/60) : ticked && redraw_in!(btn, TICK - t)
+  base = ishovered(btn) ? colorant"rgb(243,244,246)" : colorant"white"
+  fill = t < RING ? weighted_color_mean(1 - t / RING, PALE_GREEN, base) : base
+  Box(padding(6px, 4px), radius(6px), background(fill), Alignment.Center,
+      border(1px, :solid, ticked ? GREEN : colorant"rgb(229,231,235)"),
+    describe!(Icon(ticked ? "check2" : "copy", size=14px, color=ticked ? GREEN : colorant"rgb(140,140,140)")))
+end
+
+cursor(::CopyButton) = :hand
+
+"What the tooltip over the button says"
+tip(btn::CopyButton) = Box(padding(8px, 6px),
+  Box(Text((since_copy(btn) < TICK ? "Copied " : "Copy ") * hexcode(btn), size=12pt, color=colorant"rgb(240,240,240)")))
+
+show_tip!(btn::CopyButton, window) = begin
+  x, y, w, h = btn.rect
+  w > 0px && show_tooltip!(window, tip(btn), x, y, w, h, placement=:top)
+end
+
+onmouse(btn::CopyButton, e::MouseMove) = show_tip!(btn, e.window)
+
+onkey(btn::CopyButton, e::KeyPress{Keys.mouse_left}) = begin
   open(`pbcopy`, "w") do io
-    print(io, hex_str)
+    print(io, hexcode(btn))
   end
+  btn.copied = time()
+  show_tip!(btn, e.window)
+end
+
+draw(ctx, size, ui::ConcreteRect, btn::CopyButton) = begin
+  btn.rect = (ui.left, ui.top, ui.width, ui.height)
+  t = since_copy(btn)
+  t < RING || return
+  # The ring grows from the edge of the button and fades as it goes
+  k = t / RING
+  grow = 7px * (1 - (1 - k)^3)
+  rounded_rectangle(ctx, ui.left - grow, ui.top - grow, ui.width + 2grow, ui.height + 2grow, 6px + grow,
+                    color=RGBA{Float64}(GREEN.r, GREEN.g, GREEN.b, 0.7 * (1 - k)), stroke_width=2px)
 end
 
 const SHADE_SIZE = 200px
@@ -42,8 +96,6 @@ const PICKER_PAD = 12px
 
 describe(cp::ColorPicker) = begin
   rgb = convert(RGB, cp.color)
-  copy_btn = CopyButton(picker=cp)
-  add_child!(copy_btn, Button(Icon("copy", size=14px, color=colorant"rgb(140,140,140)")))
   Column(width(SHADE_SIZE + 2PICKER_PAD), padding(PICKER_PAD),
          radius(8px), border(1px, :solid, colorant"rgb(200,200,200)"),
          background(colorant"white"),
@@ -57,7 +109,7 @@ describe(cp::ColorPicker) = begin
       Box(width(8px)),
       Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
           Text("#" * hex(rgb), size=12pt, color=colorant"rgb(60,60,60)")),
-      describe!(copy_btn)))
+      describe!(copy_button(cp))))
 end
 
 draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
