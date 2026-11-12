@@ -626,8 +626,11 @@ incode(b::Buffer, i::Int) = begin
   s <= b.caret[1] <= t || s <= b.anchor[1] <= t
 end
 
+"True when line `i` shows its markup: it has the caret, and the selection doesn't reach another line"
+israw(b::Buffer, i::Int) = i == b.caret[1] == b.anchor[1]
+
 "Lay out line `i` of the document"
-flow(e, i::Int, raw::Bool=i == e.buf.caret[1]) = begin
+flow(e, i::Int, raw::Bool=israw(e.buf, i)) = begin
   text, line = e.buf.lines[i], kinds(e.buf)[i]
   # The lines that open and close a code block only show while the caret is in the block
   line.kind == Kind.fence && (raw = incode(e.buf, i))
@@ -1208,7 +1211,7 @@ vertical(e, by::Int) = begin
   it = item(e, i)
   at = it.content isa Grid ? gridcell(it.content, b.caret) : nothing
   at === nothing || return vertical(e, it, at, by)
-  f = flow(e, i, true)
+  f = flow(e, i)
   k, x = spot(f, col)
   x = e.goal = something(e.goal, x)
   1 <= k + by <= length(f.lines) && return (i, colat(f, k + by, x))
@@ -1246,7 +1249,7 @@ screen_edge(e, by::Int) = begin
   cell = cellat(e.buf, e.buf.caret)
   cell === nothing || return (e.buf.caret[1], by < 0 ? cell.lo : cell.hi)
   i, col = e.buf.caret
-  f = flow(e, i, true)
+  f = flow(e, i)
   k, _ = spot(f, col)
   vl = f.lines[k]
   by < 0 ? (i, vl.from) : (i, k < length(f.lines) ? max(vl.from, vl.to - 1) : vl.to)
