@@ -5,7 +5,7 @@
 @use "../Geometric"...
 @use "../Specific"...
 @use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus
-@use "../draw" draw
+@use "../draw" draw hittest
 @use "./Icon" Icon
 @use Colors: @colorant_str
 @use GeometryBasics: Vec2
@@ -187,9 +187,11 @@ describe_item(item::TreeItem, focused) = begin
   # Chevron for ItemGroup
   if item isa ItemGroup
     name = item.collapsed ? "chevron-right" : "chevron-down"
+    # The arrow belongs to its item, so a click on the arrow is a click on the item
+    arrow = Icon(name, size=12px, color=colorant"rgb(150,150,150)")
+    setfield!(arrow, :parent, item)
     mixin!(row, Box(width(CHEVRON_GAP)))
-    mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT), Alignment.Center,
-                    describe!(Icon(name, size=12px, color=colorant"rgb(150,150,150)"))))
+    mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT), Alignment.Center, describe!(arrow)))
     mixin!(row, Box(width(CHEVRON_GAP)))
   end
 
@@ -279,13 +281,24 @@ end
 "Find the ListTree ancestor"
 find_list_tree(node) = node isa ListTree ? node : find_list_tree(node.parent)
 
-onkey(item::TreeItem, e::KeyPress{Keys.mouse_left}) = begin
-  tree = find_list_tree(item)
-  tree.focused = item
-  focus(tree)
-  if item isa ItemGroup
-    item.collapsed = !item.collapsed
+"The item of `tree` that's under the mouse, or nothing"
+item_under(tree::ListTree, window) = begin
+  node = hittest(window)
+  while node !== nothing && node !== tree
+    node isa TreeItem && return node
+    node = node.parent
   end
+  nothing
+end
+
+# The tree takes the click, not the item. A click on an item goes on to each
+# group that holds it, and a group that took it would close.
+onkey(tree::ListTree, e::KeyPress{Keys.mouse_left}) = begin
+  focus(tree)
+  item = item_under(tree, e.window)
+  item === nothing && return
+  tree.focused = item
+  item isa ItemGroup && (item.collapsed = !item.collapsed)
 end
 
 export ListTree, ItemGroup, TreeItem, Item
