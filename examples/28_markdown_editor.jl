@@ -1991,6 +1991,7 @@ end
 const TABLE_ACTIONS = (:addrow => "+Row", :delrow => "−Row", :addcol => "+Col", :delcol => "−Col",
                        :left => "L", :center => "C", :right => "R")
 const DASHES = (left=":---", center=":---:", right="---:")
+const ALIGN_ICONS = (left="text-left", center="text-center", right="text-right")
 const BAR_H = 26px
 
 "Change the table the caret is in, then put the caret back in a cell"
@@ -2030,9 +2031,11 @@ tableop!(e, action::Symbol) = begin
   touch!(e)
 end
 
+# The three buttons that move a column's text show the usual picture of lines of text on that side
 describe(t::TableButton) =
   Box(height(BAR_H - 6px), padding(7px, 0px), radius(4px), background(ishovered(t) ? colours.hover : clear),
-    label(t.label, 11px, color=colours.dim))
+    haskey(ALIGN_ICONS, t.action) ? Icon(getproperty(ALIGN_ICONS, t.action), size=13px, color=colours.dim) :
+                                    label(t.label, 11px, color=colours.dim))
 
 cursor(::TableButton) = :hand
 onkey(t::TableButton, ::KeyPress{Keys.mouse_left}) = (e = editor(t); tableop!(e, t.action); focus(e))
