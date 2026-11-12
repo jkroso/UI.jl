@@ -36,7 +36,16 @@ const entry = realpath(popfirst!(ARGS))
 ENV["KIP_FROZEN"] = "1"
 
 @use "github.com/jkroso/MiniFB.jl" => MiniFB
-@use "../Interface/draw" invalidate_layout!
+
+"""
+Forget the layout of window `w`, so the next frame works it out again. An app
+outside UI.jl's folder can load its own copy of UI.jl, so this calls the
+`invalidate_layout!` of each copy of Interface/draw.jl that's loaded.
+"""
+invalidate_layout!(w) =
+  for (path, mod) in Kip.modules
+    endswith(path, joinpath("Interface", "draw.jl")) && Base.invokelatest(getglobal(mod, :invalidate_layout!), w)
+  end
 
 # The window's thread waits in GLFW for input, and Julia's timers don't run while
 # it does. So the watcher needs a thread of its own.
@@ -185,7 +194,7 @@ const loaded = Ref(0)
 
 """
 Watch the files Kip loaded since the last look. An example can load a file
-while it runs, as the Markdown editor does for the code in a `ui` block.
+while it runs, as Kaydown does for the code in a `ui` block.
 """
 track_new!() = begin
   n = length(Kip.modules)
@@ -344,7 +353,7 @@ reload!() = begin
     restart[] && break
   end
   track!()
-  foreach(w -> Base.invokelatest(invalidate_layout!, w), shown)
+  foreach(invalidate_layout!, shown)
 end
 
 # --- the window --------------------------------------------------------------
