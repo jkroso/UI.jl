@@ -910,10 +910,10 @@ note(text, colour) = Box(width(grow=grow), padding(BLOCK_X, 10px), background(co
 #
 # An FSPath shows as a breadcrumb: the name of each folder on the way to it,
 # in a row. Click the last name to list what's in that folder under the
-# breadcrumb, and click an earlier name to go to that folder. In the list,
-# click a folder to go into it and a file to see a preview of it: a picture, or
-# the first lines of a text file. Click a Markdown file a second time to open
-# it in the editor.
+# breadcrumb, and click an earlier name to go to that folder. A click on a
+# line of the list makes that file or folder the path, so its name joins the
+# breadcrumb. Under a path to a file is a preview of the file: a picture, or
+# the first lines of a text file.
 
 "One line of the list under a Breadcrumb: a file or a folder"
 @def mutable struct FileEntry <: SemanticUI
@@ -930,7 +930,6 @@ end
 @def mutable struct Breadcrumb <: SemanticUI
   at::String = ""
   open::Bool = false     # is the list of what's in the folder showing?
-  picked::String = ""    # the file whose preview shows
   # Kept so each name and each line knows when the mouse is over it
   crumbs::Dict{String,Crumb} = Dict{String,Crumb}()
   entries::Dict{String,FileEntry} = Dict{String,FileEntry}()
@@ -980,8 +979,7 @@ contents(l::Breadcrumb) = begin
   names = listing(l.at)
   shown = first(names, MOST_FILES)
   isempty(names) && return (Row(width(grow=grow), height(26px), padding(10px, 0px), label("This folder is empty", 12px, color=colours.dim)),)
-  (Iterators.flatten((joinpath(l.at, n) == l.picked ? (entry(l, l.picked), preview(l.picked)) : (entry(l, joinpath(l.at, n)),)
-                      for n in shown))...,
+  ((entry(l, joinpath(l.at, n)) for n in shown)...,
    (length(names) > length(shown) ? (Row(width(grow=grow), height(26px), padding(10px, 0px),
       label("and $(length(names) - length(shown)) more", 12px, color=colours.dim)),) : ())...)
 end
@@ -1029,18 +1027,16 @@ cursor(::Crumb) = :hand
 # The last name shows and hides the list. An earlier name goes to its folder.
 onkey(c::Crumb, ::KeyPress{Keys.mouse_left}) = begin
   l = c.parent::Breadcrumb
-  c.path == l.at ? (l.open = !l.open) : (l.at = c.path; l.picked = ""; l.open = true)
+  c.path == l.at ? (l.open = !l.open) : (l.at = c.path; l.open = true)
 end
 
 describe(r::FileEntry) = begin
   folder = isdir(r.path)
-  opens = folder || ismarkdown(r.path)
-  picked = r.path == (r.parent::Breadcrumb).picked
   Row(width(grow=grow), height(26px), padding(10px, 0px), radius(5px), child_gap=8px, clip=true,
-      background(picked ? colours.active : ishovered(r) ? colours.hover : clear),
+      background(ishovered(r) ? colours.hover : clear),
     Icon(folder ? "folder" : ismarkdown(r.path) ? "file-earmark-text" : "file-earmark",
          size=13px, color=colours.dim),
-    Box(width(grow=grow), Alignment.Start, label(basename(r.path), color=opens ? colours.ink : colours.dim)),
+    Box(width(grow=grow), Alignment.Start, label(basename(r.path))),
     (folder ? () : (Box(label(bytes(filesize(r.path)), 12px, color=colours.dim)),))...)
 end
 
@@ -1072,7 +1068,7 @@ preview(path) = begin
   isfile(path) || return Box(height(0px))
   ext = lowercase(splitext(path)[2])
   changed = Libc.strftime("%-d %b %Y, %H:%M", mtime(path))
-  about = "Changed $changed" * (ismarkdown(path) ? ". Click it again to open it." : "")
+  about = "Changed $changed"
   content = try
     if ext in PICTURES
       w = min(420px, 260px * image_aspect(path))
@@ -1086,23 +1082,14 @@ preview(path) = begin
   catch
     label("This file has no preview", 12px, color=colours.dim)
   end
-  Column(width(grow=grow), Alignment.Start, padding(4px, 10px, 10px, 31px), child_gap=8px,
+  Column(width(grow=grow), Alignment.Start, padding(6px), child_gap=8px,
     content, label(about, 12px, color=colours.dim))
 end
 
 cursor(::FileEntry) = :hand
 
 onkey(r::FileEntry, ::KeyPress{Keys.mouse_left}) = begin
-  l = r.parent::Breadcrumb
-  if isdir(r.path)
-    l.at, l.picked = r.path, ""
-  elseif l.picked != r.path
-    l.picked = r.path
-  elseif ismarkdown(r.path)
-    open!(editor(r), r.path)
-  else
-    l.picked = ""
-  end
+  (r.parent::Breadcrumb).at = r.path
 end
 
 "What the live block with this code shows"

@@ -66,7 +66,7 @@ Meter(done=0.7)
 ```
 
 A file path shows as a breadcrumb. Click its last name to list what's in the
-folder, and click a file in the list to see a preview of it.
+folder, and click a file in the list to make it the path.
 
 ```ui
 @use "github.com/jkroso/URI.jl/FSPath" @fs_str
