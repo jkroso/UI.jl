@@ -1548,8 +1548,13 @@ describe(e::Editor) = begin
   end
   layout!(e)
   e.reveal && (reveal!(e); e.reveal = false)
-  # Keep drawing while there's a caret to blink
-  win === nothing || (win.animating = win.focus === e || win.focus === input(e))
+  # The window is drawn again as soon as a key or the mouse does something, so
+  # typing shows without waiting for a frame that was already under way. Between
+  # times it only wakes to blink the caret.
+  if win !== nothing
+    win.animating = false
+    win.wake = win.focus === e ? 0.51 - mod(time() - e.blink, 0.5) : win.focus === input(e) ? 0.25 : 0.0
+  end
   window = Column(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg), name="Editor",
     node!(TopBar, e, :topbar),
     Row(width(grow=grow), height(grow=grow), Alignment.Start,
