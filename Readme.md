@@ -72,14 +72,14 @@ Containers also take:
 - `Stack(...)` puts its children on top of each other. Later children draw over earlier ones and get clicks first. Use it to float a panel, like a dialog, over a window.
 - `scroll_into_view!(scroll, top, bottom)` scrolls the shortest distance that shows that part of a Scroll's content.
 - `register_image(key, bytes)` makes PNG or JPEG bytes that are in memory drawable as `Image(key)`.
-- `Text(subfamily="Semibold")` picks a weight of an installed font by its name.
+- `Text(subfamily="Semibold")` picks a weight of an installed font by its name. `Text(subfamily="Italic")` and `"Bold Italic"` pick its slanted letters.
 - `TextInput(look=(input, text) -> ...)` puts your own geometry around the typed text, in place of the standard box.
 - `hide_titlebar!(window)` removes the title bar on macOS, so your app runs to the top edge of the window. Call `drag_window!(window)` from a click on an empty part of your own top bar, so the window can still be moved.
 - `dark_mode()` tells you whether macOS is in dark mode. `set_dark!(window, true)` draws the parts of the window that macOS owns, like the close button, to match.
 - `TextInput(color=..., placeholder_color=...)` sets the colours of the typed text and of the placeholder.
 - `Wedge(inner=0.5, outer=1.0, start=0, sweep=90)` draws a slice of a ring in the middle of its box, like a piece of a pie chart. Its radii are fractions of the biggest circle that fits in the box, and its angles are in degrees, clockwise from 12 o'clock. Only the slice itself gets the cursor, so wedges stacked in one box can each be hovered and clicked.
 
-`examples/25_clay_website.jl` is a port of Clay's website, and it uses most of these. `examples/26_finder.jl` is a file browser modelled on the macOS Finder. `examples/27_disk_usage.jl` shows what's using your disk space as a sunburst chart made of wedges.
+`examples/25_clay_website.jl` is a port of Clay's website, and it uses most of these. `examples/26_finder.jl` is a file browser modelled on the macOS Finder. `examples/27_disk_usage.jl` shows what's using your disk space as a sunburst chart made of wedges. `examples/28_markdown_editor.jl` is a Markdown editor modelled on Constly. It draws each line the way it will read, and you can type in it.
 
 `julia --project=. examples/hot_reload.jl examples/26_finder.jl` runs an example so that each change you save to it, or to UI.jl, shows in the open window straight away. The window keeps what it was showing. `examples/hot_reload.jl` explains what happens when you change a struct or save a mistake.
 

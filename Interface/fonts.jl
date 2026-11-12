@@ -15,9 +15,12 @@ const weight_names = [100 => "Thin", 200 => "ExtraLight", 300 => "Light", 400 =>
 "The conventional style name for a numeric font weight"
 weight_name(weight::Integer) = last(argmin(((w, _),) -> abs(w - weight), weight_names))
 
-"The numeric weight for a style name like \"Bold\" or \"Semi Bold\", or 400 if it isn't one"
+"True when a style name like \"Italic\" or \"Bold Italic\" asks for slanted letters"
+isitalic(style::AbstractString) = occursin(r"italic|oblique"i, style)
+
+"The numeric weight for a style name like \"Bold\" or \"Semi Bold Italic\", or 400 if it isn't one"
 weight_of(style::AbstractString) = begin
-  key = lowercase(replace(style, r"[\s_-]" => ""))
+  key = lowercase(replace(style, r"italic|oblique"i => "", r"[\s_-]" => ""))
   i = findfirst(((_, name),) -> lowercase(name) == key, weight_names)
   i === nothing ? 400 : first(weight_names[i])
 end
@@ -72,16 +75,27 @@ __init__() = (empty!(_typefaces); empty!(_skia_fonts))
 """
 A Skia font for `family` at `size`, cached so drawing every frame doesn't
 rebuild it. Families added with `register_font` win over installed ones. For
-an installed family, `subfamily` picks the weight by name, e.g. "Semibold".
+an installed family, `subfamily` picks the weight by name, e.g. "Semibold", and
+"Italic" or "Bold Italic" picks slanted letters.
 """
 skia_font(family::AbstractString, size, subfamily::AbstractString="") = begin
   sz = flt(size)
   get!(_skia_fonts, (String(family), String(subfamily), sz)) do
     typeface = get(_typefaces, "$family:$subfamily", get(_typefaces, family, nothing))
-    typeface === nothing && return SkiaFont(String(family), size, Skia.sk_font_style_weight_t(weight_of(subfamily)))
+    typeface === nothing && return installed_font(String(family), sz, weight_of(subfamily), isitalic(subfamily))
     raw = Skia.sk_font_new_with_values(typeface, sz, 1f0, 0f0)
     SkiaFont(String(family), Skia.SK_FONT_STYLE_WEIGHT_NORMAL, Skia.SK_FONT_STYLE_SLANT_UPRIGHT, sz, raw)
   end
+end
+
+"The installed font that best matches a family, weight and slant"
+installed_font(family::String, size::Float32, weight::Integer, italic::Bool) = begin
+  slant = italic ? Skia.SK_FONT_STYLE_SLANT_ITALIC : Skia.SK_FONT_STYLE_SLANT_UPRIGHT
+  style = Skia.sk_fontstyle_new(Int32(weight), Int32(Skia.SK_FONT_STYLE_WIDTH_NORMAL), slant)
+  typeface = Skia.sk_fontmgr_match_family_style(fontmgr[], family, style)
+  Skia.sk_fontstyle_delete(style)
+  raw = Skia.sk_font_new_with_values(typeface, size, 1f0, 0f0)
+  SkiaFont(family, Skia.sk_font_style_weight_t(weight), slant, size, raw)
 end
 
 export register_font, skia_font
