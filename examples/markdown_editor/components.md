@@ -57,6 +57,25 @@ Slider(value=0.3)
 ColorPicker()
 ```
 
+## Shadows
+
+A container can cast a shadow. `shadow(x, y, blur)` moves it right and down,
+then blurs it. You can give it a colour, and `spread` makes it bigger. Change a
+number in the code to see what it does.
+
+```ui
+@use "../../Interface/Geometric" Row Box Text shadow width height padding radius background rgb px
+card(name, cast) = Box(width(150px), height(90px), padding(16px), radius(10px), background("white"), cast,
+                       Text(name, size=15px, color=rgb(40, 40, 40)))
+Row(padding(22px, 28px), child_gap=40px,
+    card("Soft", shadow(0, 6, 18)),
+    card("Hard", shadow(6, 6, 0, "gray")),
+    card("Glow", shadow(0, 0, 14, "dodgerblue", spread=2px)))
+```
+
+The editor uses a shadow under each thing that floats over the page: the list
+of headings, the file finder that ⌘P opens and the bar of buttons over a table.
+
 ## Text
 
 Click the box and type. Press Escape to go back to the page.

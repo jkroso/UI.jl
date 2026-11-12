@@ -78,7 +78,7 @@ click the block.
 
 The page [components.md](components.md) has a live block for each of UI.jl's
 components: checkboxes, switches, a slider, a menu, a colour picker, a text
-field, a tree and an inspector. Hold ⌘ and click the link to open it.
+field, a tree and an inspector. It shows shadows too. Hold ⌘ and click the link to open it.
 
 ---
 

@@ -45,9 +45,60 @@ end
 skip the entire subtree of an off-screen child without any rasterization
 work. Outside a clip context this always returns false."
 @inline function quick_reject(ctx, ui::ConcreteUI)
-  rect = Ref(Skia.sk_rect_t(flt(ui.left), flt(ui.top),
-                             flt(ui.left + ui.width), flt(ui.top + ui.height)))
+  l, t, r, b = shadow_reach(ui)
+  rect = Ref(Skia.sk_rect_t(flt(ui.left - l), flt(ui.top - t),
+                             flt(ui.left + ui.width + r), flt(ui.top + ui.height + b)))
   Skia.sk_canvas_quick_reject_rect(ctx, rect)
+end
+
+"How far a node's shadow reaches past its left, top, right and bottom edges"
+shadow_reach(ui::ConcreteUI) = (0px, 0px, 0px, 0px)
+shadow_reach(ui::ConcreteRect) = begin
+  s = ui.from.shadow
+  isempty(s) && return (0px, 0px, 0px, 0px)
+  # A blur fades out over 3 sigma, and sigma is half of the blur
+  grow = s.spread + 1.5s.blur
+  (max(0px, grow - s.x), max(0px, grow - s.y), max(0px, grow + s.x), max(0px, grow + s.y))
+end
+
+"A Skia path around a node's shape: its slice if it's a Wedge, or its box with `grow` added to each side"
+function outline(ui::ConcreteRect, grow=0px)
+  from = ui.from
+  from isa Wedge && return wedge_path(wedge_circle(ui)..., from.inner, from.outer, from.start, from.sweep)
+  p = Skia.sk_path_new()
+  rect = Ref(Skia.sk_rect_t(flt(ui.left - grow), flt(ui.top - grow),
+                             flt(ui.left + ui.width + grow), flt(ui.top + ui.height + grow)))
+  # Like CSS, a square corner stays square when the shadow spreads
+  r = from.radius.tl > 0px ? flt(max(0px, from.radius.tl + grow)) : 0f0
+  Skia.sk_path_add_rounded_rect(p, rect, r, r, Skia.SK_PATH_DIRECTION_CW)
+  p
+end
+
+"""
+Draw the shadow a node casts: its shape, moved, grown by `spread` and blurred.
+The node's own shape is cut out of it, so a see-through background doesn't
+show the shadow behind it.
+"""
+function draw_shadow(ctx, ui::ConcreteRect, s::Shadow)
+  Skia.sk_canvas_save(ctx)
+  shape = outline(ui)
+  Skia.sk_canvas_clip_path_with_operation(ctx, shape, Skia.SK_CLIP_OP_DIFFERENCE, true)
+  Skia.sk_path_delete(shape)
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  Skia.sk_paint_set_color(paint, sk_color(s.color))
+  blur = C_NULL
+  if s.blur > 0px
+    blur = Skia.sk_maskfilter_new_blur_with_flags(Skia.SK_BLUR_STYLE_NORMAL, flt(s.blur / 2), true)
+    Skia.sk_paint_set_maskfilter(paint, blur)
+  end
+  cast = outline(ui, s.spread)
+  Skia.sk_canvas_translate(ctx, flt(s.x), flt(s.y))
+  Skia.sk_canvas_draw_path(ctx, cast, paint)
+  Skia.sk_path_delete(cast)
+  blur == C_NULL || Skia.sk_maskfilter_unref(blur)
+  Skia.sk_paint_delete(paint)
+  Skia.sk_canvas_restore(ctx)
 end
 
 """
@@ -142,8 +193,9 @@ wedge_circle(ui::ConcreteRect) = begin
   (ui.left + padding.left + w/2, ui.top + padding.top + h/2, min(w, h)/2)
 end
 
-"A Skia path around a slice of a ring. Angles are clockwise from 12 o'clock."
-function wedge_path(cx, cy, r0, r1, start, sweep)
+"A Skia path around a slice of a ring in a circle of radius `r`. `inner` and `outer` are fractions of `r`. Angles are clockwise from 12 o'clock."
+function wedge_path(cx, cy, r, inner, outer, start, sweep)
+  r0, r1 = inner * r, outer * r
   p = Skia.sk_path_new()
   oval(r) = Ref(Skia.sk_rect_t(flt(cx - r), flt(cy - r), flt(cx + r), flt(cy + r)))
   if sweep >= 360
@@ -164,8 +216,7 @@ function wedge_path(cx, cy, r0, r1, start, sweep)
 end
 
 function draw_wedge(ctx, ui::ConcreteRect, w::Wedge)
-  cx, cy, r = wedge_circle(ui)
-  p = wedge_path(cx, cy, w.inner * r, w.outer * r, w.start, w.sweep)
+  p = outline(ui)
   paint = Skia.sk_paint_new()
   Skia.sk_paint_set_antialias(paint, true)
   if alpha(w.background.color) > 0
@@ -204,6 +255,7 @@ end
 draw(ctx, size, ui::ConcreteRect) = begin
   from = ui.from
   (;background, radius) = from
+  isempty(from.shadow) || draw_shadow(ctx, ui, from.shadow)
   if from isa Wedge
     draw_wedge(ctx, ui, from)
   elseif alpha(background.color) > 0

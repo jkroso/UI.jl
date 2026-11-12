@@ -33,3 +33,24 @@ let scene = describe(pie, (200px, 200px))
   @test hittest(scene, (150px, 100px)) === right
   @test hittest(scene, (50px, 100px)) === left
 end
+
+# A shadow is drawn outside its box only. This box is see-through, at 30–70px each way,
+# and its shadow is 10px lower, so only the 10px below the box are black
+@use "./draw" draw
+@use "github.com/jkroso/MiniFB.jl/skia" drawing
+const lifted = Box(width(100px), height(100px), padding(30px), Box(width(40px), height(40px), shadow(0, 10, 0, "black")))
+let pixels = drawing(draw, (100px, 100px), describe(lifted, (100px, 100px)), scale=(1f0, 1f0))
+  drawn(x, y) = reinterpret(UInt32, pixels[y, x]) != 0
+  @test drawn(50, 75)        # below the box
+  @test !drawn(50, 50)       # inside the box
+  @test !drawn(50, 85)       # past the end of the shadow
+  @test !drawn(25, 75)       # left of it
+end
+
+# A blur takes the shadow further out, and `spread` further still
+let soft = Box(width(100px), height(100px), padding(30px), Box(width(40px), height(40px), shadow(0, 0, 8, "black", spread=4px)))
+  pixels = drawing(draw, (100px, 100px), describe(soft, (100px, 100px)), scale=(1f0, 1f0))
+  shade(x, y) = reinterpret(UInt32, pixels[y, x]) >> 24
+  @test shade(50, 72) > shade(50, 76) > 0
+  @test shade(50, 50) == 0
+end

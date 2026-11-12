@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" pt px]
 @use "github.com/jkroso/Units.jl" Length mm
 @use "../abstract" GeometricUI mixin! StyleNode Text TextAlign propertyname
-@use Colors: Color, Colorant, RGB, RGBA, hex
+@use Colors: Color, Colorant, RGB, RGBA, hex, alpha
 
 const transparent = parse(Colorant, "transparent")
 const black = parse(Colorant, "black")
@@ -80,6 +80,23 @@ Height(min, max) = Height(min=min, max=max)
   color::Colorant=transparent
 end
 
+"""
+A shadow that a container casts on what's behind it. The shadow has the
+container's shape and corner radius. `x` and `y` move it right and down, `blur`
+softens its edge and `spread` makes it bigger on every side. None of it shows
+through the container, even if the container's background is see-through.
+A container that clips its children cuts off their shadows at its edges.
+"""
+@def struct Shadow <: StyleNode
+  x::Length=0px
+  y::Length=0px
+  blur::Length=0px
+  spread::Length=0px
+  color::Colorant=transparent
+end
+
+Base.isempty(s::Shadow) = alpha(s.color) == 0
+
 @Enum KeyPoint tl tc tr cl center cr bl bc br
 
 @def struct RelativePosition <: StyleNode
@@ -102,6 +119,13 @@ border(width, style, color; between=false) = begin
                     parse_color(color)),
          between=between)
 end
+"""
+`shadow(0, 4, 12)` casts a soft shadow 4px below a container. The arguments are
+how far it moves right and down, then how much it blurs. They're in the order
+that CSS's `box-shadow` has them.
+"""
+shadow(x, y, blur=0px, color=RGBA(0, 0, 0, 0.25); spread=0px) =
+  Shadow(parse_length(x), parse_length(y), parse_length(blur), parse_length(spread), parse_color(color))
 width(args...; kwargs...) = Width(args..., ; kwargs...)
 height(args...; kwargs...) = Height(args...; kwargs...)
 
@@ -134,6 +158,7 @@ any further no longer forces the container (and its parents) to be wider.
   background::Background=Background()
   border::Border=Border()
   radius::Radius=Radius()
+  shadow::Shadow=Shadow()
   padding::Padding=Padding()
   width::Width=Width()
   height::Height=Height()
@@ -240,4 +265,4 @@ end
 
 @property Container.between_width = self.child_gap + self.border.between.width
 
-export padding, background, border, rgb, pt, mm, px, Container, Box, Stack, Column, Row, Scroll, ScrollbarMode, scroll_into_view!, Image, Wedge, Text, TextAlign, width, height, GrowType, Alignment, radius
+export padding, background, border, shadow, Shadow, rgb, pt, mm, px, Container, Box, Stack, Column, Row, Scroll, ScrollbarMode, scroll_into_view!, Image, Wedge, Text, TextAlign, width, height, GrowType, Alignment, radius

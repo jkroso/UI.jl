@@ -14,8 +14,7 @@
 @use "../../Interface/draw" draw
 @use "../../Interface/save" save_png
 @use "github.com/jkroso/Font.jl/units" px
-@use Colors: @colorant_str
-@use Skia
+@use Colors: @colorant_str, RGBA
 
 const CANVAS = 1024
 const SQUARE = 824
@@ -24,6 +23,8 @@ const HOLE = 0.3          # the radius of the middle, as a fraction of the sunbu
 const RINGS = 3
 const THICK = (1 - HOLE) / RINGS
 const white = colorant"white"
+# A soft shadow under the white square, as Apple's icons have
+const page_shadow = shadow(0, 12, 24, RGBA(0, 0, 0, 0.3))
 
 # Made-up folders, biggest first. A number is a file of that size, and a list is
 # a folder of the things in it. All of them get a folder's brighter colours.
@@ -62,24 +63,9 @@ end
 
 icon() =
   Box(width(CANVAS * px), height(CANVAS * px), padding(((CANVAS - SQUARE) ÷ 2) * px), Alignment.Center,
-    Box(width(SQUARE * px), height(SQUARE * px), padding(64px), radius(CORNER * px), background(white),
+    Box(width(SQUARE * px), height(SQUARE * px), padding(64px), radius(CORNER * px), background(white), page_shadow,
       Stack(width(grow=GrowType.Grow), height(grow=GrowType.Grow), wedges(folders, 1, 0.0, 360.0, 0.0, 0.0)...)))
 
-"A soft shadow under the white square, as Apple's icons have"
-shadow(ctx) = begin
-  paint = Skia.sk_paint_new()
-  Skia.sk_paint_set_antialias(paint, true)
-  Skia.sk_paint_set_color(paint, 0x4d000000)  # black at 30%
-  blur = Skia.sk_maskfilter_new_blur_with_flags(Skia.SK_BLUR_STYLE_NORMAL, 12f0, true)
-  Skia.sk_paint_set_maskfilter(paint, blur)
-  edge = Float32((CANVAS - SQUARE) / 2)
-  rect = Ref(Skia.sk_rect_t(edge, edge + 12, edge + SQUARE, edge + SQUARE + 12))
-  Skia.sk_canvas_draw_round_rect(ctx, rect, Float32(CORNER), Float32(CORNER), paint)
-  Skia.sk_maskfilter_unref(blur)
-  Skia.sk_paint_delete(paint)
-end
-
 save_png(joinpath(@__DIR__, "icon.png"), (CANVAS * px, CANVAS * px), scale=(1.0, 1.0), opaque=false) do ctx, size
-  shadow(ctx)
   draw(ctx, size, describe(icon(), size))
 end

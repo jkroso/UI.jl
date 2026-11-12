@@ -155,6 +155,8 @@ const CELL_Y = 9px
 
 const grow = GrowType.Grow
 const clear = RGBA(0, 0, 0, 0)
+# The shadow under what floats over the page: a popup, a list of names, the bar over a table
+const lifted = shadow(0, 8, 24, RGBA(0, 0, 0, 0.22))
 fixed(w) = width(preferred=w, grow=GrowType.None)
 spacer(h) = Box(width(grow=grow), height(h))
 num(l) = Float64(convert(px, l).value)
@@ -2206,7 +2208,7 @@ tablebar(e) = begin
   it.content isa Grid || return ()
   top = TOPBAR_H + PAGE_TOP + it.top + TABLE_GAP - e.scroll.offset - BAR_H - 3px
   top >= TOPBAR_H || return ()
-  bar = Row(height(BAR_H), padding(3px, 0px), radius(6px), background(colours.float), border(1px, :solid, colours.line),
+  bar = Row(height(BAR_H), padding(3px, 0px), radius(6px), background(colours.float), border(1px, :solid, colours.line), lifted,
     [node!(() -> TableButton(action=a, label=l), e, (:table, a)) for (a, l) in TABLE_ACTIONS]...)
   # The page's text is in the middle of the space beside the file panel
   w, _ = window_size(e)
@@ -2365,7 +2367,7 @@ onkey(r::OutlineRow, ::KeyPress{Keys.mouse_left}) = begin
 end
 
 floating(children...; w) =
-  Column(fixed(w), radius(9px), Alignment.Start, background(colours.float), border(1px, :solid, colours.line), children...)
+  Column(fixed(w), radius(9px), Alignment.Start, background(colours.float), border(1px, :solid, colours.line), lifted, children...)
 
 outline(e) = begin
   hs = headings(e.buf)

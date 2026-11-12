@@ -347,6 +347,9 @@ fields(node::ConcreteRect) = begin
   isempty(b.between) || push!(out, field("Between children", Row(child_gap=8px, Alignment.Center,
                                                                   small(side_text(b.between)), swatch(b.between.color))))
   ui.radius.tl > 0px && push!(out, field("Corner radius", px_text(ui.radius.tl)))
+  sh = ui.shadow
+  isempty(sh) || push!(out, field("Shadow", Row(child_gap=8px, Alignment.Center,
+    small("$(px_text(sh.x)) right, $(px_text(sh.y)) down, $(px_text(sh.blur)) blur, $(px_text(sh.spread)) spread"), swatch(sh.color))))
   ui isa Image && push!(out, field("Source", basename(ui.src)))
   ui isa Wedge && push!(out, field("Slice", "radius $(ui.inner)–$(ui.outer), $(round(ui.sweep, digits=1))° wide, starting at $(round(ui.start, digits=1))°"))
   ui isa Scroll && push!(out, field("Scroll offset", "$(px_text(ui.offset)) of $(px_text(max(0px, ui.content_height - node.height)))"))
