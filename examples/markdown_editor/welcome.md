@@ -80,6 +80,25 @@ The page [components.md](components.md) has a live block for each of UI.jl's
 components: checkboxes, switches, a slider, a menu, a colour picker, a text
 field, a tree and an inspector. It shows shadows too. Hold ⌘ and click the link to open it.
 
+## Sheets
+
+A code block in the language `sheet` works things out. Each row has a name and
+a Julia expression. An expression can use the names of the rows above it, and
+numbers can have units.
+
+```sheet
+Wall length = 12m
+Wall height = 2.4m
+Area = wall length * wall height
+Coats = 2
+Coverage = 16m^2 / litre
+Litres = area * coats / coverage
+Tins = ceil(litres / 4litre)
+```
+
+Click a cell and type. Tab goes to the next cell and Return starts a row. To see
+the sheet as lines of code, hold ⌥ and click it.
+
 ---
 
 The buttons at the top right list the headings, change the font and change the

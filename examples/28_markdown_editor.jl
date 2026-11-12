@@ -14,6 +14,8 @@
 #   - Type. Return carries a list on. Tab and shift-Tab indent a list item.
 #   - Click a cell of a table and type. Tab and shift-Tab go to the next and the
 #     last cell, and Return goes down a row. Both add a row at the end.
+#   - Click a cell of the sheet and type. Each row has a name and a Julia
+#     expression, and shows what it comes to. ⌥-click shows the sheet as code.
 #   - ⌘B and ⌘I make the selection bold or italic. ⌘Z and ⌘⇧Z undo and redo.
 #   - Double-click selects a word, triple-click a line. ⌘-click opens a link.
 #   - The button at the top left, or ⌘\, shows the other Markdown files in the
@@ -41,7 +43,7 @@
 @use "../Interface/Specific"...
 @use "../Interface/abstract" SemanticUI GeometricUI WrapMode Theme with_theme adopt_theme! light describe reuse! detach! window_of focus
 @use "../Interface/draw" ui draw ishovered cursor open_url viewport show_tooltip! hide_tooltip! hittest
-@use "../Interface/fonts" skia_font
+@use "../Interface/fonts" skia_font register_font
 @use "../Interface/image" image_aspect
 @use "../Interface/inspector" toggle_inspector!
 @use "../Interface/window" hide_titlebar! drag_window! set_dark!
@@ -49,6 +51,7 @@
 @use "../Interface/Semantic/TextInput" TextInput
 @use "./markdown_editor/markdown" Kind Line Span Cell classify spans tablecells isdivider words
 @use "./markdown_editor/highlight" tokens
+@use "./markdown_editor/sheet" SHEET Result sheetcells parts uses tally known
 @use "github.com/jkroso/URI.jl/FSPath" FSPath
 @use Colors: @colorant_str, RGBA, Colorant
 @use InteractiveUtils: clipboard
@@ -394,14 +397,14 @@ name(b::Buffer) = isempty(b.path) ? "Untitled" : basename(b.path)
 selecting(b::Buffer) = b.caret != b.anchor
 """
 The two ends of the selection, first end first. A selection that covers several
-lines takes the whole of each table row that it touches.
+lines takes the whole of each row of a table or a sheet that it touches.
 """
 selection(b::Buffer) = begin
   lo, hi = minmax(b.caret, b.anchor)
   lo[1] == hi[1] && return (lo, hi)
   ks = kinds(b)
-  ks[lo[1]].kind == Kind.table && (lo = (lo[1], 0))
-  ks[hi[1]].kind == Kind.table && (hi = (hi[1], length(b.lines[hi[1]])))
+  (ks[lo[1]].kind == Kind.table || insheet(b, lo[1])) && (lo = (lo[1], 0))
+  (ks[hi[1]].kind == Kind.table || insheet(b, hi[1])) && (hi = (hi[1], length(b.lines[hi[1]])))
   (lo, hi)
 end
 
@@ -537,7 +540,15 @@ end
 @def mutable struct Rule <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
 "A code block in the language `ui`, showing what its code made"
 @def mutable struct LiveBlock <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
-const Block = Union{Paragraph,Heading,List,Quote,CodeBlock,Table,Rule,LiveBlock}
+"A code block in the language `sheet`, drawn as rows that work things out"
+@def mutable struct SheetBlock <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+"The ! of a row of a sheet that went wrong. It says what went wrong while the mouse is over it."
+@def mutable struct Trouble <: SemanticUI
+  message::String = ""
+  size::px = 14px
+  rect::NTuple{4,px} = (0px, 0px, 0px, 0px)
+end
+const Block = Union{Paragraph,Heading,List,Quote,CodeBlock,Table,Rule,LiveBlock,SheetBlock}
 @def mutable struct FileRow <: SemanticUI
   path::String = ""
   finder::Int = 0    # its place in the file finder's list, or 0 in the sidebar
@@ -566,6 +577,7 @@ ismarkdown(path) = lowercase(splitext(path)[2]) in MARKDOWN
 build_editor(path) = begin
   path = abspath(expanduser(path))
   e = Editor()
+  load_sheet_font()
   e.nodes[:input] = own!(e, TextInput(placeholder="Find a file", font_family=SANS, font_size=15px,
                                       look=(_, text) -> Row(width(grow=grow), height(grow=grow), clip=true, text)))
   if isdir(path)
@@ -752,8 +764,9 @@ end
 "The lines of a table that are rows of cells"
 tablerows((s, t)) = [s; s+2:t]
 
-"The cells of the row that `p` is in, when that row is drawn in a grid"
+"The cells of the row that `p` is in, when that row is drawn in a grid or a sheet"
 rowcells(b::Buffer, p::Pos) = begin
+  insheet(b, p[1]) && return sheetcells(b.lines[p[1]])
   run = table(b, p[1])
   (run === nothing || p[1] == run[1] + 1) ? Cell[] : tablecells(b.lines[p[1]])
 end
@@ -776,6 +789,8 @@ if `p` is in a cell. Otherwise it's the next cell in the direction `by`, or the
 nearest cell when `by` is 0.
 """
 settle(b::Buffer, p::Pos, by::Int=0) = begin
+  run = sheet(b, p[1])
+  run === nothing || return settle(b, run, p, by)
   run = table(b, p[1])
   run === nothing && return p
   s, t = run
@@ -854,7 +869,7 @@ end
 grid(e, from::Int, to::Int) = begin
   b = e.buf
   caret = from <= b.caret[1] <= to ? b.caret : nothing
-  get!(e.flows, (:grid, b.lines[from:to], caret)) do
+  get!(e.flows, (:grid, from, b.lines[from:to], caret)) do
     base = Face(body(e), size=body(e).size * 0.94)
     lh = base.size * 1.5
     rows = tablerows((from, to))
@@ -900,6 +915,560 @@ gridcell(g::Grid, p::Pos) = begin
   r = findfirst(==(p[1]), g.rows)
   (r === nothing || isempty(g.cells[r])) && return nothing
   (r, nearest(g.cells[r], p[2]))
+end
+
+# --- sheets ----------------------------------------------------------------------------
+#
+# A code block in the language `sheet` is drawn as a sheet, like the one in
+# Centient's notepad. Each line of the block is a row: a name, an = and a Julia
+# expression. The expression can use the names of the rows above it the way
+# they're written, and those names show as chips. What each row comes to shows
+# on its right. A row without a name shows its number instead.
+#
+# The caret moves from cell to cell, as it does in a table. Tab and shift-Tab
+# go to the next and the last cell, and Return starts a row. Hold ⌥ and click
+# the sheet to see it as lines of code.
+
+const SHEET_GAP = 8px   # above and below a sheet
+const SHEET_X = 10px    # beside the text of a cell
+const SHEET_Y = 4px     # above the first row and below the last
+const RAISE = 0.28      # of the size of the text: how far a character from the spare font goes up, twice over
+const RESULT_X = 8px    # beside the text of what a row comes to
+
+# A sheet's text is in Source Code Pro ExtraLight, a step lighter than
+# Centient's Light. A Mac without that font gets the font of the code blocks.
+const SHEET_FILE = something(findfirst(isfile, joinpath.((joinpath(homedir(), "Library/Fonts"), "/Library/Fonts"),
+                                                         "SourceCodePro-ExtraLight.ttf")) |>
+                             i -> i === nothing ? nothing : joinpath((joinpath(homedir(), "Library/Fonts"), "/Library/Fonts")[i],
+                                                                     "SourceCodePro-ExtraLight.ttf"), "")
+const SHEET_FONT = isempty(SHEET_FILE) ? MONO : "Source Code Pro"
+const SHEET_WEIGHT = isempty(SHEET_FILE) ? "" : "ExtraLight"
+
+"""
+Read the sheet's font from its file. A request for a weight of this font by
+name can come back in another weight, so the file is read itself. This runs each time an
+editor is made, because a built app forgets its fonts when it starts.
+"""
+load_sheet_font() = isempty(SHEET_FILE) || register_font(SHEET_FILE)
+
+"A sheet laid out"
+struct Sheet
+  rows::Vector{Int}             # the line of the document each row comes from
+  cells::Vector{Vector{Cell}}   # each row's name and expression, or only its expression
+  names::Vector{Flow}
+  exprs::Vector{Flow}
+  results::Vector{Result}       # what each row comes to
+  heights::Vector{px}
+  name_w::px                    # how wide the column of names is
+  size::px                      # of the text
+end
+
+"""
+The lines that open and close the sheet that line `i` is in, or nothing. A
+sheet needs a row, and it shows as lines of code while the caret is on the
+line that opens or closes it.
+"""
+sheet(b::Buffer, i::Int) = begin
+  ks = kinds(b)
+  (ks[i].kind == Kind.fence || (ks[i].kind == Kind.code && ks[i].lang == SHEET)) || return nothing
+  s, t = codeblock(b, i)
+  (t > s + 1 && ks[s].kind == Kind.fence && ks[s].lang == SHEET && ks[t].kind == Kind.fence && ks[t].level == 1) || return nothing
+  israw(b, s) || israw(b, t) ? nothing : (s, t)
+end
+
+"True when line `i` is a row of a sheet"
+insheet(b::Buffer, i::Int) = begin
+  run = sheet(b, i)
+  run !== nothing && run[1] < i < run[2]
+end
+
+"""
+The runs of text in the expression that is columns `lo` to `hi` of `text`. Each
+of `names` is a chip, and a * that multiplies shows as ×.
+"""
+exprpieces(text::String, lo::Int, hi::Int, names, base::Face) = begin
+  expr = rest(head(text, hi), lo)
+  chars = collect(expr)
+  faces = fill(base, length(chars))
+  times = [c == '*' for c in chars]
+  for t in tokens(expr, "julia")
+    t.kind == :plain && continue
+    span = t.col+1:t.col+length(t.text)
+    faces[span] .= Ref(Face(base, color=getfield(colours, t.kind)))
+    # A * in a string or a comment is only a *
+    t.kind in (:string, :comment) && (times[span] .= false)
+  end
+  for (a, z, _) in uses(expr, names)
+    faces[a+1:z] .= Ref(Face(base, chip=true))
+  end
+  out = Piece[]
+  i = 1
+  while i <= length(chars)
+    if times[i]
+      push!(out, piece("×", lo + i - 1, faces[i], atomic=true, n=1))
+      i += 1
+      continue
+    end
+    j = i
+    while j < length(chars) && faces[j+1] === faces[i] && !times[j+1]; j += 1 end
+    push!(out, piece(String(chars[i:j]), lo + i - 1, faces[i]))
+    i = j + 1
+  end
+  out
+end
+
+"How wide the chip that shows `r` is. A row that went wrong shows a !."
+chip_w(face::Face, r::Result) =
+  isempty(r.text) ? 0px : r.failed ? measure(face, "!") + 2RESULT_X : sum(measure(f, t) for (t, f) in runs(r.text, face)) + 2RESULT_X
+
+const drawable = Dict{Tuple{String,String,Char},Bool}()
+
+"True when the font of `face` has a letter shape for `c`"
+has(face::Face, c::Char) =
+  get!(drawable, (face.family, face.style, c)) do
+    Skia.sk_font_unichar_to_glyph(skia_font(face.family, face.size, face.style).raw, Int32(c)) != 0
+  end
+
+"""
+`text` in runs, each with the face to draw it in. A character that the font of
+`face` doesn't have, like the raised minus of m⁻¹, is in the font of the code
+blocks, which has it.
+"""
+runs(text::AbstractString, face::Face) = begin
+  spare = Face(face, family=MONO, style="")
+  out = Tuple{String,Face}[]
+  for c in text
+    f = has(face, c) || !has(spare, c) ? face : spare
+    if !isempty(out) && last(out)[2] === f
+      out[end] = (last(out)[1] * c, f)
+    else
+      push!(out, (string(c), f))
+    end
+  end
+  out
+end
+
+"Lay out the sheet whose code block opens on line `from` and closes on line `to`"
+sheetgrid(e, from::Int, to::Int) = begin
+  b = e.buf
+  caret = from < b.caret[1] < to && b.caret[1] == b.anchor[1] ? b.caret : nothing
+  # The layout holds the number of each row's line, so it's kept for these lines only
+  get!(e.flows, (:sheet, from, b.lines[from+1:to-1], caret)) do
+    size = body(e).size * 0.86
+    lh = size * 1.7
+    ink = Face(SHEET_FONT, SHEET_WEIGHT, size, colours.ink, false)
+    rows = collect(from+1:to-1)
+    cells = [sheetcells(b.lines[i]) for i in rows]
+    texts = [parts(b.lines[i]) for i in rows]
+    # The rows are only worked out again when the text of one changes
+    results = get!(() -> tally(texts), e.flows, (:sheetrun, texts))
+    # The cell with the caret shows the spaces typed after its text
+    upto(i, c) = caret !== nothing && caret[1] == i && within(c, caret[2]) ? max(c.hi, caret[2]) : c.hi
+    names = map(zip(rows, cells)) do (i, cs)
+      length(cs) == 2 || return Piece[]
+      text = rest(head(b.lines[i], upto(i, cs[1])), cs[1].lo)
+      isempty(text) ? Piece[] : [piece(text, cs[1].lo, ink)]
+    end
+    name_w = clamp(maximum(ps -> sum(p -> measure(p.face, p.text), ps, init=0px), names, init=0px) + 2px, 3size, e.width * 0.4)
+    # An expression has the room that its row's name and result leave it
+    room = e.width - 3px - 4SHEET_X - name_w
+    exprs = map(enumerate(rows)) do (r, i)
+      c = cells[r][end]
+      chip = chip_w(ink, results[r])
+      wrap(exprpieces(b.lines[i], c.lo, upto(i, c), known(texts, r), ink), max(80px, room - chip - (chip > 0px ? SHEET_X : 0px)); lh, size)
+    end
+    nameflows = [wrap(ps, name_w; lh, size) for ps in names]
+    heights = [max(tall(n), tall(x)) for (n, x) in zip(nameflows, exprs)]
+    Sheet(rows, cells, nameflows, exprs, results, heights, name_w, size)
+  end
+end
+
+tall(s::Sheet) = sum(s.heights) + 2px + 2SHEET_Y + 2SHEET_GAP
+
+"How far the top of row `r` is from the top of the sheet's item"
+row_top(s::Sheet, r::Int) = SHEET_GAP + 1px + SHEET_Y + sum(s.heights[1:r-1], init=0px)
+
+"How far the text of an expression starts from the left of the sheet"
+expr_x(s::Sheet) = 2px + 3SHEET_X + s.name_w
+
+"The layout of cell `k` of row `r`, and how far its text starts from the left of the sheet"
+cellflow(s::Sheet, r::Int, k::Int) =
+  length(s.cells[r]) == 2 && k == 1 ? (s.names[r], 1px + SHEET_X) : (s.exprs[r], expr_x(s))
+
+"Which cell of row `r` is under a point `x` from the left of the sheet"
+cellunder(s::Sheet, r::Int, x::px) = length(s.cells[r]) == 2 && x < expr_x(s) - SHEET_X ? 1 : length(s.cells[r])
+
+"The row of the sheet under a point `y` from the top of its item"
+rowunder(s::Sheet, y::px) = something(findfirst(r -> y < row_top(s, r) + s.heights[r], eachindex(s.rows)), length(s.rows))
+
+"The place in row `r` nearest to `x`, on the first line of the row's cell, or on its last when `by` is -1"
+place(s::Sheet, r::Int, by::Int, x::px) = begin
+  k = cellunder(s, r, x)
+  f, dx = cellflow(s, r, k)
+  (s.rows[r], cellcol(f, by < 0 ? length(f.lines) : 1, x - dx, s.cells[r][k]))
+end
+
+"Where the caret goes when ↑ or ↓ brings it into a sheet from the line above or below it"
+enter(e, it::Item, s::Sheet, by::Int, x::px) = place(s, by > 0 ? 1 : length(s.rows), by, x)
+
+"""
+One run of text of a sheet, in a box as tall as the line with the text in the
+middle of it. A name of another row is a chip with round ends.
+"""
+sheetseg(seg::Seg, lh::px) = begin
+  f = seg.face
+  t = Text(seg.text, size=f.size, family=f.family, subfamily=f.style, color=f.color, wrap=WrapMode.none)
+  f.chip || return Box(fixed(seg.w), height(lh), Alignment.Center, t)
+  h = f.size * 1.45
+  Box(fixed(seg.w), height(lh), Alignment.Center,
+    Box(fixed(seg.w), height(h), padding(CHIP_X, 0px), radius(h / 2), background(colours.chip), border(1px, :solid, colours.chip_line), t))
+end
+
+sheetlines(f::Flow) =
+  [Row(width(grow=grow), height(f.lh), Alignment.Center, padding(0px, 0px, 0px, vl.x), clip=true,
+       [sheetseg(seg, f.lh) for seg in vl.segs]...) for vl in f.lines]
+
+describe(e::Editor, it::Item, s::Sheet) = begin
+  b = e.buf
+  lh = s.size * 1.7
+  n = length(s.rows)
+  bare(f) = isempty(f.lines[1].segs)
+  hint(text) = Row(height(lh), Text(text, size=s.size, family=SHEET_FONT, subfamily=SHEET_WEIGHT, color=colours.faint, wrap=WrapMode.none))
+  rows = map(1:n) do r
+    above, below = (r == 1 ? SHEET_Y : 0px), (r == n ? SHEET_Y : 0px)
+    pad = padding(above, SHEET_X, below, SHEET_X)
+    # The caret is in this row's expression
+    typing = b.caret[1] == b.anchor[1] == s.rows[r] && nearest(s.cells[r], b.caret[2]) == length(s.cells[r])
+    res = s.results[r]
+    w = chip_w(Face(SHEET_FONT, SHEET_WEIGHT, s.size, colours.ink, false), res)
+    chip = isempty(res.text) ? () :
+      (Column(fixed(w + SHEET_X), height(grow=grow), Alignment.Start, padding(above + 1px, SHEET_X, 0px, 0px),
+         res.failed ? own!(node!(Document, e, :document), Trouble(message=res.text, size=s.size)) :
+           Row(fixed(w), height(lh - 2px), Alignment.Center, padding(RESULT_X, 0px), radius(6px), background(colours.chip),
+             # Menlo's raised signs sit lower than Source Code Pro's raised digits, so they go up a little
+             [Box(padding(0px, 0px, f.family == SHEET_FONT ? 0px : s.size * RAISE, 0px),
+                Text(t, size=s.size, family=f.family, subfamily=f.style, color=colours.ink, wrap=WrapMode.none))
+              for (t, f) in runs(res.text, Face(SHEET_FONT, SHEET_WEIGHT, s.size, colours.ink, false))]...)),)
+    Row(width(grow=grow), height(s.heights[r] + above + below), Alignment.Start,
+      # A row without a name shows its number
+      Column(fixed(s.name_w + 2SHEET_X + 1px), height(grow=grow), Alignment.Start, pad, border(1px, :solid, colours.line)[:right],
+        (bare(s.names[r]) ? (hint(string(r)),) : sheetlines(s.names[r]))...),
+      Column(width(grow=grow), height(grow=grow), Alignment.Start, pad,
+        (bare(s.exprs[r]) && typing ? (hint("expression"),) : sheetlines(s.exprs[r]))...),
+      chip...)
+  end
+  Box(width(grow=grow), padding(0px, SHEET_GAP),
+    Column(width(grow=grow), Alignment.Start, radius(6px), background(colours.float), border(1px, :solid, colours.line), name="Sheet",
+      rows...))
+end
+
+describe(t::Trouble) = begin
+  w = measure(Face(SHEET_FONT, SHEET_WEIGHT, t.size, colours.accent, false), "!") + 2RESULT_X
+  Box(fixed(w), height(t.size * 1.7 - 2px), padding(RESULT_X, 0px), radius(6px), background(colours.chip),
+    Text("!", size=t.size, family=MONO, subfamily="Bold", color=colours.accent, wrap=WrapMode.none))
+end
+
+draw(ctx, size, ui::ConcreteRect, t::Trouble) = (t.rect = (ui.left, ui.top, ui.width, ui.height); nothing)
+
+onmouse(t::Trouble, ev::MouseMove) =
+  show_tooltip!(ev.window, Box(padding(8px, 5px), label(t.message, 12px, color=TIP_INK)), t.rect..., placement=:bottom, gap=6px)
+
+"""
+The boxes that cover the selected part of a sheet whose top left corner is at
+(x, y). A selection that covers several lines takes each row whole.
+"""
+marks(e, it::Item, s::Sheet, x, y) = begin
+  b = e.buf
+  out = Rect[]
+  selecting(b) || return out
+  lo, hi = selection(b)
+  if b.caret[1] != b.anchor[1]
+    n = length(s.rows)
+    bottom = y + it.tall - SHEET_GAP
+    lo[1] <= it.first && hi[1] >= it.first && push!(out, (num(x), num(y), num(x + 7px), num(y + SHEET_GAP)))
+    for (r, i) in enumerate(s.rows)
+      lo[1] <= i <= hi[1] || continue
+      top = r == 1 ? y + SHEET_GAP : y + row_top(s, r)
+      push!(out, (num(x), num(top), num(x + e.width), num(r == n ? bottom : y + row_top(s, r + 1))))
+    end
+    lo[1] <= it.last && hi[1] >= it.last && push!(out, (num(x), num(bottom), num(x + 7px), num(y + it.tall)))
+    return out
+  end
+  r = findfirst(==(b.caret[1]), s.rows)
+  r === nothing && return out
+  sel = selected(b, s.rows[r])
+  for (k, cell) in enumerate(s.cells[r])
+    (sel[1] < cell.limit && sel[2] > cell.lo) || continue
+    f, dx = cellflow(s, r, k)
+    append!(out, marks(f, x + dx, y + row_top(s, r), (max(sel[1], cell.lo), min(sel[2], cell.limit), false), margin=false))
+  end
+  out
+end
+
+"Draw the caret in the cell of a sheet that it's in. The sheet's top left corner is at (x, y)."
+caret(ctx, e, s::Sheet, x, y) = begin
+  p = e.buf.caret
+  r = findfirst(==(p[1]), s.rows)
+  r === nothing && return
+  f, dx = cellflow(s, r, nearest(s.cells[r], p[2]))
+  caret(ctx, e, f, x + dx, y + row_top(s, r), p[2])
+end
+
+"The place in a sheet under a point that is (dx, dy) from the top left of its item"
+locate(e, it::Item, s::Sheet, dx, dy) = begin
+  r = rowunder(s, dy)
+  k = cellunder(s, r, dx)
+  f, x = cellflow(s, r, k)
+  line = clamp(floor(Int, num(dy - row_top(s, r)) / num(f.lh)) + 1, 1, length(f.lines))
+  (s.rows[r], cellcol(f, line, dx - x, s.cells[r][k]))
+end
+
+"""
+A click on a sheet. It returns true when it has put the caret somewhere itself.
+With ⌥ held, the sheet shows as lines of code. A click where a row's name goes
+gives a row that has no name a place for one.
+"""
+press!(e, it::Item, s::Sheet, pos) = begin
+  b = e.buf
+  if held(e, Keys.opt)
+    b.caret = b.anchor = line_end(b, it.first)
+    return true
+  end
+  r = rowunder(s, pos[2] - e.origin[2] - it.top)
+  (length(s.cells[r]) == 1 && pos[1] - e.origin[1] < expr_x(s) - SHEET_X) || return false
+  name_row!(e, s.rows[r])
+  true
+end
+
+"Give the row on line `i`, which has no name, a place for one, and put the caret there"
+name_row!(e, i::Int) = begin
+  b = e.buf
+  edit!(b, (i, 0), (i, 0), " = ")
+  b.caret = b.anchor = (i, 0)
+  e.clicked = (time(), (i, 0), 1)
+  touch!(e)
+end
+
+"Where the caret goes when it's sent to `p` in the sheet that runs from line `s` to line `t`. See `settle` for a table."
+settle(b::Buffer, (s, t)::Tuple{Int,Int}, p::Pos, by::Int) = begin
+  i, col = p
+  first_cell(i) = (i, sheetcells(b.lines[i])[1].lo)
+  last_cell(i) = (i, sheetcells(b.lines[i])[end].hi)
+  # The lines that open and close the sheet don't show, so the caret steps over them
+  i == s && return by < 0 && s > 1 ? line_end(b, s - 1) : first_cell(s + 1)
+  i == t && return by > 0 && t < length(b.lines) ? (t + 1, 0) : last_cell(t - 1)
+  cs = sheetcells(b.lines[i])
+  any(c -> within(c, col), cs) && return p
+  if by < 0
+    c = findlast(c -> c.limit < col, cs)
+    c === nothing || return (i, cs[c].hi)
+    i - 1 > s ? last_cell(i - 1) : s > 1 ? line_end(b, s - 1) : first_cell(i)
+  elseif by > 0
+    c = findfirst(c -> c.lo > col, cs)
+    c === nothing || return (i, cs[c].lo)
+    i + 1 < t ? first_cell(i + 1) : t < length(b.lines) ? (t + 1, 0) : last_cell(i)
+  else
+    c = cs[nearest(cs, col)]
+    (i, clamp(col, c.lo, c.limit))
+  end
+end
+
+"The place one line up or down from the caret, which is in a sheet"
+vertical(e, it::Item, s::Sheet, by::Int) = begin
+  b = e.buf
+  # The caret can be on the line that opens or closes the sheet, at the end of a selection
+  r = something(findfirst(==(b.caret[1]), s.rows), b.caret[1] <= it.first ? 1 : length(s.rows))
+  k = nearest(s.cells[r], b.caret[2])
+  f, dx = cellflow(s, r, k)
+  line, x = spot(f, b.caret[2])
+  x = e.goal = something(e.goal, x + dx)
+  1 <= line + by <= length(f.lines) && return (b.caret[1], cellcol(f, line + by, x - dx, s.cells[r][k]))
+  r += by
+  1 <= r <= length(s.rows) && return place(s, r, by, x)
+  if by < 0
+    it.first == 1 && return b.caret
+    f = flow(e, it.first - 1, true)
+    return (it.first - 1, colat(f, length(f.lines), x))
+  end
+  # ↓ on the last row of a sheet at the end of the document starts a line below it
+  it.last == length(b.lines) && edit!(b, line_end(b, it.last), line_end(b, it.last), "\n")
+  (it.last + 1, colat(flow(e, it.last + 1, true), 1, x))
+end
+
+"Return in a sheet starts a row under the caret's row. In a last row that's empty, it ends the sheet instead."
+next_row!(e) = begin
+  b = e.buf
+  i = b.caret[1]
+  s, t = sheet(b, i)
+  if i == t - 1 && t - s > 2 && all(isempty, parts(b.lines[i]))
+    edit!(b, line_end(b, i - 1), line_end(b, t), "\n" * b.lines[t] * "\n")
+    b.caret = b.anchor = (t, 0)
+    return touch!(e)
+  end
+  edit!(b, line_end(b, i), line_end(b, i), "\n = ")
+  b.caret = b.anchor = (i + 1, 0)
+  touch!(e)
+end
+
+"""
+Tab in a sheet goes to the next cell and selects what's in it, or with `back`
+to the one before. Going on from the last cell adds a row, and going back from
+an expression that has no name makes a place for one.
+"""
+sheet_tab!(e, back::Bool) = begin
+  b = e.buf
+  i, col = b.caret
+  s, t = sheet(b, i)
+  cs = sheetcells(b.lines[i])
+  k = nearest(cs, col)
+  pick(i, c) = begin
+    b.anchor, b.caret = (i, c.lo), (i, c.hi)
+    touch!(e)
+  end
+  if back
+    length(cs) == 1 && return name_row!(e, i)
+    k == 2 && return pick(i, cs[1])
+    return i - 1 > s ? pick(i - 1, sheetcells(b.lines[i-1])[end]) : nothing
+  end
+  k < length(cs) && return pick(i, cs[2])
+  i + 1 < t && return pick(i + 1, sheetcells(b.lines[i+1])[1])
+  edit!(b, line_end(b, i), line_end(b, i), "\n = ")
+  b.caret = b.anchor = (i + 1, 0)
+  touch!(e)
+end
+
+"""
+Backspace in a sheet, when it does more than delete a character. In a row
+that's empty it takes the row away, and the last row takes the sheet with it.
+At the start of an expression it goes back to the row's name. It returns true
+when it did one of these.
+"""
+erase_row!(e, to::Pos) = begin
+  b = e.buf
+  i, col = b.caret
+  to < b.caret || return false
+  s, t = sheet(b, i)
+  cs = sheetcells(b.lines[i])
+  if all(isempty, parts(b.lines[i]))
+    if t - s == 2
+      edit!(b, (s, 0), line_end(b, t), "")
+    elseif i - 1 > s
+      edit!(b, line_end(b, i - 1), line_end(b, i), "")
+    else
+      edit!(b, (i, 0), (i + 1, 0), "")
+      b.caret = b.anchor = settle(b, (i, 0), 1)
+    end
+    touch!(e)
+    return true
+  end
+  (length(cs) == 2 && col == cs[2].lo && nearest(cs, col) == 2) || return false
+  b.caret = b.anchor = (i, cs[1].hi)
+  touch!(e)
+  true
+end
+
+# --- the names a sheet offers ----------------------------------------------------------
+#
+# While you type a name in an expression of a sheet, a list under the caret
+# shows the names of the rows above that start the same way. ↑ and ↓ choose
+# one, Return or Tab types the rest of it, and esc hides the list.
+
+isnamechar(c::Char) = isletter(c) || isdigit(c) || c == '_'
+
+"""
+The names that the text before the caret could be the start of: the line, the
+column where the name starts, and the names. Nothing when the caret isn't in an
+expression of a sheet, or no name fits. A name fits when it starts with what's
+typed, or when one of its words does.
+"""
+offered(e) = begin
+  b = e.buf
+  i, col = b.caret
+  (!selecting(b) && insheet(b, i)) || return nothing
+  cs = sheetcells(b.lines[i])
+  c = cs[end]
+  (c.lo <= col <= c.limit && nearest(cs, col) == length(cs)) || return nothing
+  s, _ = sheet(b, i)
+  rows = [parts(b.lines[j]) for j in s+1:i-1]
+  names = known(rows, length(rows) + 1)
+  isempty(names) && return nothing
+  chars = collect(b.lines[i])
+  # In the middle of a word, nothing is offered
+  col < length(chars) && isnamechar(chars[col+1]) && return nothing
+  before = map(lowercase, chars[c.lo+1:col])
+  # The longest run of words before the caret that starts a name wins, so "wall l" finds "Wall length"
+  for from in max(1, length(before) - 40):length(before)
+    (isletter(before[from]) || before[from] == '_') || continue
+    from > 1 && isnamechar(before[from-1]) && continue
+    typed = String(before[from:end])
+    fits(n) = lowercase(n) != typed && (startswith(lowercase(n), typed) || any(w -> startswith(w, typed), split(lowercase(n))))
+    found = filter(fits, names)
+    isempty(found) || return (i, c.lo + from - 1, found)
+    # A whole name is typed already, so its last words aren't the start of another
+    any(n -> lowercase(n) == typed, names) && return nothing
+  end
+  nothing
+end
+
+"Which name of the list is chosen, and the list that esc hid. Each is kept with the place its list is for."
+suggesting(e) = get!(() -> Ref{Any}((at=(0, 0), chosen=1, hidden=(0, 0))), e.nodes, :suggesting)
+
+"The list of names to show now: the line, the column where the name starts, the names and which one is chosen. Or nothing."
+suggestion(e) = begin
+  found = offered(e)
+  found === nothing && return nothing
+  i, start, names = found
+  state = suggesting(e)[]
+  state.hidden == (i, start) && return nothing
+  (i, start, names, state.at == (i, start) ? clamp(state.chosen, 1, length(names)) : 1)
+end
+
+"What a key does while the list of names shows. It returns true when the key was for the list."
+suggest_key!(e, K) = begin
+  found = suggestion(e)
+  found === nothing && return false
+  i, start, names, chosen = found
+  state = suggesting(e)
+  if K == Keys.down || K == Keys.up
+    state[] = (at=(i, start), chosen=mod1(chosen + (K == Keys.down ? 1 : -1), length(names)), hidden=(0, 0))
+  elseif K == Keys.enter || K == Keys.tab
+    edit!(e.buf, (i, start), e.buf.caret, names[chosen])
+  elseif K == Keys.escape
+    state[] = (at=(0, 0), chosen=1, hidden=(i, start))
+  else
+    return false
+  end
+  touch!(e)
+  true
+end
+
+"The list of names, placed in the window under the name being typed. Nothing when there's no list to show."
+suggestbox(e) = begin
+  found = suggestion(e)
+  found === nothing && return ()
+  i, start, names, chosen = found
+  it = item(e, i)
+  s = it.content
+  s isa Sheet || return ()
+  r = findfirst(==(i), s.rows)
+  r === nothing && return ()
+  f, dx = cellflow(s, r, length(s.cells[r]))
+  k, x = spot(f, start)
+  face = Face(SHEET_FONT, SHEET_WEIGHT, s.size, colours.ink, false)
+  wide = max(150px, maximum(n -> measure(face, n), names) + 26px)
+  list = Column(fixed(wide), Alignment.Start, padding(4px), radius(7px), background(colours.float), border(1px, :solid, colours.line), lifted,
+    name="Names",
+    [Row(width(grow=grow), height(s.size * 1.8), Alignment.Center, padding(8px, 0px), radius(4px),
+         background(j == chosen ? colours.active : clear),
+       Text(n, size=s.size, family=SHEET_FONT, subfamily=SHEET_WEIGHT, color=colours.ink, wrap=WrapMode.none))
+     for (j, n) in enumerate(names)]...)
+  # The page's text is in the middle of the space beside the file panel
+  w, _ = window_size(e)
+  side = PANEL_W * opened(e)
+  left = side + max(PAGE_X, (w - side - e.width) / 2) + dx + x - 9px
+  top = TOPBAR_H + PAGE_TOP + it.top - e.scroll.offset + row_top(s, r) + f.lh * k + 3px
+  top >= TOPBAR_H || return ()
+  (Row(width(grow=grow), height(grow=grow), Alignment.Start, padding(top, 0px, 0px, left), list),)
 end
 
 # --- the page's layout ---------------------------------------------------------------
@@ -1296,6 +1865,17 @@ layout!(e) = begin
         continue
       end
     end
+    # A `sheet` code block is drawn as a sheet, unless the caret is on its first or last line
+    if ks[i].kind == Kind.fence && ks[i].level == 0 && ks[i].lang == SHEET
+      run = sheet(b, i)
+      if run !== nothing
+        content = sheetgrid(e, run...)
+        push!(items, Item(i, run[2], top, tall(content), content))
+        top += tall(content)
+        i = run[2] + 1
+        continue
+      end
+    end
     # A table needs its line of dashes. It shows as plain lines while the caret is on that line.
     if j > i && isdivider(b.lines[i+1]) && !israw(b, i + 1)
       content = grid(e, i, j)
@@ -1323,6 +1903,10 @@ reveal!(e) = begin
     k, _ = spot(it.content, e.buf.caret[2])
     top = it.top + it.content.above + it.content.lh * (k - 1)
     bottom = top + it.content.lh
+  elseif it.content isa Sheet
+    r = clamp(e.buf.caret[1] - it.first, 1, length(it.content.rows))
+    top = it.top + row_top(it.content, r)
+    bottom = top + it.content.heights[r]
   end
   scroll_into_view!(e.scroll, PAGE_TOP + top - 30px, PAGE_TOP + bottom + 40px)
 end
@@ -1377,6 +1961,7 @@ end
 blocktype(it::Item) = begin
   c = it.content
   c isa Grid && return Table
+  c isa Sheet && return SheetBlock
   c isa Live ? LiveBlock : blocktype(c.kind)
 end
 
@@ -1400,7 +1985,7 @@ blocks(d::Document, items) = begin
   for it in items
     U = blocktype(it)
     # A heading, a rule, a table and a live block each stand alone, and a ``` line that opens a block starts a new one
-    alone = U in (Heading, Rule, LiveBlock) || it.content isa Grid || (U === CodeBlock && ks[it.first].kind == Kind.fence && ks[it.first].level == 0)
+    alone = U in (Heading, Rule, LiveBlock, SheetBlock) || it.content isa Grid || (U === CodeBlock && ks[it.first].kind == Kind.fence && ks[it.first].level == 0)
     (U !== T || alone) && close()
     T = U
     push!(group, it)
@@ -1427,7 +2012,12 @@ describe(d::Document) = begin
     spacer(total - items[hi].top - items[hi].tall))
 end
 
-cursor(::Document) = :ibeam
+# With ⌘ held, a click on a link opens it, so the mouse shows a hand there
+cursor(d::Document) = begin
+  e = editor(d)
+  w = window_of(e)
+  w !== nothing && Keys.cmd in w.keys && link_at(e, w.mouse) !== nothing ? :hand : :ibeam
+end
 
 describe(p::Page) = begin
   e = editor(p)
@@ -1571,6 +2161,8 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
         x, y = cell_origin(g, r, c)
         fill_selection(ctx, marks(g.flows[r][c], ui.left + x, top + y, (max(sel[1], cell.lo), min(sel[2], cell.limit), false), margin=false))
       end
+    elseif it.content isa Sheet
+      append!(rects, marks(e, it, it.content, ui.left, top))
     elseif it.content isa Live
       # A live block is selected whole
       lo, hi = selection(b)
@@ -1593,6 +2185,7 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
       end
       continue
     end
+    it.content isa Sheet && caret(ctx, e, it.content, ui.left, top)
     it.first == b.caret[1] && it.content isa Flow && caret(ctx, e, it.content, ui.left, top, b.caret[2])
   end
 end
@@ -1618,6 +2211,7 @@ locate(e, (x, y)) = begin
     k = clamp(floor(Int, num(dy - it.top - y) / num(f.lh)) + 1, 1, length(f.lines))
     return (g.rows[r], cellcol(f, k, dx - x, cells[c]))
   end
+  it.content isa Sheet && return locate(e, it, it.content, dx, dy - it.top)
   if it.content isa Live
     # A point on a live block counts as the end of the line above it or the start of the line below
     above = dy < it.top + it.tall/2 ? it.first > 1 : it.last == length(e.buf.lines)
@@ -1682,6 +2276,7 @@ press!(e, pos) = begin
     b.caret = b.anchor = (min(it.first + 1, it.last), 0)
     return touch!(e)
   end
+  it.content isa Sheet && press!(e, it, it.content, pos) && return touch!(e)
   at = settle(b, locate(e, pos))
   t, before, count = e.clicked
   count = time() - t < 0.4 && before == at ? count % 3 + 1 : 1
@@ -1751,7 +2346,11 @@ for c in 'a':'z'
 end
 for (d, c) in zip(0:9, ")!@#\$%^&*(")
   TYPED[getproperty(Keys, Symbol(d))] = (Char('0' + d), c)
+  # The same digit on the number pad
+  TYPED[getproperty(Keys, Symbol(:num, d))] = (Char('0' + d), Char('0' + d))
 end
+TYPED[Keys.plus] = ('+', '+')    # the number pad's + and *
+TYPED[Keys.times] = ('*', '*')
 for (key, pair) in (:tilde => ('`', '~'), :minus => ('-', '_'), :equal => ('=', '+'), :left_bracket => ('[', '{'),
                     :right_bracket => (']', '}'), :semicolon => (';', ':'), :apostrophe => ('\'', '"'),
                     :comma => (',', '<'), :period => ('.', '>'), :slash => ('/', '?'), :backslash => ('\\', '|'),
@@ -1770,7 +2369,17 @@ type!(e, new; typing=false) = begin
     new = replace(new, '\n' => ' ')
   end
   lo, hi = selection(b)
+  # A third ` that opens a code block. Inside a block it would close that block instead.
+  fence = new == "`" && lo == hi && kinds(b)[lo[1]].kind != Kind.code && strip(b.lines[lo[1]]) == "``" && lo[2] == length(b.lines[lo[1]])
   edit!(b, lo, hi, new; typing)
+  if fence
+    # The line that closes the block is typed too. Without it, the block would
+    # take the line that opens the next block as its end, and turn every block
+    # after it inside out.
+    at = b.caret
+    edit!(b, at, at, "\n```")
+    b.caret = b.anchor = at
+  end
   touch!(e)
 end
 
@@ -1803,6 +2412,7 @@ vertical(e, by::Int) = begin
   it = item(e, i)
   at = it.content isa Grid ? gridcell(it.content, b.caret) : nothing
   at === nothing || return vertical(e, it, at, by)
+  it.content isa Sheet && return vertical(e, it, it.content, by)
   f = flow(e, i)
   k, x = spot(f, col)
   x = e.goal = something(e.goal, x)
@@ -1810,6 +2420,9 @@ vertical(e, by::Int) = begin
   j = i + by
   j < 1 && return (1, 0)
   j > length(b.lines) && return line_end(b, i)
+  # Into a sheet, the caret goes to the cell that's under it or over it
+  into = item(e, j)
+  into.content isa Sheet && return enter(e, into, into.content, by, x)
   f = flow(e, j, true)
   (j, colat(f, by < 0 ? length(f.lines) : 1, x))
 end
@@ -1881,6 +2494,7 @@ end
 
 erase!(e, to::Pos) = begin
   b = e.buf
+  insheet(b, b.caret[1]) && !selecting(b) && erase_row!(e, to) && return
   cell = cellat(b, b.caret)
   # In a table, a cell's edges can't be deleted
   cell === nothing || selecting(b) || (to[1] == b.caret[1] && within(cell, to[2])) || return
@@ -1891,6 +2505,7 @@ end
 "Return starts a new line. What else it does depends on the block the caret is in."
 newline!(e) = begin
   b = e.buf
+  insheet(b, b.caret[1]) && b.caret[1] == b.anchor[1] && return next_row!(e)
   isempty(rowcells(b, b.caret)) || return next_cell!(e, false, down=true)
   selecting(b) ? type!(e, "\n") : newline!(e, block(b, b.caret[1]))
 end
@@ -1921,6 +2536,12 @@ newline!(e, ::Type{CodeBlock}) = begin
   b = e.buf
   i, col = b.caret
   line = kinds(b)[i]
+  if line.kind == Kind.fence && line.level == 0 && line.lang == SHEET && col == length(b.lines[i])
+    # The line that opens a sheet. Its first row starts with a place for a name.
+    type!(e, "\n = ")
+    b.caret = b.anchor = (i + 1, 0)
+    return touch!(e)
+  end
   line.kind == Kind.fence && return type!(e, "\n")
   before = head(b.lines[i], col)
   type!(e, "\n" * match(r"^ *", before).match * (opens(before, line.lang) ? STEP : ""))
@@ -1952,6 +2573,7 @@ backstep(b::Buffer, ::Type{Table}) = beside(b, b.caret, -1)
 "Tab moves text in, and shift-Tab moves it back out. What they move depends on the block the caret is in."
 indent!(e, out::Bool) = begin
   b = e.buf
+  insheet(b, b.caret[1]) && return sheet_tab!(e, out)
   isempty(rowcells(b, b.caret)) || return next_cell!(e, out)
   indent!(e, out, block(b, b.caret[1]))
 end
@@ -2084,6 +2706,8 @@ onkey(e::Editor, ev::KeyPress{K}) where K = begin
     return
   end
   e.popup == :finder && return finder_key!(e, K)
+  # The list of names under a sheet's expression takes ↑, ↓, Return, Tab and esc
+  !cmd && !opt && !shift && suggest_key!(e, K) && return nothing
   if K == Keys.escape
     e.popup = :none
     b.anchor = b.caret
@@ -2508,7 +3132,7 @@ describe(e::Editor) = begin
       node!(Page, e, :page)))
   popup = e.popup == :none ? () : (node!(Backdrop, e, :backdrop), e.popup == :outline ? outline(e) : finder(e))
   Stack(width(grow=grow), height(grow=grow), Alignment.Start, name="Editor",
-    body, tablebar(e)..., node!(TopBar, e, :topbar), popup...)
+    body, tablebar(e)..., suggestbox(e)..., node!(TopBar, e, :topbar), popup...)
 end
 
 # --- window -------------------------------------------------------------------------------
