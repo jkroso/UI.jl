@@ -508,6 +508,11 @@ end
   rect::NTuple{4,px} = (0px, 0px, 0px, 0px)   # where it was last drawn, to put its tooltip under it
   quiet::Bool = false                         # clicked, so no tooltip until the mouse leaves it
 end
+"A button of the bar that shows over the table the caret is in"
+@def mutable struct TableButton <: SemanticUI
+  action::Symbol = :none
+  label::String = ""
+end
 @def mutable struct Count <: SemanticUI       # the word count in the top bar
   rect::NTuple{4,px} = (0px, 0px, 0px, 0px)
   quiet::Bool = false
@@ -807,6 +812,34 @@ cellpieces(text::String, lo::Int, hi::Int, base::Face, raw::Bool) = begin
   out
 end
 
+"The text of each cell of a row of a table, without the spaces around it"
+celltexts(line::AbstractString) = begin
+  chars = collect(strip(line))
+  !isempty(chars) && chars[1] == '|' && popfirst!(chars)
+  !isempty(chars) && chars[end] == '|' && (length(chars) < 2 || chars[end-1] != '\\') && pop!(chars)
+  out, cell = String[], Char[]
+  for (i, c) in enumerate(chars)
+    c == '|' && (i == 1 || chars[i-1] != '\\') ? (push!(out, strip(String(cell))); empty!(cell)) : push!(cell, c)
+  end
+  push!(out, strip(String(cell)))
+end
+
+tableline(cells) = "| " * join(cells, " | ") * " |"
+
+"The side each column's text sits on, from the table's line of dashes: :left, :center or :right"
+aligns(divider::AbstractString) =
+  [startswith(c, ':') && endswith(c, ':') ? :center : endswith(c, ':') ? :right : :left for c in celltexts(divider)]
+
+"Move each line of `f` across so its text sits on `side` of a space `room` wide"
+align(f::Flow, room::px, side::Symbol) = begin
+  side == :left && return f
+  lines = map(f.lines) do vl
+    dx = max(0px, room - sum(seg -> seg.w, vl.segs, init=0px)) * (side == :center ? 0.5 : 1)
+    VLine([Seg(s.text, s.col, s.n, s.face, s.atomic, s.link, s.x + dx, s.w) for s in vl.segs], vl.x + dx, vl.from, vl.to)
+  end
+  Flow(lines, f.lh, f.size, f.above, f.below, f.kind, f.raw)
+end
+
 "Lay out the table in lines `from` to `to` of the document"
 grid(e, from::Int, to::Int) = begin
   b = e.buf
@@ -832,7 +865,9 @@ grid(e, from::Int, to::Int) = begin
     natural = [clamp(w, 60px, e.width * 0.75) for w in natural]
     space = e.width - 1px * (ncols + 1)
     widths = natural .* (num(space) / num(sum(natural)))
-    flows = [[wrap(row[c], widths[c] - 2CELL_X; lh, size=base.size, left=CELL_X) for c in 1:ncols] for row in parts]
+    sides = aligns(b.lines[from+1])
+    flows = [[align(wrap(row[c], widths[c] - 2CELL_X; lh, size=base.size, left=CELL_X), widths[c] - 2CELL_X, get(sides, c, :left))
+              for c in 1:ncols] for row in parts]
     heights = [maximum(f -> tall(f), row) + 2CELL_Y for row in flows]
     Grid(rows, widths, heights, cells, flows)
   end
@@ -1947,6 +1982,78 @@ onkey(e::Editor, ev::KeyPress{K}) where K = begin
   nothing
 end
 
+# --- the bar over a table ----------------------------------------------------------------
+#
+# While the caret is in a table, a small bar floats over the table's top left
+# corner. Its buttons add and remove a row or a column at the caret, and put the
+# text of the caret's column on the left, in the centre or on the right.
+
+const TABLE_ACTIONS = (:addrow => "+Row", :delrow => "−Row", :addcol => "+Col", :delcol => "−Col",
+                       :left => "L", :center => "C", :right => "R")
+const DASHES = (left=":---", center=":---:", right="---:")
+const BAR_H = 26px
+
+"Change the table the caret is in, then put the caret back in a cell"
+tableop!(e, action::Symbol) = begin
+  b = e.buf
+  run = table(b, b.caret[1])
+  run === nothing && return
+  s, t = run
+  i = b.caret[1] == s + 1 ? s : b.caret[1]
+  cs = tablecells(b.lines[i])
+  c = isempty(cs) ? 1 : nearest(cs, b.caret[2])
+  rows = map(celltexts, b.lines[s:t])
+  n = maximum(length, rows)
+  rows = [[r; fill(k == 2 ? "---" : "", n - length(r))] for (k, r) in enumerate(rows)]
+  k = i - s + 1   # the caret's row in `rows`, where row 2 is the line of dashes
+  if action == :addrow
+    k = max(k, 2) + 1
+    insert!(rows, k, fill("", n))
+  elseif action == :delrow
+    k == 1 && return   # the heading row stays
+    deleteat!(rows, k)
+    k = k > length(rows) ? (length(rows) > 2 ? length(rows) : 1) : k
+  elseif action == :addcol
+    c += 1
+    foreach((j, r) -> insert!(r, c, j == 2 ? "---" : ""), eachindex(rows), rows)
+  elseif action == :delcol
+    n == 1 && return
+    foreach(r -> deleteat!(r, c), rows)
+    c = min(c, n - 1)
+  else
+    rows[2][c] = getproperty(DASHES, action)
+  end
+  edit!(b, (s, 0), line_end(b, t), join(map(tableline, rows), "\n"))
+  line = s + k - 1
+  cell = tablecells(b.lines[line])[c]
+  b.caret = b.anchor = (line, cell.hi)
+  touch!(e)
+end
+
+describe(t::TableButton) =
+  Box(height(BAR_H - 6px), padding(7px, 0px), radius(4px), background(ishovered(t) ? colours.hover : clear),
+    label(t.label, 11px, color=colours.dim))
+
+cursor(::TableButton) = :hand
+onkey(t::TableButton, ::KeyPress{Keys.mouse_left}) = (e = editor(t); tableop!(e, t.action); focus(e))
+
+"The bar over the table the caret is in, placed in the window. Nothing when the caret isn't in a table."
+tablebar(e) = begin
+  b = e.buf
+  (b.caret[1] == b.anchor[1] && !isempty(e.layout)) || return ()
+  it = item(e, b.caret[1])
+  it.content isa Grid || return ()
+  top = TOPBAR_H + PAGE_TOP + it.top + TABLE_GAP - e.scroll.offset - BAR_H - 3px
+  top >= TOPBAR_H || return ()
+  bar = Row(height(BAR_H), padding(3px, 0px), radius(6px), background(colours.float), border(1px, :solid, colours.line),
+    [node!(() -> TableButton(action=a, label=l), e, (:table, a)) for (a, l) in TABLE_ACTIONS]...)
+  # The page's text is in the middle of the space beside the file panel
+  w, _ = window_size(e)
+  side = PANEL_W * opened(e)
+  left = side + max(PAGE_X, (w - side - e.width) / 2)
+  (Row(width(grow=grow), height(grow=grow), Alignment.Start, padding(top, 0px, 0px, left), bar),)
+end
+
 # --- the top bar ------------------------------------------------------------------------
 
 describe(b::ToolButton) = begin
@@ -2208,7 +2315,7 @@ describe(e::Editor) = begin
       node!(Page, e, :page)))
   popup = e.popup == :none ? () : (node!(Backdrop, e, :backdrop), e.popup == :outline ? outline(e) : finder(e))
   Stack(width(grow=grow), height(grow=grow), Alignment.Start, name="Editor",
-    body, node!(TopBar, e, :topbar), popup...)
+    body, tablebar(e)..., node!(TopBar, e, :topbar), popup...)
 end
 
 # --- window -------------------------------------------------------------------------------
