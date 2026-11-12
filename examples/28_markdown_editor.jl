@@ -568,6 +568,7 @@ pieces(e, text::String, line::Line, raw::Bool) = begin
     end
     return out
   elseif k in (Kind.fence, Kind.table, Kind.rule)
+    k == Kind.fence && !raw && return out
     isempty(text) || push!(out, piece(text, 0, k == Kind.table ? base : Face(base, color=colours.faint)))
     return out
   end
@@ -609,15 +610,33 @@ symbols!(out, text, col, face, link="") = begin
   out
 end
 
+"The first and last line of the code block that line `i` is in, with the lines that open and close it"
+codeblock(b::Buffer, i::Int) = begin
+  ks = kinds(b)
+  s = t = i
+  while s > 1 && !(ks[s].kind == Kind.fence && ks[s].level == 0); s -= 1 end
+  while t < length(ks) && !(ks[t].kind == Kind.fence && ks[t].level == 1 && t > s); t += 1 end
+  (s, t)
+end
+
+"True when the caret or the other end of the selection is in the code block that line `i` is in"
+incode(b::Buffer, i::Int) = begin
+  s, t = codeblock(b, i)
+  s <= b.caret[1] <= t || s <= b.anchor[1] <= t
+end
+
 "Lay out line `i` of the document"
 flow(e, i::Int, raw::Bool=i == e.buf.caret[1]) = begin
   text, line = e.buf.lines[i], kinds(e.buf)[i]
+  # The lines that open and close a code block only show while the caret is in the block
+  line.kind == Kind.fence && (raw = incode(e.buf, i))
   length(e.flows) > 4000 && empty!(e.flows)
   get!(e.flows, (text, line, raw)) do
     base = face(e, line)
     ps = pieces(e, text, line, raw)
     k = line.kind
-    lh = k == Kind.heading ? base.size * 1.35 : body(e).size * 1.65
+    # A hidden ``` line leaves a little room at the top or bottom of its block
+    lh = k == Kind.heading ? base.size * 1.35 : body(e).size * (k == Kind.fence && !raw ? 0.6 : 1.65)
     left = k in (Kind.code, Kind.fence) ? BLOCK_X : k == Kind.blockquote ? QUOTE_X : 0px
     # Lines that a list item wraps onto start under its text, not under its bullet
     hang = k in (Kind.bullet, Kind.ordered) ? sum(p -> measure(p.face, p.text), ps[1:min(end, line.level > 0 ? 2 : 1)], init=0px) : left

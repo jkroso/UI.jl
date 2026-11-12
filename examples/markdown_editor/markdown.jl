@@ -11,7 +11,7 @@
 "What one line of a document is"
 struct Line
   kind::Kind
-  level::Int   # a heading's level, or how many spaces indent the line
+  level::Int   # a heading's level, how many spaces indent the line, or 1 on the line that closes a code block
   prefix::Int  # how many characters of indent and markup start the line
   lang::String # the language of the code block that a line of code is in
 end
@@ -52,8 +52,10 @@ classify(lines) = begin
   map(lines) do text
     line = Line(text, lang)
     # The line that opens a code block names its language
-    line.kind == Kind.fence && (lang = lang === nothing ? line.lang : nothing)
-    line
+    line.kind == Kind.fence || return line
+    closes = lang !== nothing
+    lang = closes ? nothing : line.lang
+    Line(Kind.fence, closes ? 1 : 0, 0, line.lang)
   end
 end
 
