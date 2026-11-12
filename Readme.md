@@ -79,7 +79,7 @@ Containers also take:
 - `TextInput(color=..., placeholder_color=...)` sets the colours of the typed text and of the placeholder.
 - `Wedge(inner=0.5, outer=1.0, start=0, sweep=90)` draws a slice of a ring in the middle of its box, like a piece of a pie chart. Its radii are fractions of the biggest circle that fits in the box, and its angles are in degrees, clockwise from 12 o'clock. Only the slice itself gets the cursor, so wedges stacked in one box can each be hovered and clicked.
 
-`examples/25_clay_website.jl` is a port of Clay's website, and it uses most of these. `examples/26_finder.jl` is a file browser modelled on the macOS Finder. `examples/27_disk_usage.jl` shows what's using your disk space as a sunburst chart made of wedges. `examples/28_markdown_editor.jl` is a Markdown editor modelled on Constly. It draws each line the way it will read, and you can type in it.
+`examples/25_clay_website.jl` is a port of Clay's website, and it uses most of these. `examples/26_finder.jl` is a file browser modelled on the macOS Finder. `examples/27_disk_usage.jl` shows what's using your disk space as a sunburst chart made of wedges. `examples/28_markdown_editor.jl` is a Markdown editor modelled on Constly. It draws each line the way it will read, and you can type in it. A code block in the language `ui` runs its Julia code and shows the node that the code makes, so a document can hold nodes from any module.
 
 `julia --project=. examples/hot_reload.jl examples/26_finder.jl` runs an example so that each change you save to it, or to UI.jl, shows in the open window straight away. The window keeps what it was showing. `examples/hot_reload.jl` explains what happens when you change a struct or save a mistake.
 

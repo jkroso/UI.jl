@@ -50,6 +50,24 @@ end
 The line that opens a code block names its language, and the code is coloured to
 match. Try changing `julia` to `python`.
 
+## Live blocks
+
+A code block in the language `ui` holds Julia code. The page runs the code and
+shows what it makes: a node from any Julia module, or any other value as text.
+
+```ui
+@use "./widgets.jl" Counter
+Counter()
+```
+
+```ui
+@use "./widgets.jl" Meter
+Meter(done=0.7)
+```
+
+To change the code, move the caret into the block with ↑ or ↓, or hold ⌥ and
+click the block.
+
 ---
 
 The buttons at the top right list the headings, change the font and change the

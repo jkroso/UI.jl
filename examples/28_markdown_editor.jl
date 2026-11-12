@@ -39,7 +39,7 @@
 @use "github.com/jkroso/MiniFB.jl"...
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
-@use "../Interface/abstract" SemanticUI WrapMode describe reuse! window_of focus
+@use "../Interface/abstract" SemanticUI GeometricUI WrapMode describe reuse! detach! window_of focus
 @use "../Interface/draw" ui draw ishovered cursor open_url viewport
 @use "../Interface/fonts" skia_font
 @use "../Interface/inspector" toggle_inspector!
@@ -423,7 +423,13 @@ struct Item
   last::Int
   top::px        # from the top of the page's text
   tall::px
-  content::Any   # a Flow or a Grid
+  content::Any   # a Flow, a Grid or a Live
+end
+
+"What a `ui` code block made when its code ran, and how tall that is on the page"
+struct Live
+  node::Any      # a SemanticUI or a GeometricUI
+  tall::px
 end
 
 "A table laid out"
@@ -465,6 +471,7 @@ end
 end
 
 @def mutable struct TopBar <: SemanticUI end
+@def mutable struct PanelTop <: SemanticUI end   # the top of the file panel, under the close, minimise and zoom buttons
 @def mutable struct Page <: SemanticUI end       # the scrolling area around the text
 @def mutable struct Document <: SemanticUI end   # the text itself
 @def mutable struct Backdrop <: SemanticUI end   # catches clicks outside a popup
@@ -474,6 +481,18 @@ end
   action::Symbol = :none
 end
 @def mutable struct Count <: SemanticUI end
+
+# The parts of the document. Each one holds the items that show its lines.
+@def mutable struct Paragraph <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+@def mutable struct Heading <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+@def mutable struct List <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+@def mutable struct Quote <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+@def mutable struct CodeBlock <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+@def mutable struct Table <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+@def mutable struct Rule <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+"A code block in the language `ui`, showing what its code made"
+@def mutable struct LiveBlock <: SemanticUI; first::Int = 0; last::Int = 0; items::Vector{Item} = Item[] end
+const Block = Union{Paragraph,Heading,List,Quote,CodeBlock,Table,Rule,LiveBlock}
 @def mutable struct FileRow <: SemanticUI
   path::String = ""
   finder::Int = 0    # its place in the file finder's list, or 0 in the file panel
@@ -805,6 +824,52 @@ end
 
 # --- the page's layout ---------------------------------------------------------------
 
+# --- live blocks ---------------------------------------------------------------------
+#
+# A code block in the language `ui` holds Julia code. The page runs it once and
+# shows its value where the block is: a UI node from any module, or any other
+# value as text. The node is kept, so a node with state keeps it between frames.
+
+const LIVE = "ui"
+const LIVE_GAP = 8px   # above and below what a live block shows
+
+"The module that the live blocks of every document run in"
+sandbox(e) = get!(e.nodes, :sandbox) do
+  m = Module(:Page)
+  Core.eval(m, :(using Kip))
+  m
+end
+
+"Run the code of a live block and return a UI node that shows its value, or its error"
+evaluate(e, code::String) = begin
+  path = e.buf.path
+  value = try
+    # Kip finds a path like "./widgets.jl" from the folder of the document
+    include_string(sandbox(e), code, isempty(path) ? joinpath(e.folder, "untitled.md") : path)
+  catch err
+    err = err isa LoadError ? err.error : err
+    return note(sprint(showerror, err), colours.accent)
+  end
+  value isa Union{SemanticUI,GeometricUI} ? value : note(repr("text/plain", value), colours.text)
+end
+
+note(text, colour) = Box(width(grow=grow), padding(BLOCK_X, 10px), background(colours.block),
+  Text(String(text), size=13px, family=MONO, color=colour))
+
+"What the live block with this code shows"
+live(e, code::String) = begin
+  node = get!(() -> evaluate(e, code), e.nodes, (:live, e.buf.path, code))
+  node isa SemanticUI && own!(node!(Document, e, :document), node)
+  # Lay it out once to learn how tall it is
+  concrete = describe(Column(fixed(e.width), Alignment.Start, geometry(node)), (e.width, 9999px))
+  Live(node, concrete.height + 2LIVE_GAP)
+end
+
+# The code of a live block can load methods that are newer than the frame that
+# ran it, so the node is described with the newest methods there are
+geometry(node::SemanticUI) = Base.invokelatest(convert, GeometricUI, node)
+geometry(node::GeometricUI) = detach!(node)
+
 "Work out what the page shows and how tall each part is"
 layout!(e) = begin
   b = e.buf
@@ -821,6 +886,17 @@ layout!(e) = begin
     if ks[i].kind == Kind.table
       while j < n && ks[j+1].kind == Kind.table
         j += 1
+      end
+    end
+    # A `ui` code block shows what its code makes, unless the caret is in it
+    if ks[i].kind == Kind.fence && ks[i].level == 0 && ks[i].lang == LIVE && !incode(b, i)
+      t = codeblock(b, i)[2]
+      if t > i && ks[t].kind == Kind.fence && ks[t].level == 1
+        content = live(e, join(b.lines[i+1:t-1], "\n"))
+        push!(items, Item(i, t, top, content.tall, content))
+        top += content.tall
+        i = t + 1
+        continue
       end
     end
     # A table needs its line of dashes. It shows as plain lines while the caret is on that line.
@@ -896,6 +972,44 @@ describe(e::Editor, it::Item, g::Grid) = begin
   Box(width(grow=grow), padding(0px, TABLE_GAP), table)
 end
 
+describe(e::Editor, it::Item, l::Live) = begin
+  Box(width(grow=grow), height(l.tall), Alignment.Start, padding(0px, LIVE_GAP), geometry(l.node))
+end
+
+"The kind of block that an item is part of, or nothing for a blank line"
+blocktype(it::Item) = begin
+  c = it.content
+  c isa Grid && return Table
+  c isa Live && return LiveBlock
+  k = c.kind
+  k == Kind.paragraph ? Paragraph : k == Kind.heading ? Heading : k in (Kind.bullet, Kind.ordered) ? List :
+  k == Kind.blockquote ? Quote : k in (Kind.code, Kind.fence) ? CodeBlock : k == Kind.table ? Table :
+  k == Kind.rule ? Rule : nothing
+end
+
+"The items as the nodes of the document: one for each paragraph, list, table and so on"
+blocks(d::Document, items) = begin
+  ks = kinds(editor(d).buf)
+  out, group, T = Any[], Item[], nothing
+  close() = begin
+    isempty(group) && return
+    T === nothing ? append!(out, group) : push!(out, own!(d, T(first=group[1].first, last=group[end].last, items=copy(group))))
+    empty!(group)
+  end
+  for it in items
+    U = blocktype(it)
+    # A heading, a rule, a table and a live block each stand alone, and a ``` line that opens a block starts a new one
+    alone = U in (Heading, Rule, LiveBlock) || it.content isa Grid || (U === CodeBlock && ks[it.first].kind == Kind.fence && ks[it.first].level == 0)
+    (U !== T || alone) && close()
+    T = U
+    push!(group, it)
+  end
+  close()
+  out
+end
+
+describe(b::Block) = Column(width(grow=grow), Alignment.Start, [describe(editor(b), it) for it in b.items]...)
+
 describe(d::Document) = begin
   e = editor(d)
   items = e.layout
@@ -908,7 +1022,7 @@ describe(d::Document) = begin
   e.shown = lo:hi
   Column(fixed(e.width), Alignment.Start, name="Document",
     spacer(items[lo].top),
-    [describe(e, it) for it in items[lo:hi]]...,
+    [x isa Item ? describe(e, x) : x for x in blocks(d, items[lo:hi])]...,
     spacer(total - items[hi].top - items[hi].tall))
 end
 
@@ -1056,6 +1170,11 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
         x, y = cell_origin(g, r, c)
         fill_selection(ctx, marks(g.flows[r][c], ui.left + x, top + y, (max(sel[1], cell.lo), min(sel[2], cell.limit), false), margin=false))
       end
+    elseif it.content isa Live
+      # A live block is selected whole
+      lo, hi = selection(b)
+      selecting(b) && lo[1] <= it.first && hi[1] >= it.last &&
+        push!(rects, (num(ui.left), num(top), num(ui.left + e.width), num(top + it.tall)))
     else
       sel = selected(b, it.first)
       sel === nothing || append!(rects, marks(it.content, ui.left, top, sel))
@@ -1097,6 +1216,11 @@ locate(e, (x, y)) = begin
     x, y = cell_origin(g, r, c)
     k = clamp(floor(Int, num(dy - it.top - y) / num(f.lh)) + 1, 1, length(f.lines))
     return (g.rows[r], cellcol(f, k, dx - x, cells[c]))
+  end
+  if it.content isa Live
+    # A point on a live block counts as the end of the line above it or the start of the line below
+    above = dy < it.top + it.tall/2 ? it.first > 1 : it.last == length(e.buf.lines)
+    return above && it.first > 1 ? line_end(e.buf, it.first - 1) : it.last < length(e.buf.lines) ? (it.last + 1, 0) : (it.first, 0)
   end
   f = it.content::Flow
   k = clamp(floor(Int, num(dy - it.top - f.above) / num(f.lh)) + 1, 1, length(f.lines))
@@ -1142,6 +1266,14 @@ press!(e, pos) = begin
   if held(e, Keys.cmd)
     url = link_at(e, pos)
     url === nothing || return open_url(url)
+  end
+  it = e.layout[something(findlast(it -> it.top <= pos[2] - e.origin[2], e.layout), 1)]
+  if it.content isa Live
+    # A live block takes its own clicks. A click with ⌥ held shows its code.
+    e.clicked = (time(), (it.first, 0), 0)
+    held(e, Keys.opt) || return
+    b.caret = b.anchor = (min(it.first + 1, it.last), 0)
+    return touch!(e)
   end
   at = settle(b, locate(e, pos))
   t, before, count = e.clicked
@@ -1500,13 +1632,16 @@ onkey(c::Count, ::KeyPress{Keys.mouse_left}) = next_stat!(editor(c))
 
 button(e, action, icon) = node!(() -> ToolButton(icon=icon, action=action), e, action)
 
+# The close, minimise and zoom buttons sit over the first 78px of the window
+lights(e) = Row(fixed(PANEL_W), height(TOPBAR_H), padding(0px, 0px, 0px, 78px), button(e, :panel, "layout-sidebar"))
+
 describe(t::TopBar) = begin
   e = editor(t)
   b = e.buf
   side = 250px
+  # With the file panel open, the panel button is in the top of the panel
   Row(width(grow=grow), height(TOPBAR_H), name="TopBar",
-    # The close, minimise and zoom buttons sit over the first 78px
-    Row(fixed(side), height(grow=grow), padding(0px, 0px, 0px, 78px), button(e, :panel, "layout-sidebar")),
+    Row(fixed(side), height(grow=grow), (e.panel ? () : (lights(e),))...),
     Box(width(grow=grow), height(grow=grow), clip=true,
       Row(child_gap=6px,
         label(name(b), 13px, color=colours.dim),
@@ -1518,8 +1653,8 @@ describe(t::TopBar) = begin
       button(e, :theme, "circle-half")))
 end
 
-# The window has no title bar, so you move it by dragging the top bar
-onkey(t::TopBar, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(t))
+# The window has no title bar, so you move it by dragging the top bar or the top of the file panel
+onkey(t::Union{TopBar,PanelTop}, ::KeyPress{Keys.mouse_left}) = drag_window!(window_of(t))
 
 # --- the file panel -----------------------------------------------------------------------
 
@@ -1538,9 +1673,12 @@ end
 
 onkey(r::FileRow, ::KeyPress{Keys.mouse_left}) = open!(editor(r), r.path)
 
+describe(t::PanelTop) = lights(editor(t))
+
 panel(e) =
   Column(fixed(PANEL_W), height(grow=grow), Alignment.Start, background(colours.panel), name="Files",
          border(1px, :solid, colours.line)[:right],
+    node!(PanelTop, e, :panel_top),
     Row(width(grow=grow), height(30px), padding(16px, 0px), clip=true,
       label(uppercase(basename(e.folder)), 11px, color=colours.dim, weight="Semibold")),
     reuse!(e.files_scroll,
@@ -1669,10 +1807,11 @@ describe(e::Editor) = begin
     win.animating = false
     win.wake = win.focus === e ? 0.51 - mod(time() - e.blink, 0.5) : win.focus === input(e) ? 0.25 : 0.0
   end
-  window = Column(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg), name="Editor",
-    node!(TopBar, e, :topbar),
-    Row(width(grow=grow), height(grow=grow), Alignment.Start,
-      (e.panel ? (panel(e),) : ())...,
+  # The file panel runs from the top of the window to the bottom, beside the top bar
+  window = Row(width(grow=grow), height(grow=grow), Alignment.Start, background(colours.bg), name="Editor",
+    (e.panel ? (panel(e),) : ())...,
+    Column(width(grow=grow), height(grow=grow), Alignment.Start,
+      node!(TopBar, e, :topbar),
       node!(Page, e, :page)))
   e.popup == :none && return window
   Stack(width(grow=grow), height(grow=grow), Alignment.Start, name="Editor",
