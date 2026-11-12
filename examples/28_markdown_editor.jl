@@ -920,13 +920,16 @@ const Rect = NTuple{4,Float64}   # left, top, right and bottom, in px
 The boxes that cover the selected part of each line of `f`, whose top left
 corner is at (x, y). The first and last boxes take in the space above and below
 the lines, so the boxes of one line of the document meet those of the next.
+With `margin`, a box that starts at the start of its line also takes in the
+space to the left of the text, like the inset of a code block. That keeps the
+left edge of the selection straight from one kind of line to the next.
 """
-marks(f::Flow, x, y, (from, to, more)) = begin
+marks(f::Flow, x, y, (from, to, more); margin=true) = begin
   out = Rect[]
   n = length(f.lines)
   for (k, vl) in enumerate(f.lines)
     (from <= vl.to && to >= vl.from) || continue
-    x1 = from <= vl.from ? vl.x : xcol(vl, from)
+    x1 = from > vl.from ? xcol(vl, from) : margin ? 0px : vl.x
     x2 = xcol(vl, min(to, vl.to))
     # A little extra shows that the end of the line is selected too
     (to > vl.to || (more && k == n)) && (x2 += 7px)
@@ -1024,7 +1027,7 @@ draw(ctx, size, ui::ConcreteRect, d::Document) = begin
         sel = selected(b, i)
         (sel !== nothing && sel[1] < cell.limit && sel[2] > cell.lo) || continue
         x, y = cell_origin(g, r, c)
-        fill_selection(ctx, marks(g.flows[r][c], ui.left + x, top + y, (max(sel[1], cell.lo), min(sel[2], cell.limit), false)))
+        fill_selection(ctx, marks(g.flows[r][c], ui.left + x, top + y, (max(sel[1], cell.lo), min(sel[2], cell.limit), false), margin=false))
       end
     else
       sel = selected(b, it.first)
