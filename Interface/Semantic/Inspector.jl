@@ -3,10 +3,10 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme scale handled sized
+@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus onblur window_of theme scale handled sized
 @use "../draw" draw cursor
 @use "./Icon" Icon
-@use "./TextInput" TextInput
+@use "./TextInput" TextInput text_size
 @use Colors: @colorant_str
 
 # --- Types ---
@@ -128,6 +128,12 @@ format_value(::Nothing)         = ("nothing", theme().dim)
 format_value(x::Char)           = ("'$x'", theme().string)
 format_value(x::Type)           = (string(x), theme().type)
 format_value(x)                 = (repr(x), theme().text)
+
+"The marks around a value's text while it's edited: the quotes of a string or a character, and the colon of a symbol"
+marks(::AbstractString) = ("\"", "\"")
+marks(::Char)           = ("'", "'")
+marks(::Symbol)         = (":", "")
+marks(_)                = ("", "")
 
 # --- editability ---
 
@@ -278,10 +284,11 @@ end
 
 describe_row(lv::LeafView, depth, focused) = begin
   row = row_start(lv, depth, focused)
+  text, color = format_value(lv.data)
   if lv.editing && lv.editor !== nothing
+    lv.editor.color = color   # what's typed has the colour of the value it will be
     mixin!(row, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), describe!(lv.editor)))
   else
-    text, color = format_value(lv.data)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
                     Text(text, size=sized(12pt), color=color)))
   end
@@ -302,24 +309,47 @@ start_editing!(lv::LeafView) = begin
   else
     string(lv.data)
   end
-  editor = TextInput(text=text, placeholder="", font_size=12pt)
+  editor = TextInput(text=text, placeholder="", font_size=12pt, look=edit_look(lv))
   lv.editor = editor
   add_child!(lv, editor)
   lv.editing = true
   focus(editor)
 end
 
-commit_edit!(ins::Inspector, lv::LeafView) = begin
+"Keep what's typed, if it reads as a value of the same kind, and stop editing"
+finish_edit!(lv::LeafView) = begin
   lv.editor === nothing && return
   try
-    new_val = parse_value(lv.data, lv.editor.text)
-    write_back!(lv, new_val)
+    write_back!(lv, parse_value(lv.data, lv.editor.text))
   catch
   end
   lv.editing = false
   lv.editor = nothing
-  focus(ins)
 end
+
+"""
+How the field looks while a value is edited: like the value, with no border. A string keeps its
+quotes, which you can't delete, and the closing quote follows the text as it gets longer.
+"""
+edit_look(lv::LeafView) = (input, text) -> begin
+  before, after = marks(lv.data)
+  colour = something(input.color, theme(input).text)
+  # The text is as wide as it is, and 2px more for the caret after the last character.
+  # It still gets narrower and scrolls when the row runs out of room.
+  mixin!(text, width(grow=GrowType.FitContent), padding(0px, 2px, 0px, 0px))
+  # Each mark is in a box, so that it doesn't grow into the row's spare room the way text does
+  mark(s) = Box(Text(s, size=text_size(input), color=colour))
+  row = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), Alignment.Center, clip=true)
+  isempty(before) || mixin!(row, mark(before))
+  mixin!(row, text)
+  isempty(after) || mixin!(row, mark(after))
+  row
+end
+
+commit_edit!(ins::Inspector, lv::LeafView) = (finish_edit!(lv); focus(ins))
+
+# A click on anything else that takes the keyboard ends the edit, and keeps what was typed
+onblur(lv::LeafView, from) = from === lv.editor ? (finish_edit!(lv); handled) : nothing
 
 cancel_edit!(ins::Inspector, lv::LeafView) = begin
   lv.editing = false
@@ -355,21 +385,28 @@ onkey(lv::LeafView, ::KeyPress{Keys.mouse_left}) = begin
   handled
 end
 
-# Keyboard navigation (dispatched when Inspector is focused)
+# Keyboard navigation. While a value is being edited its field has the keyboard, and the arrow
+# keys it doesn't use come up to here. They stay in the field until Escape or Enter ends the edit.
+
+"Whether the inspector has the keyboard itself, and not the field of a value that's being edited"
+has_keyboard(ins::Inspector) = (w = window_of(ins); w !== nothing && w.focus === ins)
 
 onkey(ins::Inspector, ::KeyPress{Keys.down}) = begin
+  has_keyboard(ins) || return handled
   ins.focused === nothing && return
   next = next_visible(ins.focused)
   next !== nothing && (ins.focused = next)
 end
 
 onkey(ins::Inspector, ::KeyPress{Keys.up}) = begin
+  has_keyboard(ins) || return handled
   ins.focused === nothing && return
   prev = prev_visible(ins.focused)
   prev !== nothing && (ins.focused = prev)
 end
 
 onkey(ins::Inspector, ::KeyPress{Keys.right}) = begin
+  has_keyboard(ins) || return handled
   item = ins.focused
   item === nothing && return
   if item isa CollectionView
@@ -384,6 +421,7 @@ onkey(ins::Inspector, ::KeyPress{Keys.right}) = begin
 end
 
 onkey(ins::Inspector, ::KeyPress{Keys.left}) = begin
+  has_keyboard(ins) || return handled
   item = ins.focused
   item === nothing && return
   if item isa CollectionView && !item.collapsed
@@ -393,7 +431,8 @@ onkey(ins::Inspector, ::KeyPress{Keys.left}) = begin
   end
 end
 
-# Enter: commit edit (bubbled from TextInput), toggle collection, or start editing
+# Enter keeps an edit, opens or closes a collection, or starts editing a value. A key that the
+# inspector uses doesn't go on to the nodes it's in.
 onkey(ins::Inspector, ::KeyPress{Keys.enter}) = begin
   item = ins.focused
   item === nothing && return
@@ -403,14 +442,20 @@ onkey(ins::Inspector, ::KeyPress{Keys.enter}) = begin
     item.collapsed = !item.collapsed
   elseif item isa LeafView && is_editable(item)
     item.data isa Bool ? write_back!(item, !item.data) : start_editing!(item)
+  else
+    return
   end
+  handled
 end
 
-# Escape: cancel edit (bubbled from TextInput)
+# Escape drops an edit, and the inspector keeps the keyboard so the arrow keys move through it again.
+# Escape when nothing is being edited goes on to the nodes the inspector is in, so that an app can
+# take the keyboard back.
 onkey(ins::Inspector, ::KeyPress{Keys.escape}) = begin
   item = ins.focused
-  item === nothing && return
-  item isa LeafView && item.editing && cancel_edit!(ins, item)
+  item isa LeafView && item.editing || return
+  cancel_edit!(ins, item)
+  handled
 end
 
 export Inspector, inspect, DataView, LeafView, CollectionView

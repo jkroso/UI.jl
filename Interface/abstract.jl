@@ -651,10 +651,35 @@ window_of(node::UITree) = begin
 end
 
 """
-Switches the target of future keyboard events to a given semantic node
+Switches the target of future keyboard events to a given semantic node. The
+node that had the keyboard is told with `onblur`.
 """
 focus(node::UITree) = begin
   root = root_of(node)
-  root isa Root && (root.window.focus = node)
+  root isa Root || return node
+  w = root.window
+  old = w.focus
+  w.focus = node
+  old isa SemanticUI && old !== node && blur!(old)
   node
+end
+
+"""
+`onblur(node, from)` runs when `from` loses the keyboard to another node. It runs
+on `from` and then on each semantic node above it, until one returns `handled`.
+A field that's edited in place can use it to stop editing:
+
+    onblur(v::Value, from) = from === v.editor ? (v.editing = false; handled) : nothing
+
+The keyboard has already gone to the other node, so a handler shouldn't call `focus`.
+"""
+onblur(node, from) = nothing
+
+blur!(from) = begin
+  node = from
+  while node !== nothing
+    onblur(node, from) === handled && return handled
+    node = semantic_parent(node)
+  end
+  nothing
 end
