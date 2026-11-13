@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme
+@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme scale
 @use "../draw" draw
 @use "./Icon" Icon
 @use "./TextInput" TextInput
@@ -248,38 +248,38 @@ end
 flatten_views!(col, lv::LeafView, depth, focused) = mixin!(col, describe_row(lv, depth, focused))
 
 describe_row(cv::CollectionView, depth, focused) = begin
-  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
+  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT * scale()), Alignment.Center)
   row.from = cv
   cv === focused && mixin!(row, background(theme().select), radius(3px))
   # indent
-  depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth)))
+  depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth * scale())))
   # label
   if !isempty(cv.label)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(cv.label * ": ", size=12pt, color=theme().dim)))
+                    Text(cv.label * ": ", size=12pt * scale(), color=theme().dim)))
   end
   # chevron
   name = cv.collapsed ? "chevron-right" : "chevron-down"
-  mixin!(row, Box(width(CHEVRON_GAP)))
-  mixin!(row, Box(width(CHEVRON_WIDTH), height(ROW_HEIGHT), Alignment.Center,
-                  describe!(Icon(name, size=12px, color=theme().dim))))
-  mixin!(row, Box(width(CHEVRON_GAP)))
+  mixin!(row, Box(width(CHEVRON_GAP * scale())))
+  mixin!(row, Box(width(CHEVRON_WIDTH * scale()), height(ROW_HEIGHT * scale()), Alignment.Center,
+                  describe!(Icon(name, size=12px * scale(), color=theme().dim))))
+  mixin!(row, Box(width(CHEVRON_GAP * scale())))
   # type brief
   mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                  Text(type_brief(cv.data), size=11pt, color=theme().dim)))
+                  Text(type_brief(cv.data), size=11pt * scale(), color=theme().dim)))
   row
 end
 
 describe_row(lv::LeafView, depth, focused) = begin
-  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT), Alignment.Center)
+  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT * scale()), Alignment.Center)
   row.from = lv
   lv === focused && mixin!(row, background(theme().select), radius(3px))
   # indent
-  depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth)))
+  depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth * scale())))
   # label
   if !isempty(lv.label)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(lv.label * ": ", size=12pt, color=theme().dim)))
+                    Text(lv.label * ": ", size=12pt * scale(), color=theme().dim)))
   end
   # value or editor
   if lv.editing && lv.editor !== nothing
@@ -287,7 +287,7 @@ describe_row(lv::LeafView, depth, focused) = begin
   else
     text, color = format_value(lv.data)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(text, size=12pt, color=color)))
+                    Text(text, size=12pt * scale(), color=color)))
   end
   row
 end

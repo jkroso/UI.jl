@@ -44,7 +44,7 @@ Base.@kwdef struct Theme
   family::String = "Helvetica"                     # the font of labels
   mono::String = "Menlo"                           # the font of code, and of names in a tree
   mono_style::String = ""                          # its weight or style, like "ExtraLight"
-  size::Length = 12pt                              # the size of the names in a tree. Its rows grow to fit.
+  size::Length = 12pt                              # the size of the names in a tree. See `scale`.
   # The kinds of value in code and in the inspector
   number::Colorant = RGB(0.0, 0.59, 0.53)
   string::Colorant = RGB(0.83, 0.18, 0.18)
@@ -92,6 +92,14 @@ theme(node) = begin
   end
   THEME[]
 end
+
+"""
+How much bigger the theme's text is than the usual size, 12pt. A component
+multiplies its lengths by this, so that its text is the size the theme asks
+for and its boxes still fit the text. With the usual size a label is 13pt, so
+`Theme(size=24pt)` makes labels 26pt.
+"""
+scale(t::Theme=theme()) = convert(px, t.size).value / convert(px, 12pt).value
 
 @Enum WrapMode words newlines none
 

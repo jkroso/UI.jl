@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe window_of focus theme
+@use "../abstract" SemanticUI describe window_of focus theme scale
 @use "../draw" draw
 @use Colors: @colorant_str, Colorant, RGBA
 @use GeometryBasics: Vec2
@@ -39,14 +39,17 @@ ink(input::TextInput) = something(input.color, theme(input).text)
 content(input::TextInput) = begin
   empty = isempty(input.text)
   Text(empty ? input.placeholder : input.text,
-       size=input.font_size, family=input.font_family,
+       size=text_size(input), family=input.font_family,
        color=empty ? something(input.placeholder_color, theme(input).dim) : ink(input))
 end
 
+"The size its text is drawn at: `font_size` when the theme's text has its usual size, and bigger or smaller with the theme"
+text_size(input::TextInput) = input.font_size * scale(theme(input))
+
 describe(input::TextInput) = begin
   input.look === nothing || return input.look(input, content(input))
-  Row(width(grow=GrowType.Grow), height(36px),
-    padding(8px),
+  Row(width(grow=GrowType.Grow), height(36px * scale(theme(input))),
+    padding(8px * scale(theme(input))),
     border(1px, :solid, theme(input).line),
     radius(4px),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), content(input)))
@@ -256,7 +259,7 @@ end
 update_cache!(input::TextInput, ct::ConcreteText) = begin
   input.cached_left = ct.left
   input.cached_top = ct.top
-  font = SkiaFont(input.font_family, input.font_size)
+  font = SkiaFont(input.font_family, text_size(input))
   input.cached_font = font
   m = font_metrics(font)
   input.cached_ascent = px(m.ascent)

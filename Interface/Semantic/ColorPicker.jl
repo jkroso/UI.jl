@@ -5,7 +5,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! add_child! focus theme
+@use "../abstract" SemanticUI describe describe! add_child! focus theme scale
 @use "../draw" draw ishovered cursor show_tooltip! redraw_in!
 @use "./Icon" Icon
 @use Colors: @colorant_str, HSV, RGB, RGBA, hex
@@ -97,12 +97,12 @@ describe(cp::ColorPicker) = begin
     Box(height(10px)),
     Box(width(SHADE_SIZE), height(HUE_HEIGHT)),
     Box(height(12px)),
-    Row(width(SHADE_SIZE), height(28px), Alignment.Center,
-      Box(width(24px), height(24px), radius(4px),
+    Row(width(SHADE_SIZE), height(28px * scale(theme(cp))), Alignment.Center,
+      Box(width(24px * scale(theme(cp))), height(24px * scale(theme(cp))), radius(4px),
           background(rgb), border(1px, :solid, theme(cp).line)),
       Box(width(8px)),
       Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-          Text("#" * hex(rgb), size=12pt)),
+          Text("#" * hex(rgb), size=12pt * scale(theme(cp)))),
       describe!(copy_button(cp))))
 end
 

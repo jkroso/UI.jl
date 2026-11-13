@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "github.com/jkroso/MiniFB.jl" onkey KeyPress Keys
 @use "../Geometric"...
-@use "../abstract" SemanticUI describe describe! mixin! add_child! theme
+@use "../abstract" SemanticUI describe describe! mixin! add_child! theme scale
 @use "../draw" ishovered cursor
 @use Colors: @colorant_str
 
@@ -26,9 +26,9 @@ function describe(b::Button)
   content = if b.firstchild isa SemanticUI
     describe!(b.firstchild)
   else
-    Text(b.label, size=12pt, weight=600, align=TextAlign.Center)
+    Text(b.label, size=12pt * scale(theme(b)), weight=600, align=TextAlign.Center)
   end
-  Box(padding(6px, 4px), radius(6px),
+  Box(padding(6px * scale(theme(b)), 4px * scale(theme(b))), radius(6px),
       background(ishovered(b) ? theme(b).hover : theme(b).surface),
       border(1px, :solid, theme(b).line),
       Alignment.Center,
