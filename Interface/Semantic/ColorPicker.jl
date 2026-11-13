@@ -20,6 +20,7 @@ end
 @def mutable struct CopyButton <: SemanticUI
   picker::Any = nothing
   copied::Float64 = 0.0                        # when it last copied, from time()
+  glow::RGB{Float64} = RGB(0.0, 0.0, 0.0)      # the colour it copied then
 end
 
 copy_button(cp::ColorPicker) = begin
@@ -28,21 +29,30 @@ copy_button(cp::ColorPicker) = begin
   cp.copy
 end
 
-# After a click the button's outline turns green and fades back over GLOW
-# seconds. The button keeps its size and its icon.
+# After a click the whole button turns the colour it copied and fades back over
+# GLOW seconds. The button keeps its size and its icon.
 const GLOW = 0.6
-const GREEN = colorant"rgb(22,163,74)"
 
 since_copy(btn::CopyButton) = time() - btn.copied
+"How much of the copied colour the button shows: 1 at the click, down to 0 after GLOW seconds"
+strength(btn::CopyButton) = (t = since_copy(btn); 0 <= t < GLOW ? (1 - t / GLOW)^2 : 0.0)
+"The colour that's `k` of the way from `a` to `b`"
+blend(a, b, k) = (a = convert(RGB{Float64}, a); b = convert(RGB{Float64}, b);
+                  RGB(a.r + (b.r - a.r) * k, a.g + (b.g - a.g) * k, a.b + (b.b - a.b) * k))
+"White or black, whichever shows better on `c`"
+ink(c::RGB) = 0.299c.r + 0.587c.g + 0.114c.b > 0.6 ? RGB(0.0, 0.0, 0.0) : RGB(1.0, 1.0, 1.0)
 hexcode(btn::CopyButton) = "#" * hex(convert(RGB, btn.picker.color))
 
 describe(btn::CopyButton) = begin
   # Each frame of the glow asks for the next one
   since_copy(btn) < GLOW && redraw_in!(btn, 1/60)
+  k = strength(btn)
+  t = theme(btn)
+  # The icon turns white or black with the colour, so that it still shows on it
   Box(padding(6px, 4px), radius(6px), Alignment.Center,
-      background(ishovered(btn) ? theme(btn).hover : theme(btn).surface),
-      border(1px, :solid, theme(btn).line),
-    describe!(Icon("copy", size=14px, color=theme(btn).dim)))
+      background(blend(ishovered(btn) ? t.hover : t.surface, btn.glow, k)),
+      border(1px, :solid, blend(t.line, btn.glow, k)),
+    describe!(Icon("copy", size=14px, color=blend(t.dim, ink(btn.glow), k))))
 end
 
 cursor(::CopyButton) = :hand
@@ -63,17 +73,9 @@ onkey(btn::CopyButton, e::KeyPress{Keys.mouse_left}) = begin
     print(io, hexcode(btn))
   end
   btn.copied = time()
+  btn.glow = convert(RGB{Float64}, btn.picker.color)
   show_tip!(btn, e.window)
   handled
-end
-
-draw(ctx, size, ui::ConcreteRect, btn::CopyButton) = begin
-  t = since_copy(btn)
-  t < GLOW || return
-  # The green outline lies inside the button's edge, over its grey border, and fades out
-  fade = (1 - t / GLOW)^2
-  rounded_rectangle(ctx, ui.left + 1px, ui.top + 1px, ui.width - 2px, ui.height - 2px, 5px,
-                    color=RGBA{Float64}(GREEN.r, GREEN.g, GREEN.b, fade), stroke_width=2px)
 end
 
 const SHADE_SIZE = 200px
@@ -207,6 +209,7 @@ onmouse(cp::ColorPicker, e::MouseMove) = begin
   found === nothing && return
   mx, my = e.position
   cp.dragging == :shade ? update_shade!(cp, found[1], mx, my) : update_hue!(cp, found[2], mx)
+  handled   # the drag is the picker's, so the nodes above don't act on it too
 end
 
 "The colour that's picked"
