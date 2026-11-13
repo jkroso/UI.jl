@@ -1,10 +1,10 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl/skia" rounded_rectangle
 @use "github.com/jkroso/MiniFB.jl" Keys KeyPress MouseMove onkey onmouse int
-@use "github.com/jkroso/Font.jl" ["units" px]
+@use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
-@use "../Specific"...
-@use "../abstract" SemanticUI describe focus theme
+@use "../Specific"... text_width
+@use "../abstract" SemanticUI WrapMode describe focus theme scale
 @use "../draw" draw
 @use Colors: @colorant_str
 
@@ -14,57 +14,96 @@
   max::Float64 = 1.0
   # Called after the mouse or an arrow key changes `value`
   onchange::Function = slider -> nothing
+  # Give it a function, and the slider shows what the function makes of `value` as text on its right,
+  # e.g. `format=v -> round(Int, v)`
+  format::Union{Nothing,Function} = nothing
+  # The gap between its detents: the values it stops at, counted from `min`. With `step=1` and
+  # `min=11` it stops at 11, 12, 13 and so on. 0 lets it stop anywhere.
+  step::Float64 = 0.0
   cached_left::px = 0px
   cached_width::px = 0px
 end
 
-describe(s::Slider) =
-  Row(width(grow=GrowType.Grow), height(24px),
-    Box(width(grow=GrowType.Grow), height(6px),
-      radius(3px),
-      background(theme(s).track)))
+# These are the sizes when the theme's text has its usual size. `scale` makes them fit other sizes.
+const THUMB_R = 8px
+const MARK_R = 1px     # of the dot that marks a detent
+const MARK_GAP = 7px   # the least space between two of those dots
+
+"The text a slider shows for the value `v`"
+shown(s::Slider, v=s.value) = string(s.format(v))
+
+describe(s::Slider) = begin
+  k = scale(theme(s))
+  track = Box(width(grow=GrowType.Grow), height(6px * k), radius(3px * k), background(theme(s).track))
+  s.format === nothing && return Row(width(grow=GrowType.Grow), height(24px * k), track)
+  text = Text(shown(s), size=13pt * k, wrap=WrapMode.none)
+  # Room for its widest value, so the slider keeps its length while the text changes
+  room = maximum(v -> text_width(text, shown(s, v)), (s.min, s.max, s.value))
+  Row(width(grow=GrowType.Grow), height(24px * k), child_gap=(THUMB_R + 8px) * k, track,
+    Row(width(room), justify=Alignment.End, text))
+end
 
 fraction(s::Slider) = clamp((s.value - s.min) / (s.max - s.min), 0.0, 1.0)
 
-update_from_mouse!(s::Slider, mouse_x::px) = begin
-  frac = clamp(Float64((mouse_x - s.cached_left) / s.cached_width), 0.0, 1.0)
-  s.value = s.min + frac * (s.max - s.min)
+"The detent nearest to `v`, or `v` itself when the slider has none"
+detent(s::Slider, v) = s.step > 0 ? clamp(s.min + round((v - s.min) / s.step) * s.step, s.min, s.max) : clamp(v, s.min, s.max)
+
+"Move the slider to `v`, or to the detent nearest to it. `onchange` is called if that's a new value."
+move!(s::Slider, v) = begin
+  v = detent(s, v)
+  v == s.value && return
+  s.value = v
   s.onchange(s)
 end
 
-step(s::Slider) = (s.max - s.min) * 0.02
+update_from_mouse!(s::Slider, mouse_x::px) = begin
+  frac = clamp(Float64((mouse_x - s.cached_left) / s.cached_width), 0.0, 1.0)
+  move!(s, s.min + frac * (s.max - s.min))
+end
+
+"How far an arrow key moves it: one detent, or a fiftieth of its length"
+step(s::Slider) = s.step > 0 ? s.step : (s.max - s.min) * 0.02
 
 onkey(s::Slider, e::KeyPress{Keys.mouse_left}) = begin
   focus(s)
-  s.cached_left > 0px && update_from_mouse!(s, e.window.mouse[1])
+  x = e.window.mouse[1]
+  # A click on the text beside the slider only gives it the keyboard
+  r = THUMB_R * scale(theme(s))
+  s.cached_left > 0px && s.cached_left - r <= x <= s.cached_left + s.cached_width + r && update_from_mouse!(s, x)
 end
 
-onkey(s::Slider, ::KeyPress{Keys.left}) =
-  (s.value = clamp(s.value - step(s), s.min, s.max); s.onchange(s))
-
-onkey(s::Slider, ::KeyPress{Keys.right}) =
-  (s.value = clamp(s.value + step(s), s.min, s.max); s.onchange(s))
+onkey(s::Slider, ::KeyPress{Keys.left}) = move!(s, s.value - step(s))
+onkey(s::Slider, ::KeyPress{Keys.right}) = move!(s, s.value + step(s))
 
 onmouse(s::Slider, e::MouseMove) =
   Keys.mouse_left in e.window.keys && update_from_mouse!(s, e.position[1])
 
 draw(ctx, size, ui::ConcreteRect, s::Slider) = begin
-  # cache layout for mouse hit-testing
-  s.cached_left = ui.left
-  s.cached_width = ui.width
-  # filled portion
   track = ui.children[1]
-  track_y = track.top
-  fill_w = ui.width * fraction(s)
-  fill_w > 0px && rounded_rectangle(ctx, track.left, track_y, fill_w, track.height, 3px,
+  # cache layout for mouse hit-testing
+  s.cached_left = track.left
+  s.cached_width = track.width
+  # filled portion
+  fill_w = track.width * fraction(s)
+  k = scale(theme(s))
+  fill_w > 0px && rounded_rectangle(ctx, track.left, track.top, fill_w, track.height, track.height / 2,
                                      background=theme(s).accent)
+  # A dot in the track at each detent, when they aren't too close together to tell apart
+  stops = s.step > 0 ? floor(Int, (s.max - s.min) / s.step + 1e-9) : 0
+  if stops > 0 && track.width / stops >= MARK_GAP * k
+    r = MARK_R * k
+    for i in 0:stops
+      x = track.left + clamp(track.width * (i * s.step / (s.max - s.min)), 2r, track.width - 2r)
+      rounded_rectangle(ctx, x - r, track.top + track.height / 2 - r, 2r, 2r, r, background=theme(s).on_accent)
+    end
+  end
   # thumb
-  thumb_r = 8px
-  thumb_x = ui.left + fill_w - thumb_r
+  thumb_r = THUMB_R * k
+  thumb_x = track.left + fill_w - thumb_r
   thumb_y = ui.top + ui.height / 2 - thumb_r
   rounded_rectangle(ctx, thumb_x, thumb_y, 2thumb_r, 2thumb_r, thumb_r,
                     background=theme(s).accent)
-  inner_r = 4px
+  inner_r = 4px * k
   rounded_rectangle(ctx, thumb_x + thumb_r - inner_r, thumb_y + thumb_r - inner_r,
                     2inner_r, 2inner_r, inner_r, background=theme(s).on_accent)
 end
