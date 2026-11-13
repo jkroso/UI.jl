@@ -12,7 +12,6 @@
   on::Bool = false
 end
 
-# The track is as tall as a Checkbox's box (20px), so the two line up in a list
 describe(t::Toggle) = begin
   k = scale(theme(t))
   Row(width(34px * k), height(20px * k), radius(10px * k),

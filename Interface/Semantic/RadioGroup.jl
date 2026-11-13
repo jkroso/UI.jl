@@ -34,12 +34,12 @@ describe(item::RadioItem) = begin
   circle_color = selected ? t.accent : t.surface
   border_color = selected ? t.accent : t.line
   k = scale(t)
-  Row(width(grow=GrowType.Grow), height(28px * k), padding(2px * k),
-    Box(width(20px * k), height(20px * k),
+  # A row is as tall as a Checkbox's, and the label starts where a Checkbox's label does
+  Row(width(grow=GrowType.Grow), height(24px * k), padding(2px * k, 2px * k, 2px * k, 4px * k), child_gap=10px * k,
+    Box(width(16px * k), height(16px * k),
       border(2px, :solid, border_color),
-      radius(10px * k),
+      radius(8px * k),
       background(circle_color)),
-    Box(width(8px * k), height(20px * k)),
     Box(height(20px * k),
       Text(item.group.labels[item.index], size=sized(13pt, t))))
 end
@@ -50,7 +50,7 @@ describe(rg::RadioGroup) =
 draw(ctx, size, ui::ConcreteRect, item::RadioItem) = begin
   item.index == item.group.selected || return
   box = ui.children[1]
-  r = 5px * scale(theme(item))
+  r = 3px * scale(theme(item))
   cx = box.left + box.width / 2 - r
   cy = box.top + box.height / 2 - r
   rounded_rectangle(ctx, cx, cy, 2r, 2r, r, background=theme(item).on_accent)
