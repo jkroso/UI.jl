@@ -3,7 +3,7 @@
 # it does anything on other systems.
 
 @use GLFW
-@use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys
+@use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys redraw
 @use "./objc" libobjc cls sel msg send get_value nsstring jstring with_pool
 
 nswindow(w::AbstractWindow) = ccall((:glfwGetCocoaWindow, GLFW.libglfw), Ptr{Cvoid}, (GLFW.Window,), w.glfw[1])
@@ -78,12 +78,14 @@ struct NSPoint
 end
 
 const on_choice = Ref{Any}(nothing)           # what to call with the item that's chosen from the menu that's showing
+const choices = Tuple[]                       # the place of each item of that menu. An item's tag is its place in this list.
 const menu_target = Ref{Ptr{Cvoid}}(C_NULL)
 
 "macOS calls this with the item that was chosen"
 note_choice(self::Ptr{Cvoid}, cmd::Ptr{Cvoid}, item::Ptr{Cvoid})::Cvoid = begin
   try
-    on_choice[] === nothing || Base.invokelatest(on_choice[], get_value(Int, item, "tag"))
+    tag = get_value(Int, item, "tag")
+    (on_choice[] === nothing || !(1 <= tag <= length(choices))) || Base.invokelatest(on_choice[], choices[tag]...)
   catch err
     # An error mustn't go back into macOS's own code
     @error "A menu's `onselect` failed" exception=(err, catch_backtrace())
@@ -106,34 +108,35 @@ target() = begin
 end
 
 """
-Show a macOS menu of `items` in the window and wait until it closes. When an
-item is chosen, `onselect` is called with its place in `items`. An item that
-is "-" is a line between two groups of items. The menu's top left corner is
-at `at`, which is where the mouse is unless you give another place.
+Show a macOS menu of `items` in the window and wait until it closes. Each of
+`items` is one of these:
+
+- a title, like `"Copy"`
+- `"-"`, which is a line between two groups of items
+- `title => items`, which is an item that opens a menu of its own
+
+When an item is chosen, `onselect` is called with its place in `items`. For an
+item of a menu inside the menu, it's called with the place of the item that
+opens that menu, then the item's place in that menu: `onselect(4, 2)` for
+"Table" below. `off` holds the places of the items that are grey and can't be
+chosen: `off=[1, (4, 2)]`.
+
+The menu's top left corner is at `at`, which is where the mouse is unless you
+give another place.
 
 It's true when the menu was shown. It's false when there's no macOS window to
 show it in, so that you can show a menu of your own with `show_menu!`.
 
-    system_menu(window, ["Rename", "Copy Path", "-", "Move to Trash"], i -> println("chose ", i))
+    system_menu(window, ["Copy", "Paste", "-", "Insert" => ["Heading", "Table"]], (place...) -> println("chose ", place))
 """
-system_menu(w::AbstractWindow, items::Vector{String}, onselect; at=w.mouse) = begin
+system_menu(w::AbstractWindow, items::Vector, onselect; at=w.mouse, off=()) = begin
   (Sys.isapple() && !isempty(w.glfw)) || return false
   on_choice[] = onselect
+  empty!(choices)
+  # Nothing draws while the menu is open. So draw now what changed just before it, like a mark on the thing the menu is for.
+  Base.invokelatest(redraw, w)
   with_pool() do
-    menu = msg(msg(msg(cls("NSMenu"), "alloc"), "init"), "autorelease")
-    send(menu, "setAutoenablesItems:", false)
-    for (i, title) in enumerate(items)
-      item = if title == "-"
-        msg(cls("NSMenuItem"), "separatorItem")
-      else
-        made = ccall((:objc_msgSend, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
-                     msg(cls("NSMenuItem"), "alloc"), sel("initWithTitle:action:keyEquivalent:"), nsstring(title), sel("choose:"), nsstring(""))
-        msg(made, "setTarget:", target())
-        send(made, "setTag:", i)
-        msg(made, "autorelease")
-      end
-      msg(menu, "addItem:", item)
-    end
+    menu = native_menu(items, off, ())
     # The menu goes in the window's own view, so it's dark when the window is.
     # The view measures up from its bottom edge, and the window measures down from its top.
     view = msg(nswindow(w), "contentView")
@@ -146,6 +149,35 @@ system_menu(w::AbstractWindow, items::Vector{String}, onselect; at=w.mouse) = be
     key in w.keys && (w.keys ⊻= key)
   end
   true
+end
+
+"An NSMenu of `items`. `path` is the place of the item that opens it, or `()` for the menu itself."
+native_menu(items, off, path) = begin
+  menu = msg(msg(msg(cls("NSMenu"), "alloc"), "init"), "autorelease")
+  send(menu, "setAutoenablesItems:", false)
+  for (i, entry) in enumerate(items)
+    place = (path..., i)
+    title = entry isa Pair ? first(entry) : entry
+    item = if title == "-"
+      msg(cls("NSMenuItem"), "separatorItem")
+    else
+      # An item that opens a menu has nothing to tell when it's clicked
+      action = entry isa Pair ? C_NULL : sel("choose:")
+      made = ccall((:objc_msgSend, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+                   msg(cls("NSMenuItem"), "alloc"), sel("initWithTitle:action:keyEquivalent:"), nsstring(title), action, nsstring(""))
+      if entry isa Pair
+        msg(made, "setSubmenu:", native_menu(last(entry), off, place))
+      else
+        msg(made, "setTarget:", target())
+        push!(choices, place)
+        send(made, "setTag:", length(choices))
+      end
+      (place in off || (length(place) == 1 && i in off)) && send(made, "setEnabled:", false)
+      msg(made, "autorelease")
+    end
+    msg(menu, "addItem:", item)
+  end
+  menu
 end
 
 export hide_titlebar!, drag_window!, dark_mode, set_dark!, system_menu
