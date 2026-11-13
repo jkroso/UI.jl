@@ -128,6 +128,7 @@ const LABEL_SIZE = 12pt   # of a name, when the theme has its usual size. The si
 "How much bigger the theme's text is than the usual size. Everything in a row grows by this much."
 scale() = convert(px, theme().size).value / convert(px, LABEL_SIZE).value
 const CONNECTOR_GAP = 4px   # between the line that points to an item and the item's label
+const GUIDE_WIDTH = 1px  # of the lines that join each item to its group
 
 describe(tree::ListTree) = begin
   col = Column(width(grow=GrowType.Grow), padding(4px),
@@ -183,7 +184,7 @@ describe_item(item::TreeItem, focused) = begin
     anc = ancestor(item, d - i)
     if !is_last_tree_item(anc)
       mixin!(row, Box(width(INDENT_WIDTH * k), height(ROW_HEIGHT * k), Alignment.Center,
-                      Box(width(1.5px), height(ROW_HEIGHT * k), background(theme().line))))
+                      Box(width(GUIDE_WIDTH), height(ROW_HEIGHT * k), background(theme().line))))
     else
       mixin!(row, Box(width(INDENT_WIDTH * k), height(ROW_HEIGHT * k)))
     end
@@ -230,7 +231,7 @@ draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
   mid_y = spacer.top + spacer.height / 2
   r = 4px
   if is_last_tree_item(item)
-    path(ctx, color=theme(item).line, width=1.5px) do p
+    path(ctx, color=theme(item).line, width=GUIDE_WIDTH) do p
       move_to(p, Vec2{px}(cx, spacer.top))
       line_to(p, Vec2{px}(cx, mid_y - r))
       line_to(p, Vec2{px}(cx + r * 0.1, mid_y - r * 0.5))
@@ -239,8 +240,8 @@ draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
       line_to(p, Vec2{px}(right, mid_y))
     end
   else
-    line(ctx, Vec2{px}(cx, spacer.top), Vec2{px}(cx, spacer.top + spacer.height), 1.5px, theme(item).line)
-    path(ctx, color=theme(item).line, width=1.5px) do p
+    line(ctx, Vec2{px}(cx, spacer.top), Vec2{px}(cx, spacer.top + spacer.height), GUIDE_WIDTH, theme(item).line)
+    path(ctx, color=theme(item).line, width=GUIDE_WIDTH) do p
       move_to(p, Vec2{px}(cx, mid_y - r))
       line_to(p, Vec2{px}(cx + r * 0.1, mid_y - r * 0.5))
       line_to(p, Vec2{px}(cx + r * 0.5, mid_y - r * 0.1))
