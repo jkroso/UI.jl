@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe theme scale
+@use "../abstract" SemanticUI describe theme scale inputs
 @use "../draw" draw
 @use Colors: @colorant_str, parse, Colorant
 
@@ -25,5 +25,8 @@ draw(ctx, size, ui::ConcreteRect, p::ProgressBar) = begin
   rounded_rectangle(ctx, ui.left, ui.top, fill_w, ui.height, ui.height / 2,
                     background=something(p.color, theme(p).accent))
 end
+
+# `describe` reads nothing of its own: `draw` fills the bar. So its geometry only changes with the theme.
+inputs(::ProgressBar) = ()
 
 export ProgressBar

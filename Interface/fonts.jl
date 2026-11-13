@@ -2,6 +2,7 @@
 @use "github.com/jkroso/MiniFB.jl" flt
 @use Fontconfig
 @use Skia
+@use "./abstract" epoch
 
 # Typefaces loaded from font files. Each is stored under its family name and
 # under "family:Weight" (e.g. "Quicksand:Bold"), matching the `family` and
@@ -55,6 +56,7 @@ register_font(path::AbstractString) = begin
   end
   _typefaces["$family:$(weight_name(weight))"] = typeface
   empty!(_skia_fonts) # a family name may now resolve to a different face
+  epoch[] += 1         # and text laid out with the old face may now be another size
   family
 end
 

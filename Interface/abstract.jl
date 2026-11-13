@@ -88,7 +88,7 @@ theme(node) = begin
       t = getfield(node, :inherited_theme)
       t === nothing || return t::Theme
     end
-    node = node.parent
+    node = node isa UITree ? getfield(node, :parent) : node.parent
   end
   THEME[]
 end
@@ -139,6 +139,7 @@ Base.convert(::Type{UI}, s::AbstractString) = Text(s)
   inherited_theme::Any=nothing   # the Theme it was last described with. Read it with `theme(node)`
   slot::Int=0                    # its place among the nodes its owner's `describe` makes, or 0 for a node in the tree
   kept::Any=nothing              # what its geometry remembers between frames, like how far a Scroll has scrolled
+  memo::Any=nothing              # its last geometry, kept to use again while its `inputs` stay the same
 end
 
 """
@@ -190,6 +191,15 @@ adopt!(parent::UITree, children) = begin
   parent
 end
 
+# A node points at its parent and its children, so printing all of its fields prints the whole
+# tree, many times over. That takes minutes for a small app. So a node prints as its kind and
+# how many children it has, e.g. `Row with 3 children`.
+Base.show(io::IO, node::UITree) = begin
+  n = nsiblings(getfield(node, :firstchild))
+  print(io, nameof(typeof(node)), n == 0 ? "" : n == 1 ? " with 1 child" : " with $n children")
+end
+Base.show(io::IO, text::Text) = print(io, "Text(", repr(text.content), ")")
+
 "Define this method if you want to generate the children of a SemanticUI node lazily"
 describe_children(ui) = nothing
 
@@ -200,20 +210,194 @@ describe_children(ui) = nothing
 end
 Base.convert(::Type{GeometricUI}, node::GeometricUI) = node
 Base.convert(::Type{GeometricUI}, node::SemanticUI) = begin
-  setfield!(node, :inherited_theme, THEME[])
   own!(DESCRIBING[], node)
-  result = Base.ScopedValues.with(() -> describe(node), DESCRIBING => Describing(node, 0))
-  result.from = node
-  adopt_inline!(node, result)
-  result
+  geometry(node)
 end
 
-"The node whose `describe` is running, and how many nodes that `describe` has made so far"
+"The node whose `describe` is running, how many nodes that `describe` has made so far, and whether it asked to be drawn again soon"
 mutable struct Describing
   node::SemanticUI
   made::Int
+  timed::Bool
 end
 const DESCRIBING = Base.ScopedValues.ScopedValue{Union{Nothing,Describing}}(nothing)
+
+# --- skipping what hasn't changed -------------------------------------------------
+
+"""
+What `describe(node)` reads. Define it for a kind of node, and `describe` only
+runs for a node of that kind when one of these values has changed since the
+last frame. Until then the node's geometry and its layout are used again.
+
+    inputs(row::TodoRow) = (row.text, row.done)
+
+Give every value that `describe` reads: the node's own fields, the fields of
+other nodes, and anything outside the tree. Give values, not objects that
+change in place. A `Vector` is fine, because it's compared by what's in it, but
+a mutable struct is compared by which object it is. So give `item.done`, not `item`.
+
+You don't have to give these. The library adds them itself:
+
+- whether the mouse is over the node, and whether it has the keyboard
+- the theme, and the size the window lays the app out at
+- which children the node has. A child that changes is described again by
+  itself, and its new geometry takes the place of its old in the parent's.
+
+A `describe` that asks for another frame with `redraw_in!` is run again on that
+frame whatever its inputs are. One that reads the time by itself has to give
+the time as an input. A node without `inputs` is described on every frame, as
+it always was.
+
+If part of an app looks out of date, an input is missing. `skipping[] = false`
+turns all of this off, to check.
+"""
+inputs(node) = nothing
+
+"Set this to `false` to describe and lay out everything on every frame, whatever `inputs` say"
+const skipping = Ref(true)
+
+"What the window adds to a node's inputs. `draw.jl` defines it for a node in a window."
+ambient(node) = UInt(0)
+
+"A semantic node whose geometry is part of another node's geometry"
+mutable struct Embedded
+  geo::GeometricUI      # its geometry, where it sits in the other node's
+  source::SemanticUI
+  seen::Int             # the `version` its geometry had when the other node last looked
+  theme::Theme          # the theme it was described with there
+end
+
+Base.show(io::IO, e::Embedded) = print(io, "Embedded(", e.source, ")")
+
+"A node's last geometry, and what it takes to know whether that can be used again"
+mutable struct Memo
+  signature::UInt               # its inputs, as one number
+  geometry::GeometricUI
+  embedded::Vector{Embedded}    # the nodes whose geometry is in it
+  version::Int                  # a new number each time anything in the geometry changes
+  edited::Bool                  # the app changed the geometry in place since it was last looked at
+  layout::Any                   # the rectangle the last layout made for the geometry
+  laid::Int                     # the `version` that layout was of
+end
+
+Base.show(io::IO, memo::Memo) = print(io, "Memo(", memo.geometry, ", version ", memo.version, ")")
+
+# Each change to a geometry takes the next number as its `version`
+const changes = Ref(0)
+
+# Each time something changes that a layout depends on but a geometry doesn't show, like a font
+# registered under a name that's in use, this goes up and every kept layout is dropped
+const epoch = Ref(0)
+
+"A node's inputs as one number, or 0 for a node that's described on every frame"
+signature(node::SemanticUI) = begin
+  skipping[] || return UInt(0)
+  mine = inputs(node)
+  mine === nothing && return UInt(0)
+  # The count of method definitions is in it, so that code loaded again while the app runs, as
+  # `examples/hot_reload.jl` does, describes everything again and a change to a `describe` shows
+  h = hash(mine, hash(Base.get_world_counter(), ambient(node)))
+  child = getfield(node, :firstchild)
+  while child !== nothing
+    h = hash(objectid(child), h)
+    child = getfield(child, :nextsibling)
+  end
+  h == 0 ? UInt(1) : h
+end
+
+"The `version` of a node's geometry, or 0 for a node that's described on every frame"
+version(node::SemanticUI) = (memo = getfield(node, :memo); memo isa Memo ? memo.version : 0)
+
+"The geometry of `node`: its last one if its inputs are what they were, or else what `describe` makes of it now"
+function geometry(node::SemanticUI)
+  now = THEME[]
+  memo = getfield(node, :memo)
+  key = signature(node)
+  if memo isa Memo && key != 0 && memo.signature == key && getfield(node, :inherited_theme) === now
+    refresh!(node, memo)
+    return memo.geometry
+  end
+  setfield!(node, :inherited_theme, now)
+  describing = Describing(node, 0, false)
+  result = Base.ScopedValues.with(() -> describe(node), DESCRIBING => describing)
+  # A `describe` that hands on another node's geometry can't be skipped: that node wouldn't be looked at
+  borrowed = result.from isa SemanticUI && result.from !== node
+  result.from = node
+  keep = key != 0 && !describing.timed && !borrowed
+  embedded = keep ? Embedded[] : nothing
+  adopt_inline!(node, result, Ref(0), embedded)
+  setfield!(node, :stale, true)
+  setfield!(node, :memo, keep ? Memo(key, result, embedded, changes[] += 1, false, nothing, 0) : nothing)
+  result
+end
+
+"""
+A node's geometry is being used again. Look at each node whose geometry is in
+it. One that has changed is described again, and its new geometry takes the
+place of its old. `node.stale` says afterwards whether anything in the geometry
+changed.
+"""
+function refresh!(node::SemanticUI, memo::Memo)
+  changed = false
+  for e in memo.embedded
+    new = THEME[] === e.theme ? geometry(e.source) : with_theme(() -> geometry(e.source), e.theme)
+    if new !== e.geo
+      swap!(e.geo, new)
+      e.geo = new
+      changed = true
+    end
+    seen = version(e.source)
+    seen == e.seen || (changed = true; e.seen = seen)
+  end
+  # Read last: describing a node above may change this one's geometry in place, as `reuse!` does
+  changed |= memo.edited
+  memo.edited = false
+  if changed
+    memo.version = changes[] += 1
+    edits[] += 1
+  end
+  setfield!(node, :stale, changed)
+  nothing
+end
+
+"Put `new` where `old` is in its parent"
+swap!(old::GeometricUI, new::GeometricUI) = begin
+  parent, prev, next = getfield(old, :parent), getfield(old, :prevsibling), getfield(old, :nextsibling)
+  setfield!(new, :parent, parent)
+  setfield!(new, :prevsibling, prev)
+  setfield!(new, :nextsibling, next)
+  prev === nothing ? setfield!(parent, :firstchild, new) : setfield!(prev, :nextsibling, new)
+  next === nothing || setfield!(next, :prevsibling, new)
+  setfield!(old, :parent, nothing)
+  setfield!(old, :prevsibling, nothing)
+  setfield!(old, :nextsibling, nothing)
+  nothing
+end
+
+"Say that the `describe` that's running reads the time, so it has to run again on the next frame"
+timed!() = (describing = DESCRIBING[]; describing === nothing || (describing.timed = true); nothing)
+
+"The rectangle the last layout made for a node's geometry, or `nothing` if the geometry has changed since"
+laid(node::SemanticUI) = (memo = getfield(node, :memo); memo isa Memo && memo.laid == memo.version ? memo.layout : nothing)
+
+"Keep the rectangle a layout made for a node's geometry"
+laid!(node::SemanticUI, rect) = begin
+  memo = getfield(node, :memo)
+  memo isa Memo && (memo.layout = rect; memo.laid = memo.version)
+  nothing
+end
+
+"Tell the nodes whose kept geometry `node` is part of that the app has changed it in place"
+touch!(node) = begin
+  while node !== nothing
+    if node isa GeometricUI
+      source = getfield(node, :from)
+      memo = source isa SemanticUI ? getfield(source, :memo) : nothing
+      memo isa Memo && (memo.edited = true)
+    end
+    node = getfield(node, :parent)
+  end
+end
 
 """
 A node that a `describe` makes, like the `Icon` in a button, is a new object on
@@ -243,9 +427,9 @@ same(a::SemanticUI, b::SemanticUI) =
 
 "The nearest semantic node above `node`"
 semantic_parent(node) = begin
-  node = node.parent
+  node = getfield(node, :parent)
   while node !== nothing && !(node isa SemanticUI)
-    node = node.parent
+    node = getfield(node, :parent)
   end
   node
 end
@@ -255,14 +439,16 @@ Semantic nodes made inside a `describe`, like an `Icon` in a button, belong to
 the node being described. Giving them that parent lets their clicks bubble up
 to it, and makes `ishovered` true for it while the cursor is over them.
 """
-adopt_inline!(owner::SemanticUI, geo::UITree, count=Ref(0)) = begin
+adopt_inline!(owner::SemanticUI, geo::UITree, count=Ref(0), found=nothing) = begin
   remember!(owner, geo, count)
   for child in geo.children
-    source = child isa GeometricUI ? child.from : nothing
+    source = child isa GeometricUI ? getfield(child, :from) : nothing
     if source isa SemanticUI
-      source !== owner && source.parent === nothing && setfield!(source, :parent, owner)
+      source !== owner && getfield(source, :parent) === nothing && setfield!(source, :parent, owner)
+      # When the owner's geometry is kept, it has to know whose geometry is in it
+      found === nothing || push!(found, Embedded(child, source, version(source), something(getfield(source, :inherited_theme), THEME[])))
     else
-      adopt_inline!(owner, child, count)
+      adopt_inline!(owner, child, count, found)
     end
   end
 end
@@ -348,6 +534,11 @@ propertyname(s::StyleNode) = Symbol(snake_case(string(nameof(typeof(s)))))
 propertyname(_, s) = propertyname(s)
 snake_case(s::AbstractString) = NamingConventions.convert(NamingConventions.PascalCase, NamingConventions.SnakeCase, s)
 add_child!(r::UITree, child::UITree) = begin
+  # Geometry that's used again was in last frame's tree, and still points at what was beside it there
+  if child isa GeometricUI
+    setfield!(child, :prevsibling, nothing)
+    setfield!(child, :nextsibling, nothing)
+  end
   if isnothing(r.firstchild)
     r.firstchild = child
   else
@@ -393,6 +584,10 @@ end
 const edits = Ref(0)
 Base.setproperty!(node::Union{GeometricUI,Text}, ::Field{name}, value) where name = begin
   edits[] += 1
+  # A node with a parent may be part of geometry that's kept to use again. A change to where the
+  # node is in the tree changes what its parent holds, not the node.
+  parent = getfield(node, :parent)
+  parent === nothing || touch!(name === :parent || name === :prevsibling || name === :nextsibling ? parent : node)
   setfield!(node, name, value)
 end
 
@@ -427,8 +622,8 @@ function on(ui_node, event) end
 "The top of the tree that `node` belongs to"
 root_of(node::UITree) = begin
   root = node
-  while root.parent !== nothing
-    root = root.parent
+  while (parent = getfield(root, :parent)) !== nothing
+    root = parent
   end
   root
 end

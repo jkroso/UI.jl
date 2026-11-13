@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "github.com/jkroso/MiniFB.jl" onkey KeyPress Keys
 @use "../Geometric"...
-@use "../abstract" SemanticUI describe describe! mixin! add_child! theme scale handled
+@use "../abstract" SemanticUI describe describe! mixin! add_child! theme scale handled inputs
 @use "../draw" ishovered cursor
 @use Colors: @colorant_str
 
@@ -42,3 +42,6 @@ function describe(b::ButtonGroup)
   Row(border(1px, :solid, theme(b).line),
     (describe!(c) for c in b.children)...)
 end
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(b::Button) = (b.label,)

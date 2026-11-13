@@ -19,7 +19,7 @@
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
 @use "../Interface/draw" ui draw redraw_in!
-@use "../Interface/abstract" SemanticUI WrapMode describe integrate focus add_child! detach!
+@use "../Interface/abstract" SemanticUI WrapMode describe integrate inputs focus add_child! detach!
 @use "../Interface/Semantic/TextInput" TextInput
 @use "../Interface/Semantic/Checkbox" Checkbox
 @use Colors: @colorant_str
@@ -189,6 +189,20 @@ describe(items::Vector{TodoItem}) =
 integrate(row::TodoRow)   = TodoItem(String(row.text), row.done)
 integrate(list::TodoList) = TodoItem[integrate(r::TodoRow) for r in list.children]
 integrate(app::TodoApp)   = integrate(app.list)
+
+# --- inputs: what each describe reads -------------------------------------
+#
+# A node that says what its `describe` reads is only described again when
+# one of those values changes. Until then its geometry and its layout are
+# used again. With these three, a frame that changes one row describes and
+# lays out that row, and leaves the other rows alone.
+#
+# A row's own look only changes while it's on its way out, and then with
+# the time. Its text and its tick belong to the nodes in it.
+
+inputs(row::TodoRow) = (row.removing ? time() : 0.0,)
+inputs(t::TodoText)  = (t.editing, (t.parent::TodoRow).text, (t.parent::TodoRow).done)
+inputs(::DeleteBtn)  = ()
 
 # --- visual constants -----------------------------------------------------
 

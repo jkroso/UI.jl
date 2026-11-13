@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale handled integrate
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs
 @use "../draw" cursor
 @use "./Icon" Icon
 @use Colors: @colorant_str
@@ -39,5 +39,8 @@ end
 
 "The option that's chosen, or `nothing` when there are no options"
 integrate(s::Select) = isempty(s.options) ? nothing : current_label(s)
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(s::Select) = (s.selected, s.options)
 
 export Select

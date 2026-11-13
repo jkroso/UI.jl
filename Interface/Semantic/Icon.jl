@@ -2,7 +2,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe theme
+@use "../abstract" SemanticUI describe theme inputs
 @use "../draw" draw
 @use "./SVG" SVG SVGPath parse_svg_file render_svg
 @use Colors: Colorant, @colorant_str
@@ -30,5 +30,8 @@ draw(ctx, size, ui::ConcreteRect, icon::Icon) = begin
   data = load_icon(icon.name)
   render_svg(ctx, ui, data.paths, data.viewbox, icon.color)
 end
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(i::Icon) = (i.name, i.color, i.size)
 
 export Icon

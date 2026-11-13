@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
 @use "github.com/jkroso/Font.jl" ["units" Length px absolute]
 @use "../Geometric"... Width Height Dimension state!
-@use "../abstract" describe ConcreteUI WrapMode
+@use "../abstract" describe ConcreteUI SemanticUI WrapMode laid laid! epoch
 @use "../fonts" skia_font weight_name
 @use "../image" image_aspect
 @use GeometryBasics: Vec2, Vec
@@ -24,6 +24,18 @@
   extra_x::px=0px
   extra_y::px=0px
   children::Vector{ConcreteUI}=ConcreteUI[]
+  # What the layout gave it and what it came to at each step. A rectangle whose geometry hasn't
+  # changed is used again on the next frame, and these say whether what's in it is still right.
+  init_x::px=0px            # the room its parent had for it when it was made, across and down
+  init_y::px=0px
+  rooted::Bool=false        # it's the root of a layout, which starts out as big as the window
+  natural_width::px=0px     # its width and height before its siblings were taken into account
+  initial_height::px=0px
+  fit_width::px=0px         # the width its parent settled on
+  fit_height::px=0px        # its height once its content was measured at that width
+  final_height::px=0px      # the height its parent settled on
+  epoch::Int=0
+  reused::Bool=false        # it's from the last layout, and this layout hasn't yet had to redo it
 end
 
 @property ConcreteUI.firstchild = self.children[1]
@@ -71,11 +83,20 @@ end
 
 @property ConcreteText.size = Vec2{px}(self.width, self.height)
 
+# These print as what they are and where, not as every field of every rectangle around them
+Base.show(io::IO, ui::ConcreteRect) =
+  print(io, "ConcreteRect of ", ui.from === nothing ? "nothing" : nameof(typeof(ui.from)), ", ", ui.width, " × ", ui.height, " at (", ui.left, ", ", ui.top, ")")
+Base.show(io::IO, ui::ConcreteText) =
+  print(io, "ConcreteText of ", repr(ui.from.content), ", ", ui.width, " × ", ui.height, " at (", ui.left, ", ", ui.top, ")")
+
 """
 Layout runs in the same order as Clay's:
 
 1. `initialize` builds the concrete tree. Children report their natural widths
-   upward, so fit-content containers know how wide their content is.
+   upward, so fit-content containers know how wide their content is. A semantic
+   node whose geometry is as it was at the last layout gets its rectangle from
+   that layout back. Each later step leaves what's in the rectangle alone if
+   it's given the size it was given then, and lays it out afresh if not.
 2. `fit_widths!` works down the tree. Each container gives spare width to
    children that grow, takes it from children that can shrink, and resolves
    percentage widths.
@@ -93,6 +114,8 @@ function describe(ui::Container, (w, h))
   fit_heights!(ui, cui)
   isgrowable(ui, Axis.y) && (cui.height = clamp(h, minsize(cui, field"height"), maxsize(cui, field"height")))
   grow_heights!(ui, cui)
+  # A rectangle that's used again may have been moved since the last layout, as a popup's is
+  cui.left = cui.top = 0px
   position!(ui, cui)
   cui
 end
@@ -148,30 +171,59 @@ fits_content(d::Dimension) = d.preferred == 0px && d.percent == 0 && d.grow != G
 "True when a dimension starts at its content size and then takes spare space"
 grows_from_content(d::Dimension) = d.preferred == 0px && d.percent == 0 && d.grow == GrowType.Grow
 
-"The first guess at an element's size, before its siblings are taken into account"
-initial_size(d::Dimension, parent::ConcreteRect, axis::Axis) = begin
+"The first guess at an element's size, before its siblings are taken into account. `room` is the space its parent has for it."
+initial_size(d::Dimension, room::px) = begin
   size = if d.preferred != 0px
     d.preferred
   elseif d.percent > 0
-    inner(parent, axis) * d.percent
+    room * d.percent
   else
-    inner(parent, axis)
+    room
   end
   clamp(convert(px, size), d.min, d.max)
 end
 
 "The initial pass creates the new tree and sets the width of all nodes to their natural value"
 function initialize(ui::Container, parent::ConcreteRect)
-  rect = ConcreteRect(from=ui, parent=parent,
-                      width=initial_size(ui.width, parent, Axis.x),
-                      height=initial_size(ui.height, parent, Axis.y))
+  x, y, rooted = inner(parent, Axis.x), inner(parent, Axis.y), parent.from === nothing
+  rect = kept(ui, x, y, rooted)
+  if rect !== nothing
+    # Nothing in this geometry has changed, so start from the rectangle the last layout made for it
+    setfield!(rect, :parent, parent)
+    rect.width, rect.height, rect.reused = rect.natural_width, rect.initial_height, true
+    return rect
+  end
+  rect = build!(ConcreteRect(from=ui, parent=parent), ui, x, y, rooted)
+  source = ui.from
+  source isa SemanticUI && laid!(source, rect)
+  rect
+end
+
+"The rectangle the last layout made for `ui`, if `ui` hasn't changed since and its parent has the same room for it"
+kept(ui::Container, x::px, y::px, rooted::Bool) = begin
+  source = ui.from
+  source isa SemanticUI || return nothing
+  rect = laid(source)
+  rect isa ConcreteRect && rect.from === ui && rect.epoch == epoch[] && rect.init_x == x && rect.init_y == y &&
+    rect.rooted == rooted ? rect : nothing
+end
+
+"""
+Give `rect` its natural size and make the rectangles in it. `x` and `y` are the
+room its parent has for it. A layout does this to a new rectangle, and again to
+one from the last layout that turns out to be given another size than it was.
+"""
+function build!(rect::ConcreteRect, ui::Container, x::px, y::px, rooted::Bool)
+  rect.init_x, rect.init_y, rect.rooted, rect.epoch, rect.reused = x, y, rooted, epoch[], false
+  rect.width = initial_size(ui.width, x)
+  rect.height = initial_size(ui.height, y)
   # Children take their first size from the room inside it, before the gaps between them are known
   measure_extra!(rect, ui)
   rect.children = ConcreteUI[initialize(child, rect) for child in ui.children]
   measure_gaps!(rect, ui)
   # Like Clay, growing elements start at their content size and grow from
   # there. The root is the exception: it starts out as big as the window.
-  if fits_content(ui.width) || (grows_from_content(ui.width) && parent.from !== nothing)
+  if fits_content(ui.width) || (grows_from_content(ui.width) && !rooted)
     content = content_width(ui, rect)
     if content !== nothing
       rect.width = clamp(content, ui.width.min, ui.width.max)
@@ -182,6 +234,7 @@ function initialize(ui::Container, parent::ConcreteRect)
   # Something that never shrinks is as narrow as it can get already
   rect.min_width = ui.width.grow == GrowType.None ? rect.width :
                    max(convert(px, ui.width.min), content_min_width(ui, rect))
+  rect.natural_width, rect.initial_height = rect.width, rect.height
   rect
 end
 
@@ -321,6 +374,14 @@ width_fits_content(_) = false
 "Settle the width of every child, working down from the root"
 fit_widths!(::Text, ::ConcreteText) = nothing
 function fit_widths!(ui::Container, cui::ConcreteRect)
+  if cui.reused
+    # It's as wide as it was at the last layout, so everything in it is too
+    cui.width == cui.fit_width && return
+    width = cui.width
+    build!(cui, ui, cui.init_x, cui.init_y, cui.rooted)
+    cui.width = width
+  end
+  cui.fit_width = cui.width
   resolve_percent!(cui, Axis.x)
   if Axis.x in main_axes(ui) || ui isa Scroll
     shrink!(cui, grow!(cui, Axis.x), Axis.x)
@@ -334,6 +395,8 @@ end
 
 "Measure every element's height now its width is known, working up from the leaves"
 function fit_heights!(ui::Container, cui::ConcreteRect)
+  # Used again at the same width, it's as tall as its content made it last time
+  cui.reused && return (cui.height = cui.fit_height; nothing)
   for child in cui.children
     fit_heights!(child.from, child)
   end
@@ -343,6 +406,8 @@ function fit_heights!(ui::Container, cui::ConcreteRect)
   elseif d.percent == 0
     cui.height = clamp(content_height(ui, cui), d.min, d.max)
   end
+  cui.fit_height = cui.height
+  nothing
 end
 
 # The width of the text element should already of been allocated so here we just wrap the text
@@ -377,6 +442,18 @@ end
 "Share out spare height, working down from the root"
 grow_heights!(::Text, ::ConcreteText) = nothing
 function grow_heights!(ui::Container, cui::ConcreteRect)
+  if cui.reused
+    cui.reused = false
+    # It's as tall as it was at the last layout, so everything in it is too
+    cui.height == cui.final_height && return
+    width, height = cui.width, cui.height
+    build!(cui, ui, cui.init_x, cui.init_y, cui.rooted)
+    cui.width = width
+    fit_widths!(ui, cui)
+    fit_heights!(ui, cui)
+    cui.height = height
+  end
+  cui.final_height = cui.height
   resolve_percent!(cui, Axis.y)
   if Axis.y in main_axes(ui)
     shrink!(cui, grow!(cui, Axis.y), Axis.y)

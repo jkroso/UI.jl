@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale handled integrate
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs
 @use "./Icon" Icon
 @use "../draw" show_menu! hide_menu! rect cursor
 @use Colors: @colorant_str
@@ -56,5 +56,8 @@ end
 
 "The option that's chosen, or `nothing` when there are no options"
 integrate(d::Dropdown) = isempty(d.options) ? nothing : current_label(d)
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(d::Dropdown) = (d.selected, d.options, d.open)
 
 export Dropdown

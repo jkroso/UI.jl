@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"... text_width
-@use "../abstract" SemanticUI WrapMode describe focus theme scale handled integrate
+@use "../abstract" SemanticUI WrapMode describe focus theme scale handled integrate inputs
 @use "../draw" draw rect cursor
 @use Colors: @colorant_str
 
@@ -113,5 +113,8 @@ end
 
 "The value the slider is at"
 integrate(s::Slider) = s.value
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(s::Slider) = (s.value, s.min, s.max, s.format)
 
 export Slider

@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe theme scale handled integrate
+@use "../abstract" SemanticUI describe theme scale handled integrate inputs
 @use "../draw" draw cursor
 @use Colors: @colorant_str
 
@@ -30,5 +30,8 @@ end
 
 "Whether the switch is on"
 integrate(t::Toggle) = t.on
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(t::Toggle) = (t.on,)
 
 export Toggle

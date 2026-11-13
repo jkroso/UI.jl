@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe add_child! theme scale handled integrate
+@use "../abstract" SemanticUI describe add_child! theme scale handled integrate inputs
 @use "../draw" draw cursor
 @use Colors: @colorant_str, RGBA
 @use GeometryBasics: Vec2
@@ -62,5 +62,8 @@ end
 
 "Whether the box is ticked"
 integrate(c::Checkbox) = c.checked
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(c::Checkbox) = (c.checked, c.label)
 
 export Checkbox

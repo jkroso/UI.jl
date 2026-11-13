@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale handled integrate
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs
 @use "../draw" draw cursor
 @use Colors: @colorant_str
 
@@ -58,5 +58,9 @@ end
 
 "The label of the choice that's picked, or `nothing` when there are no choices"
 integrate(rg::RadioGroup) = isempty(rg.labels) ? nothing : rg.labels[clamp(rg.selected, 1, length(rg.labels))]
+
+# What `describe` reads, so that it only runs again when one of these changes
+inputs(rg::RadioGroup) = (length(rg.labels),)
+inputs(item::RadioItem) = (item.index, item.group.selected, item.group.labels)
 
 export RadioGroup

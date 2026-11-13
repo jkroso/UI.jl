@@ -33,6 +33,20 @@ Extracts the domain data currently represented by a semantic UI tree. This pairs
 
 The components that hold a value define it: `integrate` gives the text of a `TextInput`, whether a `Checkbox` is ticked or a `Toggle` is on, the value of a `Slider`, the chosen option of a `Dropdown`, a `Select` or a `RadioGroup`, and the colour of a `ColorPicker`. Define it for your own nodes in terms of theirs, e.g. `integrate(row::TodoRow) = TodoItem(integrate(row.input), integrate(row.checkbox))`.
 
+### `inputs(ui::SemanticUI)`
+
+Says what `describe(ui)` reads. It's optional. Without it a node is described and laid out on every frame. With it, the node's geometry and its layout are used again until one of the values changes:
+
+```julia
+inputs(row::TodoRow) = (row.text, row.done)
+```
+
+Give every value that `describe` reads: the node's own fields, the fields of other nodes, and anything outside the tree. Give values, not objects that change in place: `item.done`, not `item`. The library adds the rest itself: whether the mouse is over the node, whether it has the keyboard, the theme, the size of the window and which children the node has. A child that changes is described again by itself, and its new geometry takes the place of its old one in its parent's.
+
+A `describe` that calls `redraw_in!` is run again on the next frame whatever its inputs are. One that reads the time by itself has to give the time as an input.
+
+On a page of 400 rows, a frame that changes one row takes 2.7 ms with `inputs` on the rows, and 10 ms without. Code that's loaded again while the app runs, as `examples/hot_reload.jl` does, describes everything again, so a change to a `describe` always shows. If part of an app looks out of date, an input is missing. `skipping[] = false` turns all of this off, to check. The simple built-in components, like `Button`, `Checkbox`, `Slider` and `Icon`, have their `inputs` already.
+
 ### `focus(ui::SemanticUI)`
 
 Will set the UI element to receive keyboard events

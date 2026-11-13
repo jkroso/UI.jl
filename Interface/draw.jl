@@ -6,7 +6,7 @@
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
 @use GLFW
-@use "./abstract" edits theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI WrapMode mixin! window_of scale same semantic_parent handled
+@use "./abstract" edits epoch ambient timed! theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI WrapMode mixin! window_of scale same semantic_parent handled
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
@@ -587,8 +587,8 @@ describe(row::MenuRow) = begin
   list = row.list
   t = theme(row)
   k = scale(t)
-  inset = 3px * k   # between the highlight of an item and the edges of the item, the same on every side
-  item = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), radius(4px), padding(0px, 0px, 0px, 12px * k - inset),
+  inset = 4px * k   # between the highlight of an item and the edges of the item, the same on every side
+  item = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), radius(4px), padding(0px, 0px, 0px, 14px * k - inset),
              Box(offset_y=-1px * k, Text(list.items[row.index], size=13pt * k, wrap=WrapMode.none)))
   row.index == highlighted(list) && mixin!(item, background(t.select))
   Row(width(grow=GrowType.Grow), height(list.item_height), padding(inset), item)
@@ -758,7 +758,7 @@ Forget the layout that was kept for a window. A window notices a change to a
 layout by itself, so this is only for a change it can't see, like a font
 registered under a name that's already in use.
 """
-invalidate_layout!(w::AbstractWindow) = (delete!(_layout_cache, objectid(w)); nothing)
+invalidate_layout!(w::AbstractWindow) = (delete!(_layout_cache, objectid(w)); epoch[] += 1; nothing)
 
 resolve_layout(geo::Container, size, window_id::UInt) = begin
   cached = get(_layout_cache, window_id, nothing)
@@ -807,6 +807,8 @@ const _hurried = Dict{UInt, Tuple{Float64,Float64}}()   # the wake the window ha
 
 "Ask the window that shows `node` to draw again within `seconds`"
 redraw_in!(node::UITree, seconds) = begin
+  # A `describe` that asks for another frame changes with time, so it can't be skipped on that frame
+  timed!()
   w = window_of(node)
   w === nothing && return
   id = objectid(w)
@@ -1016,6 +1018,16 @@ hover_chain(target) = begin
     node = semantic_parent(node)
   end
   chain
+end
+
+# What a window adds to the inputs of a node that says what its `describe` reads: whether the mouse
+# is over it, whether it has the keyboard, and the size the app is laid out at
+ambient(node::SemanticUI) = begin
+  w = window_of(node)
+  w === nothing && return UInt(0)
+  id = objectid(w)
+  hovered = any(n -> same(n, node), get(_hovered, id, ()))
+  hash((hovered, w.focus === node, app_size(get(_tools, id, nothing), w.size)))
 end
 
 "True when the cursor is over `node` or one of its descendants"
