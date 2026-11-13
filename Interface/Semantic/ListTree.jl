@@ -4,14 +4,15 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme light
-@use "../draw" draw hittest
+@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme light scale
+@use "../draw" draw hittest ishovered
 @use "./Icon" Icon
 @use Colors: @colorant_str
 @use GeometryBasics: Vec2
 
 @abstract struct TreeItem <: SemanticUI
   selected::Bool = false
+  left::px = 0px   # where its row was last drawn. It tells a click on a group's arrow from a click on its name.
 end
 
 @def mutable struct Item <: TreeItem end
@@ -40,14 +41,21 @@ ItemGroup(label::String, children::TreeItem...) =
 
 @def mutable struct ListTree <: SemanticUI
   focused::Union{Nothing,TreeItem} = nothing
+  # Called with an item when a click on its name chooses it, or Return does
+  onchoose::Function = item -> nothing
+  guides::Bool = true   # draw the lines that join each item to its group
+  frame::Bool = true    # draw a border and a background around the tree
+  # Draw an arrow before the name of each group. Without the arrows a name starts where its arrow
+  # would, so start each name with an icon of your own: a click there opens and closes a group.
+  arrows::Bool = true
 end
 
-ListTree(children::TreeItem...) = begin
-  tree = ListTree()
-  for child in children
-    add_child!(tree, child)
+ListTree(child::TreeItem, children::TreeItem...; settings...) = begin
+  tree = ListTree(; settings...)
+  for c in (child, children...)
+    add_child!(tree, c)
   end
-  isempty(children) || (tree.focused = children[1])
+  tree.focused = child
   tree
 end
 
@@ -123,28 +131,26 @@ const INDENT_WIDTH = 20px
 const ROW_HEIGHT = 28px
 const CHEVRON_WIDTH = 12px
 const CHEVRON_GAP = 3px
-const LABEL_SIZE = 12pt   # of a name, when the theme has its usual size. The sizes here fit it.
+const LABEL_SIZE = 12pt   # of a name, when the theme has its usual size. The sizes here fit it, and `scale()` makes them fit other sizes.
 
-"How much bigger the theme's text is than the usual size. Everything in a row grows by this much."
-scale() = convert(px, theme().size).value / convert(px, LABEL_SIZE).value
 const CONNECTOR_GAP = 4px   # between the line that points to an item and the item's label
 const GUIDE_WIDTH = 1px  # of the lines that join each item to its group
 
 describe(tree::ListTree) = begin
-  col = Column(width(grow=GrowType.Grow), padding(4px),
-               radius(6px), border(1px, :solid, theme(tree).line),
-               background(theme(tree).surface))
-  flatten_items!(col, tree, tree.focused)
+  col = Column(width(grow=GrowType.Grow))
+  tree.frame && mixin!(col, padding(4px), radius(6px), border(1px, :solid, theme(tree).line),
+                       background(theme(tree).surface))
+  flatten_items!(col, tree, tree)
   col
 end
 
 "Recursively flatten visible items into rows in the column"
-flatten_items!(col, parent, focused) = begin
+flatten_items!(col, parent, tree) = begin
   for child in parent.children
     child isa TreeItem || continue
-    mixin!(col, describe_item(child, focused))
+    mixin!(col, describe_item(child, tree))
     if child isa ItemGroup && !child.collapsed
-      flatten_items!(col, child, focused)
+      flatten_items!(col, child, tree)
     end
   end
 end
@@ -170,19 +176,26 @@ label_text(t::Text) = begin
                     family=own ? t.family : theme().mono, subfamily=own ? t.subfamily : theme().mono_style))
 end
 
+"True when the mouse is over the item's own row, not over an item in it"
+hovered(item::TreeItem) = ishovered(item) && !any(child -> child isa TreeItem && ishovered(child), item.children)
+
 "Create a Row for a single item"
-describe_item(item::TreeItem, focused) = begin
+describe_item(item::TreeItem, tree::ListTree) = begin
   d = depth(item)
   k = scale()
   row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT * k), Alignment.Center)
   row.from = item
 
-  item === focused && mixin!(row, background(theme().select), radius(3px))
+  if item === tree.focused
+    mixin!(row, background(theme().select), radius(3px))
+  elseif hovered(item)
+    mixin!(row, background(theme().hover), radius(3px))
+  end
 
   # Ancestor through-line spacers: render the line as a colored Box
   for i in 1:d-1
     anc = ancestor(item, d - i)
-    if !is_last_tree_item(anc)
+    if tree.guides && !is_last_tree_item(anc)
       mixin!(row, Box(width(INDENT_WIDTH * k), height(ROW_HEIGHT * k), Alignment.Center,
                       Box(width(GUIDE_WIDTH), height(ROW_HEIGHT * k), background(theme().line))))
     else
@@ -194,7 +207,9 @@ describe_item(item::TreeItem, focused) = begin
   d > 0 && mixin!(row, Box(width(INDENT_WIDTH * k), height(ROW_HEIGHT * k)))
 
   # Chevron for ItemGroup
-  if item isa ItemGroup
+  if !tree.arrows
+    # The name is next, and it starts with an icon of its own
+  elseif item isa ItemGroup
     name = item.collapsed ? "chevron-right" : "chevron-down"
     # The arrow belongs to its item, so a click on the arrow is a click on the item
     arrow = Icon(name, size=12px * k, color=theme().dim)
@@ -202,6 +217,9 @@ describe_item(item::TreeItem, focused) = begin
     mixin!(row, Box(width(CHEVRON_GAP * k)))
     mixin!(row, Box(width(CHEVRON_WIDTH * k), height(ROW_HEIGHT * k), Alignment.Center, describe!(arrow)))
     mixin!(row, Box(width(CHEVRON_GAP * k)))
+  elseif !tree.guides
+    # Without the lines, a name is under the names of the groups beside it, not under their arrows
+    mixin!(row, Box(width((CHEVRON_WIDTH + 2CHEVRON_GAP) * k)))
   elseif d > 0
     # A group's arrow has a gap before it already
     mixin!(row, Box(width(CONNECTOR_GAP * k)))
@@ -221,8 +239,9 @@ end
 # Draw (self-connector lines only — ancestor through-lines and chevrons are GeometricUI)
 
 draw(ctx, size, ui::ConcreteRect, item::TreeItem) = begin
+  item.left = ui.left
   d = depth(item)
-  d == 0 && return
+  (d == 0 || !find_list_tree(item).guides) && return
 
   # Self connector (spacer at index d)
   spacer = ui.children[d]
@@ -303,6 +322,10 @@ item_under(tree::ListTree, window) = begin
   nothing
 end
 
+"True when `x` is over the arrow of `group`, or to the left of it"
+on_arrow(group::ItemGroup, x) =
+  x < group.left + (INDENT_WIDTH * depth(group) + CHEVRON_WIDTH + 2CHEVRON_GAP) * scale(theme(group))
+
 # The tree takes the click, not the item. A click on an item goes on to each
 # group that holds it, and a group that took it would close.
 onkey(tree::ListTree, e::KeyPress{Keys.mouse_left}) = begin
@@ -310,7 +333,15 @@ onkey(tree::ListTree, e::KeyPress{Keys.mouse_left}) = begin
   item = item_under(tree, e.window)
   item === nothing && return
   tree.focused = item
-  item isa ItemGroup && (item.collapsed = !item.collapsed)
+  if item isa ItemGroup
+    item.collapsed = !item.collapsed
+    # A click on the arrow only opens or closes the group
+    on_arrow(item, e.window.mouse[1]) && return
+  end
+  tree.onchoose(item)
 end
 
-export ListTree, ItemGroup, TreeItem, Item
+onkey(tree::ListTree, ::KeyPress{Keys.enter}) =
+  tree.focused === nothing || tree.onchoose(tree.focused)
+
+export ListTree, ItemGroup, TreeItem, Item, hovered
