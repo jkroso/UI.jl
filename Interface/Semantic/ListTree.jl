@@ -4,8 +4,8 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme light scale
-@use "../draw" draw hittest ishovered
+@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme light scale handled
+@use "../draw" draw hittest ishovered cursor
 @use "./Icon" Icon
 @use Colors: @colorant_str
 @use GeometryBasics: Vec2
@@ -326,19 +326,23 @@ end
 on_arrow(group::ItemGroup, x) =
   x < group.left + (INDENT_WIDTH * depth(group) + CHEVRON_WIDTH + 2CHEVRON_GAP) * scale(theme(group))
 
+# A click on an item chooses it, and opens or closes a group
+cursor(::TreeItem) = :hand
+
 # The tree takes the click, not the item. A click on an item goes on to each
 # group that holds it, and a group that took it would close.
 onkey(tree::ListTree, e::KeyPress{Keys.mouse_left}) = begin
   focus(tree)
   item = item_under(tree, e.window)
-  item === nothing && return
+  item === nothing && return handled
   tree.focused = item
   if item isa ItemGroup
     item.collapsed = !item.collapsed
     # A click on the arrow only opens or closes the group
-    on_arrow(item, e.window.mouse[1]) && return
+    on_arrow(item, e.window.mouse[1]) && return handled
   end
   tree.onchoose(item)
+  handled
 end
 
 onkey(tree::ListTree, ::KeyPress{Keys.enter}) =

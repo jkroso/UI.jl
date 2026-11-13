@@ -1,13 +1,14 @@
 @use "github.com/jkroso/Prospects.jl" @def @property @field_str Field ["Enum" @Enum]
 @use "github.com/jkroso/Font.jl" ["units" Length px absolute]
-@use "../Geometric"... Width Height Dimension
+@use "../Geometric"... Width Height Dimension state!
 @use "../abstract" describe ConcreteUI WrapMode
-@use "../fonts" skia_font
+@use "../fonts" skia_font weight_name
 @use "../image" image_aspect
 @use GeometryBasics: Vec2, Vec
 @use Colors...
 @use "github.com/jkroso/MiniFB.jl"... int
-@use "github.com/jkroso/MiniFB.jl/skia" font_metrics measure_text
+@use "github.com/jkroso/MiniFB.jl/skia" font_metrics SkiaFont
+@use Skia
 
 @Enum Axis x y
 
@@ -18,7 +19,11 @@
   width::px=0px
   # How narrow it can get before its content would overflow
   min_width::px=0px
-  children::Vector{ConcreteUI}=[]
+  # Space inside it that its children can't use: its padding, its border and the gaps between its children.
+  # It's worked out once, when the rectangle is made, because every pass of the layout asks for it.
+  extra_x::px=0px
+  extra_y::px=0px
+  children::Vector{ConcreteUI}=ConcreteUI[]
 end
 
 @property ConcreteUI.firstchild = self.children[1]
@@ -102,18 +107,31 @@ main_axes(::Column) = (Axis.y,)
 main_axes(::Union{Box,Wedge}) = (Axis.x, Axis.y)
 main_axes(::Container) = ()
 
-"Space between children: the gap plus any border drawn between them"
-gaps((;from, children)::ConcreteRect) = from.between_width * max(0, length(children) - 1)
-
 "Space inside a container that its children can't use along one axis"
-function extra(cui::ConcreteRect, axis::Axis)
-  from = cui.from
-  from isa Container || return 0px
-  (;padding, border) = from
-  space = axis == Axis.x ? padding.width + border.width : padding.height + border.height
-  axis in main_axes(from) ? space + gaps(cui) : space
-end
+extra(cui::ConcreteRect, axis::Axis) = axis == Axis.x ? cui.extra_x : cui.extra_y
 extra(::ConcreteText, ::Axis) = 0px
+
+# A length is nearly always in px already, and then there's nothing to convert
+inpx(x::px) = x
+inpx(x) = convert(px, x)
+
+"Start a container's `extra` with its padding and border"
+function measure_extra!(rect::ConcreteRect, ui::Container)
+  (;padding, border) = ui
+  rect.extra_x = inpx(padding.left) + inpx(padding.right) + inpx(border.left.width) + inpx(border.right.width)
+  rect.extra_y = inpx(padding.top) + inpx(padding.bottom) + inpx(border.top.width) + inpx(border.bottom.width)
+  rect
+end
+
+"Add the gaps between a container's children to its `extra`, along its layout direction. Each gap includes any border drawn in it."
+function measure_gaps!(rect::ConcreteRect, ui::Container)
+  length(rect.children) > 1 || return rect
+  gaps = (inpx(ui.child_gap) + inpx(ui.border.between.width)) * (length(rect.children) - 1)
+  axes = main_axes(ui)
+  Axis.x in axes && (rect.extra_x += gaps)
+  Axis.y in axes && (rect.extra_y += gaps)
+  rect
+end
 
 "Space a container has for its children along one axis"
 inner(cui::ConcreteRect, axis::Axis) = getproperty(cui, field(axis)) - extra(cui, axis)
@@ -147,7 +165,10 @@ function initialize(ui::Container, parent::ConcreteRect)
   rect = ConcreteRect(from=ui, parent=parent,
                       width=initial_size(ui.width, parent, Axis.x),
                       height=initial_size(ui.height, parent, Axis.y))
+  # Children take their first size from the room inside it, before the gaps between them are known
+  measure_extra!(rect, ui)
   rect.children = ConcreteUI[initialize(child, rect) for child in ui.children]
+  measure_gaps!(rect, ui)
   # Like Clay, growing elements start at their content size and grow from
   # there. The root is the exception: it starts out as big as the window.
   if fits_content(ui.width) || (grows_from_content(ui.width) && parent.from !== nothing)
@@ -167,7 +188,7 @@ end
 "How narrow a container's content can get without overflowing"
 content_min_width(ui::Container, rect) = clips(ui) ? extra(rect, Axis.x) : _content_min_width(ui, rect)
 "True when a container hides content that doesn't fit, so it can be narrower than it"
-clips(ui::Container) = ui.clip || ui isa Scroll
+clips(ui::Container) = ui.clip || ui.clip_x || ui isa Scroll
 _content_min_width(::Row, rect) = sum(c -> minsize(c, field"width"), rect.children, init=0px) + extra(rect, Axis.x)
 _content_min_width(::Union{Box,Wedge,Stack,Column,Scroll}, rect) =
   maximum(c -> minsize(c, field"width"), rect.children, init=0px) + extra(rect, Axis.x)
@@ -213,6 +234,7 @@ const slack = 0.01px
 function grow!(ui::ConcreteRect, direction::Axis)
   prop = field(ui, direction)
   remainder = remaining_size(ui, prop)
+  remainder > slack || return remainder
   growable = sort!(filter(ui->isgrowable(ui, prop), ui.children), by=prop)
   while !isempty(growable) && remainder > slack
     smallest, next_smallest = best(growable, by=prop)
@@ -236,6 +258,7 @@ end
 
 function shrink!(ui::ConcreteRect, remainder::Length, direction::Axis)
   prop = field(ui, direction)
+  remainder < -slack || return remainder
   shrinkable = sort!(filter(ui->isshrinkable(ui, prop), ui.children), by=prop, rev=true)
   while !isempty(shrinkable) && remainder < -slack
     biggest, next_biggest = best(shrinkable, by=prop, comp=isless)
@@ -284,11 +307,16 @@ function cross_fit!(cui::ConcreteRect, axis::Axis)
   for child in cui.children
     if isgrowable(child, axis)
       setproperty!(child, prop, clamp(available, minsize(child, prop), maxsize(child, prop)))
-    elseif axis == Axis.x && child isa ConcreteRect && fits_content(child.from.width) && child.width > available
+    elseif axis == Axis.x && width_fits_content(child) && child.width > available
       child.width = max(available, convert(px, minsize(child, prop)))
     end
   end
 end
+
+"True when an element's width is the width of its content"
+width_fits_content(child::ConcreteRect) = width_fits_content(child.from)
+width_fits_content(ui::Container) = fits_content(ui.width)
+width_fits_content(_) = false
 
 "Settle the width of every child, working down from the root"
 fit_widths!(::Text, ::ConcreteText) = nothing
@@ -383,7 +411,7 @@ maxsize(ui::ConcreteUI, prop::Field) = maxsize(ui.from, prop)
 function best(growable; by=field"width", comp=(>))
   first = growable[1]
   smallest_val = getproperty(first, by)
-  group = Any[first]
+  group = eltype(growable)[first]
   for next in @view(growable[2:end])
     next_val = getproperty(next, by)
     comp(next_val, smallest_val) && return group, next_val
@@ -398,18 +426,28 @@ font that draws the text, so the two always agree. Measuring the font file
 directly can't, for fonts like the macOS system font that the system adjusts
 for each size.
 """
-text_width(t::Text, s::AbstractString) = px(measure_text(skia_font(t.family, t.size, t.subfamily), s)[1])
+text_width(t::Text, s::AbstractString) = text_width(font(t), s)
+text_width(f::SkiaFont, s::Union{String,SubString{String}}) =
+  px(Skia.sk_font_measure_text(f.raw, pointer(s), UInt64(ncodeunits(s)), Skia.SK_TEXT_ENCODING_UTF8, C_NULL, C_NULL))
+text_width(f::SkiaFont, s::AbstractString) = text_width(f, String(s))
+
+"The Skia font that measures and draws `t`"
+font(t::Text) = skia_font(t.family, t.size, style(t))
+
+"The name of the style `t` is drawn in: its `subfamily`, or without one the name of its `weight`, like \"Bold\" for 700"
+style(t::Text) = !isempty(t.subfamily) || t.weight == 400 ? t.subfamily : weight_name(t.weight)
 
 function initialize(ui::Text, parent)
   words = split(ui.content)
-  widths = px[text_width(ui, w) for w in words]
+  f = font(ui)
+  widths = px[text_width(f, w) for w in words]
   # Text that wraps at words is as wide as `wraptext` counts it: a word and a
   # space at a time. The whole line measured at once can be narrower, because
   # of kerning, and then text in a box made to fit it would wrap its last word.
-  natural = ui.wrap == WrapMode.words && !isempty(words) ? words_width(widths, text_width(ui, " ")) : natural_width(ui)
+  natural = ui.wrap == WrapMode.words && !isempty(words) ? words_width(widths, text_width(f, " ")) : natural_width(ui)
   ConcreteText(from=ui,
                width=natural,
-               height=skia_cap_height(ui),  # natural height = visible glyph height (single line)
+               height=cap_height(f),  # natural height = visible glyph height (single line)
                words=words,
                widths=widths,
                parent=parent)
@@ -429,14 +467,10 @@ natural_width(ui::Text) =
     maximum(line -> text_width(ui, line), split(ui.content, '\n'), init=0px) :
     text_width(ui, ui.content)
 
-"Look up Skia's actual cap-height for a Text's font, in px. Cached by (family, subfamily, size)."
-const _skia_cap_height_cache = Dict{Tuple{String,String,Any},px}()
-function skia_cap_height(t::Text)
-  key = (t.family, t.subfamily, t.size)
-  get!(_skia_cap_height_cache, key) do
-    px(font_metrics(skia_font(t.family, t.size, t.subfamily)).capHeight)
-  end
-end
+"Skia's own height of a capital letter in a font, in px. It's looked up once for each font."
+const cap_heights = IdDict{SkiaFont,px}()
+cap_height(f::SkiaFont) = get!(() -> px(font_metrics(f).capHeight), cap_heights, f)::px
+skia_cap_height(t::Text) = cap_height(font(t))
 
 "Break `s` into lines no wider than `limit`, given the width of each of its words"
 function wraptext(s::String, limit::px, words, widths, space_width::px)
@@ -464,14 +498,13 @@ end
 # Applied to each child immediately before recursing into its position!,
 # so the offset propagates through the whole subtree without affecting
 # how siblings flow.
-apply_translate!(child::ConcreteRect) = begin
-  c = child.from
-  if c isa Container
-    child.left += c.offset_x
-    child.top  += c.offset_y
-  end
-end
+apply_translate!(child::ConcreteRect) = translate!(child.from, child)
 apply_translate!(_::ConcreteUI) = nothing
+translate!(c::Container, child) = begin
+  child.left += c.offset_x
+  child.top  += c.offset_y
+end
+translate!(_, child) = nothing
 
 function position!(::Text, ui::ConcreteText) end
 
@@ -492,11 +525,12 @@ function position!(scroll::Scroll, ui::ConcreteRect)
   isempty(ui.children) && return
   child = ui.children[1]
   left, top = content_origin(scroll, ui)
-  scroll.content_height = child.height + extra(ui, Axis.y)
-  scroll.viewport = inner(ui, Axis.y)
-  scroll.offset = clamp(scroll.offset, 0px, max(0px, scroll.content_height - ui.height))
+  state = state!(scroll)
+  state.content_height = child.height + extra(ui, Axis.y)
+  state.viewport = inner(ui, Axis.y)
+  state.offset = clamp(state.offset, 0px, max(0px, state.content_height - ui.height))
   child.left = left
-  child.top = top - scroll.offset
+  child.top = top - state.offset
   apply_translate!(child)
   position!(child.from, child)
 end
@@ -551,4 +585,4 @@ end
 
 position!(::Container, ::ConcreteRect) = nothing
 
-export describe, ConcreteText, ConcreteRect
+export describe, ConcreteText, ConcreteRect, font

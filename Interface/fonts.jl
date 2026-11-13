@@ -88,12 +88,22 @@ skia_font(family::AbstractString, size, subfamily::AbstractString="") = begin
   end
 end
 
-"The installed font that best matches a family, weight and slant"
-installed_font(family::String, size::Float32, weight::Integer, italic::Bool) = begin
-  slant = italic ? Skia.SK_FONT_STYLE_SLANT_ITALIC : Skia.SK_FONT_STYLE_SLANT_UPRIGHT
+"The installed typeface that Skia finds nearest to a family, weight and slant"
+match_typeface(family::String, weight::Integer, slant) = begin
   style = Skia.sk_fontstyle_new(Int32(weight), Int32(Skia.SK_FONT_STYLE_WIDTH_NORMAL), slant)
   typeface = Skia.sk_fontmgr_match_family_style(fontmgr[], family, style)
   Skia.sk_fontstyle_delete(style)
+  typeface
+end
+
+"The installed font that best matches a family, weight and slant"
+installed_font(family::String, size::Float32, weight::Integer, italic::Bool) = begin
+  slant = italic ? Skia.SK_FONT_STYLE_SLANT_ITALIC : Skia.SK_FONT_STYLE_SLANT_UPRIGHT
+  typeface = match_typeface(family, weight, slant)
+  # As in CSS, a family with no medium weight gives its regular one for 500, where Skia would give its bold
+  if weight == 500 && typeface != C_NULL && registered_weight(typeface) > 500
+    typeface = match_typeface(family, 400, slant)
+  end
   raw = Skia.sk_font_new_with_values(typeface, size, 1f0, 0f0)
   SkiaFont(family, Skia.sk_font_style_weight_t(weight), slant, size, raw)
 end

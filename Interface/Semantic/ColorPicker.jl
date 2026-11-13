@@ -5,20 +5,13 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! add_child! focus theme scale
-@use "../draw" draw ishovered cursor show_tooltip! redraw_in!
+@use "../abstract" SemanticUI describe describe! add_child! focus theme scale handled window_of integrate
+@use "../draw" draw ishovered cursor show_tooltip! redraw_in! rect inside
 @use "./Icon" Icon
 @use Colors: @colorant_str, HSV, RGB, RGBA, hex
 
 @def mutable struct ColorPicker <: SemanticUI
   color::HSV = HSV(225, 0.8, 0.8)
-  shade_left::px = 0px
-  shade_top::px = 0px
-  shade_size::px = 0px
-  hue_left::px = 0px
-  hue_top::px = 0px
-  hue_width::px = 0px
-  hue_height::px = 0px
   dragging::Symbol = :none
   copy::Any = nothing   # the copy button, kept so it remembers when it was clicked
 end
@@ -27,7 +20,6 @@ end
 @def mutable struct CopyButton <: SemanticUI
   picker::Any = nothing
   copied::Float64 = 0.0                        # when it last copied, from time()
-  rect::NTuple{4,px} = (0px, 0px, 0px, 0px)    # where it was last drawn, to put its tooltip over it
 end
 
 copy_button(cp::ColorPicker) = begin
@@ -60,8 +52,8 @@ tip(btn::CopyButton) = Box(padding(8px, 6px),
   Box(Text((since_copy(btn) < GLOW ? "Copied " : "Copy ") * hexcode(btn), size=12pt, color=colorant"rgb(240,240,240)")))
 
 show_tip!(btn::CopyButton, window) = begin
-  x, y, w, h = btn.rect
-  w > 0px && show_tooltip!(window, tip(btn), x, y, w, h, placement=:top)
+  r = rect(btn)
+  r === nothing || show_tooltip!(window, tip(btn), r.left, r.top, r.width, r.height, placement=:top)
 end
 
 onmouse(btn::CopyButton, e::MouseMove) = show_tip!(btn, e.window)
@@ -72,10 +64,10 @@ onkey(btn::CopyButton, e::KeyPress{Keys.mouse_left}) = begin
   end
   btn.copied = time()
   show_tip!(btn, e.window)
+  handled
 end
 
 draw(ctx, size, ui::ConcreteRect, btn::CopyButton) = begin
-  btn.rect = (ui.left, ui.top, ui.width, ui.height)
   t = since_copy(btn)
   t < GLOW || return
   # The green outline lies inside the button's edge, over its grey border, and fades out
@@ -109,15 +101,6 @@ end
 draw(ctx, size, ui::ConcreteRect, cp::ColorPicker) = begin
   shade = ui.children[1]
   hue_bar = ui.children[3]
-
-  # Cache positions for mouse hit-testing
-  cp.shade_left = shade.left
-  cp.shade_top = shade.top
-  cp.shade_size = shade.width
-  cp.hue_left = hue_bar.left
-  cp.hue_top = hue_bar.top
-  cp.hue_width = hue_bar.width
-  cp.hue_height = hue_bar.height
 
   # Shade gradient (opaque 2D grid clipped to rounded rect)
   sr = 6px
@@ -180,40 +163,53 @@ end
 
 # Mouse events
 
-update_shade!(cp, mx, my) = begin
-  s = clamp(Float64((mx - cp.shade_left) / cp.shade_size), 0.0, 1.0)
-  v = 1.0 - clamp(Float64((my - cp.shade_top) / cp.shade_size), 0.0, 1.0)
+"The rectangles of the square of shades and of the bar of hues, from the last layout"
+areas(cp::ColorPicker) = (r = rect(cp); r === nothing ? nothing : (r.children[1], r.children[3]))
+
+update_shade!(cp, shade, mx, my) = begin
+  s = clamp(Float64((mx - shade.left) / shade.width), 0.0, 1.0)
+  v = 1.0 - clamp(Float64((my - shade.top) / shade.height), 0.0, 1.0)
   cp.color = HSV(cp.color.h, s, v)
 end
 
-update_hue!(cp, mx) = begin
-  h = clamp(Float64((mx - cp.hue_left) / cp.hue_width), 0.0, 1.0) * 360.0
+update_hue!(cp, bar, mx) = begin
+  h = clamp(Float64((mx - bar.left) / bar.width), 0.0, 1.0) * 360.0
   cp.color = HSV(h, cp.color.s, cp.color.v)
+end
+
+# A crosshair over the square of shades and the bar of hues, where a click picks a colour
+cursor(cp::ColorPicker) = begin
+  found, w = areas(cp), window_of(cp)
+  (found === nothing || w === nothing) && return nothing
+  any(area -> inside(area, (w.mouse[1], w.mouse[2])), found) ? :crosshair : nothing
 end
 
 onkey(cp::ColorPicker, e::KeyPress{Keys.mouse_left}) = begin
   focus(cp)
+  found = areas(cp)
+  found === nothing && return handled
+  shade, bar = found
   mx, my = e.window.mouse
-  if mx >= cp.shade_left && mx <= cp.shade_left + cp.shade_size &&
-     my >= cp.shade_top && my <= cp.shade_top + cp.shade_size
+  if inside(shade, (mx, my))
     cp.dragging = :shade
-    update_shade!(cp, mx, my)
-  elseif mx >= cp.hue_left && mx <= cp.hue_left + cp.hue_width &&
-         my >= cp.hue_top && my <= cp.hue_top + cp.hue_height
+    update_shade!(cp, shade, mx, my)
+  elseif inside(bar, (mx, my))
     cp.dragging = :hue
-    update_hue!(cp, mx)
+    update_hue!(cp, bar, mx)
   end
+  handled
 end
 
 onmouse(cp::ColorPicker, e::MouseMove) = begin
   cp.dragging == :none && return
   !(Keys.mouse_left in e.window.keys) && (cp.dragging = :none; return)
+  found = areas(cp)
+  found === nothing && return
   mx, my = e.position
-  if cp.dragging == :shade
-    update_shade!(cp, mx, my)
-  elseif cp.dragging == :hue
-    update_hue!(cp, mx)
-  end
+  cp.dragging == :shade ? update_shade!(cp, found[1], mx, my) : update_hue!(cp, found[2], mx)
 end
+
+"The colour that's picked"
+integrate(cp::ColorPicker) = cp.color
 
 export ColorPicker

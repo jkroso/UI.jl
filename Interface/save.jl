@@ -1,8 +1,8 @@
-@use "github.com/jkroso/MiniFB.jl"... int
+@use "github.com/jkroso/MiniFB.jl"... int AbstractWindow
 @use Skia
 @use "./Geometric"...
 @use "./Specific"...
-@use "./draw" draw
+@use "./draw" draw frame scene popups
 
 """
 Render a draw function to a PNG file. `f(canvas, size, args...)` is called to draw.
@@ -39,5 +39,19 @@ Renders through the same `draw` pipeline used for live windows so output stays
 in sync with on-screen rendering."
 save_scene(path::AbstractString, scene::Container, size) =
   save_png(draw, path, size, describe(scene, size))
+
+"""
+Save what a window shows as a PNG: its app, and the popups over it. The window
+doesn't have to be open, so a test can save a picture of what it has done.
+"""
+save_png(path::AbstractString, w::AbstractWindow; kwargs...) = begin
+  frame(w)
+  save_png(path, w.size; kwargs...) do ctx, size
+    draw(ctx, size, scene(w))
+    for popup in popups(w)
+      draw(ctx, size, popup.scene)
+    end
+  end
+end
 
 export save_png, save_scene

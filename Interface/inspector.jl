@@ -7,7 +7,7 @@
 @use "./Geometric"... Dimension
 @use "./Specific"...
 @use "./abstract" SemanticUI ConcreteUI WrapMode reuse!
-@use "./draw" draw set_tool! clear_tool! window_tool app_size draw_tool tool_input inside offset! semantic_source _scenes
+@use "./draw" draw set_tool! clear_tool! window_tool app_size draw_tool tool_input inside offset! semantic_source scene
 
 const C_PANEL = colorant"rgb(58,56,53)"
 const C_STRIPE = colorant"rgb(63,61,58)"
@@ -363,7 +363,7 @@ value_text(x::Union{Tuple,NamedTuple}) = preview(repr(x), 60)
 value_text(x::Union{AbstractArray,AbstractDict,AbstractSet}) = "$(nameof(typeof(x))) of $(length(x))"
 value_text(x) = string(nameof(typeof(x)))
 
-const TREE_FIELDS = (:parent, :firstchild, :nextsibling, :prevsibling, :stale, :inherited_theme)
+const TREE_FIELDS = (:parent, :firstchild, :nextsibling, :prevsibling, :stale, :inherited_theme, :slot, :kept)
 
 "The fields of the semantic node that made `node`, and the box its element got"
 semantic_fields(node::ConcreteRect) = begin
@@ -535,10 +535,10 @@ tool_input(ins::LayoutInspector, window, ::KeyPress{Keys.mouse_left}) = begin
   if !in_panel(ins, window)
     ins.picking || return false
     # The click picks the element under it, and the app never sees it
-    scene = get(_scenes, objectid(window), nothing)
-    node = scene === nothing ? nothing : deepest_at(scene, mouse)
+    laid = scene(window)
+    node = laid === nothing ? nothing : deepest_at(laid, mouse)
     ins.view == :semantic && (node = owned(node))
-    node === nothing || select!(ins, path_to(scene, node))
+    node === nothing || select!(ins, path_to(laid, node))
     ins.picking = false
     ins.swallow = true
     return true

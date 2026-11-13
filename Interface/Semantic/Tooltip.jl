@@ -3,7 +3,7 @@
 @use "github.com/jkroso/MiniFB.jl" MouseMove onmouse
 @use "../Geometric"...
 @use "../abstract" SemanticUI GeometricUI UITree describe mixin! add_child! describe! theme
-@use "../draw" draw show_tooltip! hide_tooltip!
+@use "../draw" show_tooltip! hide_tooltip! rect
 @use "../Specific"...
 @use "./Satellite" AbstractSatellite
 @use Colors: @colorant_str
@@ -11,10 +11,6 @@
 @def mutable struct Tooltip <: AbstractSatellite
   label::String = ""
   content::Any = nothing
-  cached_left::px = 0px
-  cached_top::px = 0px
-  cached_width::px = 0px
-  cached_height::px = 0px
 end
 
 Tooltip(content; kwargs...) = Tooltip(;content=content, kwargs...)
@@ -44,17 +40,9 @@ describe(t::Tooltip) = begin
 end
 
 onmouse(t::Tooltip, e::MouseMove) = begin
-  t.cached_width > 0px && show_tooltip!(e.window, describe_content(t),
-                                        t.cached_left, t.cached_top,
-                                        t.cached_width, t.cached_height,
-                                        placement=t.placement, gap=t.gap)
-end
-
-draw(ctx, size, ui::ConcreteRect, t::Tooltip) = begin
-  t.cached_left = ui.left
-  t.cached_top = ui.top
-  t.cached_width = ui.width
-  t.cached_height = ui.height
+  r = rect(t)
+  r === nothing || show_tooltip!(e.window, describe_content(t), r.left, r.top, r.width, r.height,
+                                 placement=t.placement, gap=t.gap)
 end
 
 export Tooltip

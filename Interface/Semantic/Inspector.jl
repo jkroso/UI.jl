@@ -3,8 +3,8 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme scale
-@use "../draw" draw
+@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme scale handled
+@use "../draw" draw cursor
 @use "./Icon" Icon
 @use "./TextInput" TextInput
 @use Colors: @colorant_str
@@ -223,7 +223,6 @@ const CHEVRON_WIDTH = 12px
 const CHEVRON_GAP = 3px
 
 describe(ins::Inspector) = begin
-  ins.state = nothing # reset click-consumed flag
   col = Column(width(grow=GrowType.Grow), padding(4px),
                radius(6px), border(1px, :solid, theme(ins).line),
                background(theme(ins).surface))
@@ -331,21 +330,22 @@ cancel_edit!(ins::Inspector, lv::LeafView) = begin
   focus(ins)
 end
 
-# Mouse clicks — consume flag prevents parent DataViews from also acting
+# Mouse clicks. The view that's clicked takes the click, so the views it's in don't act on it too
+
+# A click opens or closes a collection and flips a true or a false. In any other value you can change, it puts a caret.
+cursor(::CollectionView) = :hand
+cursor(lv::LeafView) = !is_editable(lv) ? :arrow : lv.data isa Bool ? :hand : :ibeam
 
 onkey(cv::CollectionView, ::KeyPress{Keys.mouse_left}) = begin
   ins = find_inspector(cv)
-  ins.state !== nothing && return
-  ins.state = true
   ins.focused = cv
   focus(ins)
   cv.collapsed = !cv.collapsed
+  handled
 end
 
 onkey(lv::LeafView, ::KeyPress{Keys.mouse_left}) = begin
   ins = find_inspector(lv)
-  ins.state !== nothing && return
-  ins.state = true
   ins.focused = lv
   if is_editable(lv) && lv.data isa Bool
     write_back!(lv, !lv.data)
@@ -355,6 +355,7 @@ onkey(lv::LeafView, ::KeyPress{Keys.mouse_left}) = begin
   else
     focus(ins)
   end
+  handled
 end
 
 # Keyboard navigation (dispatched when Inspector is focused)

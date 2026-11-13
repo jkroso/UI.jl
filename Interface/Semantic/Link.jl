@@ -1,6 +1,6 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl" onkey KeyPress Keys
-@use "../abstract" SemanticUI describe
+@use "../abstract" SemanticUI describe handled
 @use "../draw" ishovered cursor open_url
 
 """
@@ -20,7 +20,7 @@ end
 Link(look::Function, url::AbstractString) = Link(url=String(url), look=look)
 
 describe(l::Link) = l.look(ishovered(l))
-onkey(l::Link, ::KeyPress{Keys.mouse_left}) = open_url(l.url)
+onkey(l::Link, ::KeyPress{Keys.mouse_left}) = (open_url(l.url); handled)
 cursor(::Link) = :hand
 
 export Link

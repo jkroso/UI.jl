@@ -4,8 +4,8 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale
-@use "../draw" draw
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate
+@use "../draw" draw cursor
 @use Colors: @colorant_str
 
 @def mutable struct RadioGroup <: SemanticUI
@@ -20,9 +20,12 @@ end
   index::Int
 end
 
+cursor(::RadioItem) = :hand
+
 onkey(item::RadioItem, ::KeyPress{Keys.mouse_left}) = begin
   item.group.selected = item.index
   item.group.onchange(item.group)
+  handled
 end
 
 describe(item::RadioItem) = begin
@@ -52,5 +55,8 @@ draw(ctx, size, ui::ConcreteRect, item::RadioItem) = begin
   cy = box.top + box.height / 2 - r
   rounded_rectangle(ctx, cx, cy, 2r, 2r, r, background=theme(item).on_accent)
 end
+
+"The label of the choice that's picked, or `nothing` when there are no choices"
+integrate(rg::RadioGroup) = isempty(rg.labels) ? nothing : rg.labels[clamp(rg.selected, 1, length(rg.labels))]
 
 export RadioGroup

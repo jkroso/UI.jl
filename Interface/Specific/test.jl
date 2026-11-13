@@ -98,3 +98,9 @@ const pie = Wedge(width(200px), height(100px), outer=0.5, Box(width(20px), heigh
 let wedge = describe(pie, (200px, 100px))
   @test (wedge.children[1].left, wedge.children[1].top) == (90px, 45px)
 end
+
+# A row shares its spare width between a box and text that both grow
+let row = describe(Row(width(300px), Box(width(grow=GrowType.Grow), height(10px)), Text("hi", wrap=WrapMode.none), Box(width(grow=GrowType.Grow), height(10px))), (300px, 20px))
+  box, text, other = row.children
+  @test box.width == text.width == other.width == 100px
+end

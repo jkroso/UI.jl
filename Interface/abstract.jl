@@ -123,7 +123,7 @@ end
   family::String=THEME[].family
   subfamily::String=""
   lineheight::Length=1.5em
-  weight::Int16=600
+  weight::Int16=400               # 400 is regular and 700 is bold. `subfamily` wins when it's given.
   wrap::WrapMode=WrapMode.words
   align::TextAlign=TextAlign.Left
 end
@@ -137,7 +137,18 @@ Base.convert(::Type{UI}, s::AbstractString) = Text(s)
   stale::Bool=true
   state::Any=nothing
   inherited_theme::Any=nothing   # the Theme it was last described with. Read it with `theme(node)`
+  slot::Int=0                    # its place among the nodes its owner's `describe` makes, or 0 for a node in the tree
+  kept::Any=nothing              # what its geometry remembers between frames, like how far a Scroll has scrolled
 end
+
+"""
+Return `handled` from an event handler to keep the event from the nodes above.
+Without it, the event goes on to each semantic parent in turn:
+
+    onkey(b::DeleteButton, ::KeyPress{Keys.mouse_left}) = (remove!(b.parent); handled)
+"""
+struct Handled end
+const handled = Handled()
 
 "Top-level node that connects the UI tree to a window"
 @def mutable struct Root <: SemanticUI
@@ -146,6 +157,9 @@ end
 Root(child::UITree; window=nothing) = begin
   root = Root(window=window)
   add_child!(root, child)
+  # Components put straight into a layout, with no semantic node around them, belong to the root.
+  # That's how they find their window.
+  child isa GeometricUI && adopt_inline!(root, child)
   root
 end
 
@@ -187,10 +201,53 @@ end
 Base.convert(::Type{GeometricUI}, node::GeometricUI) = node
 Base.convert(::Type{GeometricUI}, node::SemanticUI) = begin
   setfield!(node, :inherited_theme, THEME[])
-  result = describe(node)
+  own!(DESCRIBING[], node)
+  result = Base.ScopedValues.with(() -> describe(node), DESCRIBING => Describing(node, 0))
   result.from = node
   adopt_inline!(node, result)
   result
+end
+
+"The node whose `describe` is running, and how many nodes that `describe` has made so far"
+mutable struct Describing
+  node::SemanticUI
+  made::Int
+end
+const DESCRIBING = Base.ScopedValues.ScopedValue{Union{Nothing,Describing}}(nothing)
+
+"""
+A node that a `describe` makes, like the `Icon` in a button, is a new object on
+each frame. This gives it to the node being described and numbers it, so that
+this frame's `Icon` can be matched with the one from the frame before. See `same`.
+"""
+own!(::Nothing, node::SemanticUI) = nothing
+own!(d::Describing, node::SemanticUI) = begin
+  parent = getfield(node, :parent)
+  if parent === nothing
+    setfield!(node, :parent, d.node)
+  elseif parent !== d.node || getfield(node, :slot) == 0
+    return   # it's in the tree, so it's the same object on every frame
+  end
+  setfield!(node, :slot, d.made += 1)
+  nothing
+end
+
+"""
+True when `a` and `b` are one node. Two objects count as one node when the same
+`describe` made each of them, at the same place, on different frames.
+"""
+same(a, b) = a === b
+same(a::SemanticUI, b::SemanticUI) =
+  a === b || (getfield(a, :slot) != 0 && getfield(a, :slot) == getfield(b, :slot) && typeof(a) === typeof(b) &&
+              same(semantic_parent(a), semantic_parent(b)))
+
+"The nearest semantic node above `node`"
+semantic_parent(node) = begin
+  node = node.parent
+  while node !== nothing && !(node isa SemanticUI)
+    node = node.parent
+  end
+  node
 end
 
 """
@@ -198,15 +255,31 @@ Semantic nodes made inside a `describe`, like an `Icon` in a button, belong to
 the node being described. Giving them that parent lets their clicks bubble up
 to it, and makes `ishovered` true for it while the cursor is over them.
 """
-adopt_inline!(owner::SemanticUI, geo::UITree) = begin
+adopt_inline!(owner::SemanticUI, geo::UITree, count=Ref(0)) = begin
+  remember!(owner, geo, count)
   for child in geo.children
     source = child isa GeometricUI ? child.from : nothing
     if source isa SemanticUI
       source !== owner && source.parent === nothing && setfield!(source, :parent, owner)
     else
-      adopt_inline!(owner, child)
+      adopt_inline!(owner, child, count)
     end
   end
+end
+
+"""
+Geometry is made anew on each frame, so what a piece of it has to remember,
+like how far a Scroll has scrolled, is kept by the semantic node whose
+`describe` made it. `remember!` gives `geo` what was kept for it. `count` is how
+many pieces of `owner`'s geometry have asked so far, which tells one from another.
+"""
+remember!(owner, geo, count) = nothing
+
+"What `owner` keeps under `key` for its geometry. `make()` makes it the first time."
+kept!(make, owner::SemanticUI, key) = begin
+  store = getfield(owner, :kept)
+  store === nothing && (store = setfield!(owner, :kept, Dict{Any,Any}()))
+  get!(make, store::Dict{Any,Any}, key)
 end
 
 @def struct SiblingIterator
@@ -215,7 +288,8 @@ end
 
 Base.iterate(i::SiblingIterator) = iterate(i, i.node)
 Base.iterate(i::SiblingIterator, state::Nothing) = nothing
-Base.iterate(i::SiblingIterator, state::UITree) = (state, state.nextsibling)
+# `getfield`, because the kind of node isn't known here, and looking a property up by name is slow then
+Base.iterate(i::SiblingIterator, state::UITree) = (state, getfield(state, :nextsibling))
 Base.eltype(::SiblingIterator) = UI
 Base.length(i::SiblingIterator) = nsiblings(i.node)
 Base.lastindex(i::SiblingIterator) = length(i)
@@ -245,8 +319,20 @@ Base.getindex(i::SiblingIterator, r::AbstractUnitRange{Int}) = begin
   result
 end
 nsiblings(d::Nothing) = 0
-nsiblings(d::UITree) = nsiblings(d.nextsibling) + 1
-lastsibling(d::UITree) = isnothing(d.nextsibling) ? d : lastsibling(d.nextsibling)
+nsiblings(d::UITree) = begin
+  n = 0
+  while d !== nothing
+    n += 1
+    d = getfield(d, :nextsibling)
+  end
+  n
+end
+lastsibling(d::UITree) = begin
+  while (next = getfield(d, :nextsibling)) !== nothing
+    d = next
+  end
+  d
+end
 lastsibling(d::Nothing) = nothing
 
 mixin!(r::UITree, s::StyleNode) = begin
@@ -299,6 +385,15 @@ reuse!(node::UITree, children...) = begin
     mixin!(node, child)
   end
   node
+end
+
+# How many times a layout has been changed, anywhere. A window keeps the layout it resolved last, and
+# uses it again while this count is what it was then. So a layout that an app keeps and changes in
+# place, e.g. `row.height = height(20px)`, is resolved again without the app having to say so.
+const edits = Ref(0)
+Base.setproperty!(node::Union{GeometricUI,Text}, ::Field{name}, value) where name = begin
+  edits[] += 1
+  setfield!(node, name, value)
 end
 
 "A symbolic representation of an image which just happens to be a UI"

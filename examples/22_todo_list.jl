@@ -18,7 +18,7 @@
 @use "github.com/jkroso/MiniFB.jl"...
 @use "../Interface/Geometric"...
 @use "../Interface/Specific"...
-@use "../Interface/draw" ui draw invalidate_layout!
+@use "../Interface/draw" ui draw redraw_in!
 @use "../Interface/abstract" SemanticUI WrapMode describe integrate focus add_child! detach!
 @use "../Interface/Semantic/TextInput" TextInput
 @use "../Interface/Semantic/Checkbox" Checkbox
@@ -54,12 +54,6 @@ const data = [
 
 @def mutable struct TodoApp <: SemanticUI
   filter::Symbol = :all
-  # While a remove animation is in progress we keep the same geometric
-  # outer column across frames so the layout cache (keyed on objectid)
-  # hits and only re-runs `position!`. Mutating `row.geo.offset_x`
-  # in-place propagates the slide animation through the cached tree
-  # without any allocation. `nothing` outside of animations.
-  anim_geo::Any = nothing
 end
 
 @def mutable struct TodoTitle    <: SemanticUI end
@@ -70,13 +64,7 @@ end
   mode::Symbol = :all
 end
 
-# `scroll` caches the geometric Scroll viewport across frames.
-# `describe(::TodoApp)` rebuilds the geometric tree every frame, but the
-# Scroll node carries its own offset, so we must hand back the same
-# instance each time or the scroll position resets on every redraw.
-@def mutable struct TodoList <: SemanticUI
-  scroll::Any = nothing
-end
+@def mutable struct TodoList <: SemanticUI end
 @def mutable struct TodoFooter <: SemanticUI end
 @def mutable struct ClearCompleted <: SemanticUI
   enabled::Bool = false
@@ -88,10 +76,6 @@ end
   visible::Bool = true
   removing::Bool = false
   remove_t0::Float64 = 0.0
-  # Cached geometric Row built on the first frame of the remove
-  # animation. Subsequent frames mutate its `offset_x` (and `height`
-  # during the collapse phase) so the cached geo tree stays valid.
-  geo::Any = nothing
 end
 
 @def mutable struct TodoText <: SemanticUI
@@ -139,19 +123,7 @@ start_remove!(row) = begin
   row.removing && return
   row.removing = true
   row.remove_t0 = time()
-  # Force the next frame to rebuild the cached outer geo so this row's
-  # describe runs (and caches its row.geo for in-place mutation).
-  invalidate_app_geo!(row)
 end
-
-invalidate_app_geo!(row::TodoRow) = begin
-  list = row.parent
-  list isa TodoList || return
-  app = list.parent
-  app isa TodoApp && (app.anim_geo = nothing)
-  nothing
-end
-invalidate_app_geo!(app::TodoApp) = (app.anim_geo = nothing; nothing)
 
 apply_filter!(app::TodoApp) = begin
   for row in app.list.children
@@ -176,7 +148,6 @@ row_checked!(c::Checkbox) = begin
   app = (row.parent::TodoList).parent::TodoApp
   row.done = c.checked
   row.visible = row_visible(app.filter, row.done)
-  invalidate_app_geo!(app)
 end
 
 # A row carrying a copy of the domain item's data. The row owns its text
@@ -238,14 +209,11 @@ const C_DEL_BG   = colorant"rgb(241,245,249)"
 # explicit `describe!` call anywhere in this file.
 
 describe(app::TodoApp) = begin
-  has_anim, structure_changed = tick_animations!(app)
-  if has_anim && app.anim_geo !== nothing && !structure_changed
-    return app.anim_geo
-  end
-  app.anim_geo = nothing
+  # Each frame of a row's exit asks for the next one, until every row has gone
+  tick_animations!(app) && redraw_in!(app, 1/60)
   title, composer, _filters, list, footer = app.children
-  geo = Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-               padding(24px), background(C_BG),
+  Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
+         padding(24px), background(C_BG),
     title,
     Box(height(14px)),
     composer,
@@ -253,42 +221,18 @@ describe(app::TodoApp) = begin
     list,
     Box(height(14px)),
     footer)
-  has_anim && (app.anim_geo = geo)
-  geo
 end
 
-# Per-frame animation tick. Detaches finished rows, mutates in-progress
-# rows' `offset_x` (and `height` during collapse) directly on the cached
-# geo so the layout cache can keep hitting. Returns whether any
-# animation is in progress and whether the row structure changed (which
-# forces a rebuild of the cached outer geo).
+# Take out the rows whose exit has finished. It's true while a row is still
+# on its way out. `describe(::TodoRow)` draws each of those where its exit
+# has got to.
 tick_animations!(app::TodoApp) = begin
-  has_anim = false
-  structure_changed = false
-  needs_relayout = false
-  for child in collect(app.list.children)
-    r = child::TodoRow
-    r.removing || continue
-    prog = remove_progress(r)
-    if prog.done
-      detach!(r)
-      structure_changed = true
-      continue
-    end
-    has_anim = true
-    if r.geo !== nothing
-      r.geo.offset_x = -REMOVE_SLIDE_PX * ease_out_quad(prog.slide)
-      if prog.collapse > 0
-        # Height changes can't be picked up by `position!` alone — the
-        # ConcreteRect's height was set during fit!, so we need a fresh
-        # layout pass for the collapse phase.
-        r.geo.height = height(preferred=44px * (1 - prog.collapse))
-        needs_relayout = true
-      end
-    end
+  leaving = false
+  for row in collect(app.list.children)
+    (row::TodoRow).removing || continue
+    remove_progress(row).done ? detach!(row) : (leaving = true)
   end
-  (structure_changed || needs_relayout) && invalidate_layout!(window)
-  has_anim, structure_changed
+  leaving
 end
 
 describe(t::TodoTitle) = begin
@@ -322,7 +266,7 @@ end
 describe(list::TodoList) = begin
   # An exiting row stays in the list (and visible) until its animation
   # completes, even if the active filter would otherwise hide it.
-  # Detaching finished animations is handled by `tick_animations!`.
+  # `tick_animations!` takes it out when its exit has finished.
   visible_rows = TodoRow[r for r in list.children
                          if (r::TodoRow).visible || (r::TodoRow).removing]
   isempty(visible_rows) && return empty_state(list)
@@ -331,26 +275,12 @@ describe(list::TodoList) = begin
     i > 1 && push!(spaced, Box(height(8px)))
     push!(spaced, row)
   end
-  inner = Column(width(grow=GrowType.Grow), spaced...)
-
-  # Reuse the cached Scroll so its offset survives across frames. Each
-  # frame replaces the inner Column (the rows themselves are semantic
-  # nodes — the geometric column wrapping them is rebuilt). Detach the
-  # Scroll itself before returning so sibling pointers from the previous
-  # frame's outer Column don't leak into this frame's tree.
-  scroll = list.scroll
-  if scroll === nothing
-    scroll = Scroll(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                    padding(8px), radius(8px),
-                    background(C_PANEL), border(1px, :solid, C_BORDER))
-    list.scroll = scroll
-  end
-  for child in collect(scroll.children)
-    detach!(child)
-  end
-  add_child!(scroll, inner)
-  detach!(scroll)
-  scroll
+  # The Scroll is new on each frame. The list remembers how far it has
+  # scrolled, so it stays where it was.
+  Scroll(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
+         padding(8px), radius(8px),
+         background(C_PANEL), border(1px, :solid, C_BORDER),
+    Column(width(grow=GrowType.Grow), spaced...))
 end
 
 empty_state(list::TodoList) = begin
@@ -369,19 +299,15 @@ describe(row::TodoRow) = begin
   prog = row.removing ? remove_progress(row) : nothing
   h    = prog === nothing ? 44px : 44px * (1 - prog.collapse)
   ox   = prog === nothing ? 0px : -REMOVE_SLIDE_PX * ease_out_quad(prog.slide)
-  geo = Row(width(grow=GrowType.Grow), height(h), padding(10px),
-            radius(8px), background(C_PANEL), Alignment.Center,
-            border(1px, :solid, C_BORDER),
-            offset_x=ox,
+  Row(width(grow=GrowType.Grow), height(h), padding(10px),
+      radius(8px), background(C_PANEL), Alignment.Center,
+      border(1px, :solid, C_BORDER),
+      offset_x=ox,
     Box(width(2em), row.checkbox),
     Box(width(12px)),
     row.todo_text,
     Box(width(12px)),
     row.delete_btn)
-  # Hand the geo back to the row so subsequent frames can mutate it
-  # without rebuilding the whole tree.
-  row.removing && (row.geo = geo)
-  geo
 end
 
 describe(t::TodoText) = begin
@@ -434,7 +360,6 @@ add_from_input!(app::TodoApp) = begin
   input.text = ""
   input.cursor = 0
   input.anchor = 0
-  invalidate_app_geo!(app)
 end
 
 clear_completed!(app::TodoApp) = begin
@@ -461,7 +386,6 @@ start_edit!(t::TodoText) = begin
   add_child!(t, editor)
   t.editing = true
   focus(editor)
-  invalidate_app_geo!(app)
 end
 
 save_edit!(t::TodoText) = begin
@@ -473,7 +397,6 @@ save_edit!(t::TodoText) = begin
   detach!(editor)
   t.editing = false
   return_focus_to_composer(t)
-  invalidate_app_geo!(row)
 end
 
 cancel_edit!(t::TodoText) = begin
@@ -482,7 +405,6 @@ cancel_edit!(t::TodoText) = begin
   detach!(editor)
   t.editing = false
   return_focus_to_composer(t)
-  invalidate_app_geo!(t.parent::TodoRow)
 end
 
 return_focus_to_composer(t::TodoText) = begin
@@ -513,7 +435,6 @@ onkey(t::FilterTab, ::KeyPress{Keys.mouse_left}) = begin
   app = (t.parent::TodoFilters).parent::TodoApp
   app.filter = t.mode
   apply_filter!(app)
-  invalidate_app_geo!(app)
 end
 
 onkey(t::TodoText, ::KeyPress{Keys.mouse_left}) = start_edit!(t)

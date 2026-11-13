@@ -3,7 +3,7 @@
 @use "../abstract" GeometricUI
 @use "../Geometric"...
 @use "../Specific"...
-@use "./Slider" Slider
+@use "./Slider" Slider track
 
 layout(s) = describe(convert(GeometricUI, s), (300px, 24px))
 
@@ -33,7 +33,7 @@ let s = Slider(value=5, min=0, max=10, format=v -> round(Int, v))
   click(x) = (w.mouse = Vec2{px}(px(x), 22px); onkey(s, KeyPress{Keys.mouse_left}(0, w)))
   click(292)                     # on the number
   @test s.value == 5
-  click(10 + s.cached_width.value / 4)
+  click(10 + track(s).width.value / 4)
   @test s.value ≈ 2.5
 end
 

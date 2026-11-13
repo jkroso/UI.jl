@@ -14,7 +14,7 @@ include("../mac_app/start.jl")
 @use "github.com/jkroso/Font.jl/units" px
 @use "../../Interface/abstract" focus
 @use "../../Interface/Semantic/Icon" load_icon
-@use "../../Interface/draw" frame _scenes semantic_source
+@use "../../Interface/draw" frame scene semantic_source
 @use "../../Interface/Specific" ConcreteRect
 @use GeometryBasics: Vec2
 
@@ -64,7 +64,7 @@ kinds(w) = begin
     end
     n isa ConcreteRect && foreach(visit, n.children)
   end
-  visit(_scenes[objectid(w)])
+  visit(scene(w))
   collect(values(points))
 end
 

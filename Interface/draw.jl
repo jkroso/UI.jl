@@ -6,7 +6,7 @@
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
 @use GLFW
-@use "./abstract" theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI window_of scale
+@use "./abstract" edits theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI WrapMode mixin! window_of scale same semantic_parent handled
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
@@ -21,10 +21,10 @@ function draw_between(ctx, ui::ConcreteRect)
     prev, child = ui.children[i-1], ui.children[i]
     if from isa Row
       x = (prev.left + prev.width + child.left) / 2
-      line(ctx, Vec2{px}(x, ui.top), Vec2{px}(x, ui.top + ui.height), border.width, border.color)
+      stroke_line(ctx, (x, ui.top), (x, ui.top + ui.height), border)
     else
       y = (prev.top + prev.height + child.top) / 2
-      line(ctx, Vec2{px}(ui.left, y), Vec2{px}(ui.left + ui.width, y), border.width, border.color)
+      stroke_line(ctx, (ui.left, y), (ui.left + ui.width, y), border)
     end
   end
 end
@@ -80,13 +80,92 @@ end
 function outline(ui::ConcreteRect, grow=0px)
   from = ui.from
   from isa Wedge && return wedge_path(wedge_circle(ui)..., from.inner, from.outer, from.start, from.sweep)
-  p = Skia.sk_path_new()
-  rect = Ref(Skia.sk_rect_t(flt(ui.left - grow), flt(ui.top - grow),
-                             flt(ui.left + ui.width + grow), flt(ui.top + ui.height + grow)))
+  (;tl, tr, br, bl) = from.radius
   # Like CSS, a square corner stays square when the shadow spreads
-  r = from.radius.tl > 0px ? flt(max(0px, from.radius.tl + grow)) : 0f0
-  Skia.sk_path_add_rounded_rect(p, rect, r, r, Skia.SK_PATH_DIRECTION_CW)
+  grown(r) = r > 0px ? max(0px, r + grow) : 0px
+  box_path(ui.left - grow, ui.top - grow, ui.width + 2grow, ui.height + 2grow, grown(tl), grown(tr), grown(br), grown(bl))
+end
+
+"A Skia path around a box. Each corner has its own radius, in the order top left, top right, bottom right, bottom left."
+function box_path(left, top, w, h, tl, tr, br, bl)
+  p = Skia.sk_path_new()
+  if tl == tr == br == bl
+    rect = Ref(Skia.sk_rect_t(flt(left), flt(top), flt(left + w), flt(top + h)))
+    Skia.sk_path_add_rounded_rect(p, rect, flt(tl), flt(tl), Skia.SK_PATH_DIRECTION_CW)
+    return p
+  end
+  # A corner can't be rounder than half of the box's shorter side
+  most = max(0px, min(w, h) / 2)
+  tl, tr, br, bl = min(tl, most), min(tr, most), min(br, most), min(bl, most)
+  right, bottom = left + w, top + h
+  # A quarter circle of radius `r` round the middle of a corner. Skia measures angles clockwise from 3 o'clock.
+  corner(cx, cy, r, from) = begin
+    oval = Ref(Skia.sk_rect_t(flt(cx - r), flt(cy - r), flt(cx + r), flt(cy + r)))
+    r > 0px ? Skia.sk_path_arc_to_with_oval(p, oval, Float32(from), 90f0, false) : Skia.sk_path_line_to(p, flt(cx), flt(cy))
+  end
+  Skia.sk_path_move_to(p, flt(left + tl), flt(top))
+  corner(right - tr, top + tr, tr, -90)
+  corner(right - br, bottom - br, br, 0)
+  corner(left + bl, bottom - bl, bl, 90)
+  corner(left + tl, top + tl, tl, 180)
+  Skia.sk_path_close(p)
   p
+end
+
+"True when a box's four corners have one radius, which is the shape Skia draws quickest"
+even(r::Radius) = r.tl == r.tr == r.br == r.bl
+
+"Fill a Skia path with a colour"
+function fill_path(ctx, p, color)
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  Skia.sk_paint_set_color(paint, sk_color(color))
+  Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(0))
+  Skia.sk_canvas_draw_path(ctx, p, paint)
+  Skia.sk_paint_delete(paint)
+end
+
+"""
+Draw a line along a Skia path in the style of a border's side: solid, dashed
+or dotted, `width` wide. The line is centred on the path.
+"""
+function stroke_path(ctx, p, side::BorderSide, width=side.width)
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  Skia.sk_paint_set_color(paint, sk_color(side.color))
+  Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(1))
+  Skia.sk_paint_set_stroke_width(paint, flt(width))
+  effect = C_NULL
+  if side.style == BorderStyle.dashed
+    effect = Skia.sk_path_effect_create_dash(Float32[3flt(width), 3flt(width)], Cint(2), 0f0)
+  elseif side.style == BorderStyle.dotted
+    # A round end on a dash with no length makes a dot as wide as the line
+    Skia.sk_paint_set_stroke_cap(paint, Skia.SK_STROKE_CAP_ROUND)
+    effect = Skia.sk_path_effect_create_dash(Float32[0f0, 2flt(width)], Cint(2), 0f0)
+  end
+  effect == C_NULL || Skia.sk_paint_set_path_effect(paint, effect)
+  Skia.sk_canvas_draw_path(ctx, p, paint)
+  effect == C_NULL || Skia.sk_path_effect_unref(effect)
+  Skia.sk_paint_delete(paint)
+end
+
+"Draw a straight line in the style of a border's side. A double one is two thin lines with a gap between them."
+function stroke_line(ctx, from, to, side::BorderSide)
+  along(shift, width) = begin
+    p = Skia.sk_path_new()
+    # `shift` moves the line sideways: across a line that goes down, and down a line that goes across
+    dx, dy = from[1] == to[1] ? (shift, 0px) : (0px, shift)
+    Skia.sk_path_move_to(p, flt(from[1] + dx), flt(from[2] + dy))
+    Skia.sk_path_line_to(p, flt(to[1] + dx), flt(to[2] + dy))
+    stroke_path(ctx, p, side, width)
+    Skia.sk_path_delete(p)
+  end
+  if side.style == BorderStyle.double
+    along(-side.width / 3, side.width / 3)
+    along(side.width / 3, side.width / 3)
+  else
+    along(0px, side.width)
+  end
 end
 
 """
@@ -156,19 +235,38 @@ end
 """
 Borders are drawn inside the element's bounds, after its children so a child's
 background can't cover them. When all four sides match they follow the corner
-radius. Otherwise each side is drawn as its own straight edge.
+radii. Otherwise each side is drawn as its own straight edge. A side can be
+`:solid`, `:dashed`, `:dotted` or `:double`.
 """
 function draw_border(ctx, ui::ConcreteRect)
   (;border, radius) = ui.from
   sides = (border.top, border.right, border.bottom, border.left)
   all(isempty, sides) && return
-  if all(==(border.top), sides)
-    bw = border.top.width
-    rounded_rectangle(ctx, ui.origin .+ bw/2, ui.size .- bw, max(0px, radius.tl - bw/2),
-                      color=border.top.color, stroke_width=bw)
+  side = border.top
+  if all(==(side), sides)
+    bw = side.width
+    # A line `width` wide that runs round the box `inset` from its edge
+    ring(inset, width) = begin
+      p = outline(ui, -inset)
+      stroke_path(ctx, p, side, width)
+      Skia.sk_path_delete(p)
+    end
+    if side.style == BorderStyle.double
+      ring(bw / 6, bw / 3)
+      ring(5bw / 6, bw / 3)
+    elseif side.style == BorderStyle.solid && even(radius)
+      rounded_rectangle(ctx, ui.origin .+ bw/2, ui.size .- bw, max(0px, radius.tl - bw/2), color=side.color, stroke_width=bw)
+    else
+      ring(bw / 2, bw)
+    end
   else
     (;left, top, width, height) = ui
-    edge(x, y, w, h, side) = isempty(side) || rounded_rectangle(ctx, x, y, w, h, 0px, background=side.color)
+    edge(x, y, w, h, side) = begin
+      isempty(side) && return
+      side.style == BorderStyle.solid && return rounded_rectangle(ctx, x, y, w, h, 0px, background=side.color)
+      # A line along the middle of the side
+      w > h ? stroke_line(ctx, (x, y + h/2), (x + w, y + h/2), side) : stroke_line(ctx, (x + w/2, y), (x + w/2, y + h), side)
+    end
     edge(left, top, width, border.top.width, border.top)
     edge(left, top + height - border.bottom.width, width, border.bottom.width, border.bottom)
     edge(left, top, border.left.width, height, border.left)
@@ -187,10 +285,9 @@ function draw_image(ctx, ui::ConcreteRect, img::Image)
   dst = Ref(Skia.sk_rect_t(flt(ui.left), flt(ui.top), flt(ui.left + ui.width), flt(ui.top + ui.height)))
   opts = Ref(sampling)
   Skia.sk_canvas_save(ctx)
-  r = img.radius.tl
-  if r > 0px
-    p = Skia.sk_path_new()
-    Skia.sk_path_add_rounded_rect(p, dst, flt(r), flt(r), Skia.SK_PATH_DIRECTION_CW)
+  (;tl, tr, br, bl) = img.radius
+  if max(tl, tr, br, bl) > 0px
+    p = outline(ui)
     Skia.sk_canvas_clip_path_with_operation(ctx, p, Skia.SK_CLIP_OP_INTERSECT, true)
     Skia.sk_path_delete(p)
   end
@@ -239,14 +336,8 @@ function draw_wedge(ctx, ui::ConcreteRect, w::Wedge)
     Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(0))
     Skia.sk_canvas_draw_path(ctx, p, paint)
   end
-  edge = w.border.top
-  if !isempty(edge)
-    Skia.sk_paint_set_color(paint, sk_color(edge.color))
-    Skia.sk_paint_set_style(paint, Skia.sk_paint_style_t(1))
-    Skia.sk_paint_set_stroke_width(paint, flt(edge.width))
-    Skia.sk_canvas_draw_path(ctx, p, paint)
-  end
   Skia.sk_paint_delete(paint)
+  isempty(w.border.top) || stroke_path(ctx, p, w.border.top)
   Skia.sk_path_delete(p)
 end
 
@@ -274,13 +365,25 @@ draw(ctx, size, ui::ConcreteRect) = begin
   if from isa Wedge
     draw_wedge(ctx, ui, from)
   elseif alpha(background.color) > 0
-    rounded_rectangle(ctx, ui.origin, ui.size, radius.tl, background=background.color)
+    if even(radius)
+      rounded_rectangle(ctx, ui.origin, ui.size, radius.tl, background=background.color)
+    else
+      shape = outline(ui)
+      fill_path(ctx, shape, background.color)
+      Skia.sk_path_delete(shape)
+    end
   end
   from isa Image && draw_image(ctx, ui, from)
   if from isa Scroll
     with_clip(() -> draw_children(ctx, ui), ctx, ui.left, ui.top, ui.width, ui.height)
   elseif from.clip
     with_clip(ctx, ui.left, ui.top, ui.width, ui.height) do
+      draw_children(ctx, ui)
+      draw_between(ctx, ui)
+    end
+  elseif from.clip_x
+    # Cut off at the left and right edges only
+    with_clip(ctx, ui.left, ui.top - 10000px, ui.width, ui.height + 20000px) do
       draw_children(ctx, ui)
       draw_between(ctx, ui)
     end
@@ -296,7 +399,7 @@ end
 draw(ctx, size, ui::ConcreteRect, source) = nothing
 
 draw(ctx, _, ui::ConcreteText) = begin
-  f = skia_font(ui.from.family, ui.from.size, ui.from.subfamily)
+  f = font(ui.from)
   caph = px(font_metrics(f).capHeight)                   # match Specific's layout sizing
   leading = absolute(ui.from.lineheight, ui.from.size)   # spacing between subsequent baselines
   align = ui.from.align
@@ -317,55 +420,6 @@ draw(ctx, _, ui::ConcreteText) = begin
   end
 end
 
-# Overlay system for floating menus
-@def mutable struct MenuOverlay
-  source::Any = nothing
-  items::Vector{String} = String[]
-  hover::Int = 0
-  x::px = 0px
-  y::px = 0px
-  width::px = 150px
-  item_height::px = 32px
-  onselect::Any = nothing
-  theme::Theme = theme()   # the theme of the node that opened the menu
-  dividers::Bool = false   # draw a faint line between each item and the next
-  lift::Float64 = 1.0      # how high it seems to float. A bigger number gives it a darker, wider shadow.
-end
-
-const _overlay = Dict{UInt, MenuOverlay}()
-
-"""
-Show a floating menu overlay on a window. Its text is the size the theme asks
-for, so give it an `item_height` that fits: 32px with the usual size.
-`dividers=true` draws a faint line between each item and the next. `lift` is
-how high the menu seems to float: a bigger number gives it a darker, wider shadow.
-"""
-show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, source=nothing, theme=theme(),
-           dividers=false, lift=1.0) = begin
-  _overlay[objectid(window)] = MenuOverlay(theme=theme, source=source, items=items, x=x, y=y, width=w, item_height=item_height,
-                                           onselect=onselect, dividers=dividers, lift=lift)
-end
-
-"Hide the floating menu overlay"
-hide_menu!(window) = delete!(_overlay, objectid(window))
-
-"Returns 1-based item index if pos is inside the menu, or 0 if outside"
-menu_hittest(ov::MenuOverlay, (x, y)) = begin
-  if ov.source !== nothing
-    n = length(ov.source.children)
-    pad_y = 5px
-  else
-    n = length(ov.items)
-    pad_y = 0px
-  end
-  x < ov.x && return 0
-  x > ov.x + ov.width && return 0
-  y < ov.y + pad_y && return 0
-  total_height = ov.item_height * n
-  y > ov.y + pad_y + total_height && return 0
-  clamp(Int(floor(int(y - ov.y - pad_y) / int(ov.item_height))) + 1, 1, n)
-end
-
 "Offset all positions in a ConcreteUI tree"
 offset!(ui::ConcreteRect, dx::px, dy::px) = begin
   ui.left += dx
@@ -379,151 +433,255 @@ offset!(ui::ConcreteText, dx::px, dy::px) = begin
   ui.top += dy
 end
 
-"""
-A faint shadow under a floating box, like a menu: the box's shape, 2px lower
-and blurred. It's light, so that the box's own border still marks its edge.
-`lift` is how high the box seems to float. A bigger number makes the shadow
-darker, wider and lower: `lift=3` suits a menu that opens over busy content.
-"""
-function soft_shadow(ctx, x, y, w, h, r; lift=1.0)
-  paint = Skia.sk_paint_new()
-  Skia.sk_paint_set_antialias(paint, true)
-  Skia.sk_paint_set_color(paint, sk_color(RGBA(0, 0, 0, clamp(0.05 + 0.05lift, 0, 0.5))))
-  blur = Skia.sk_maskfilter_new_blur_with_flags(Skia.SK_BLUR_STYLE_NORMAL, Float32(2.5 + 2.5lift), true)
-  Skia.sk_paint_set_maskfilter(paint, blur)
-  drop = 2px * lift
-  rect = Ref(Skia.sk_rect_t(flt(x), flt(y + drop), flt(x + w), flt(y + h + drop)))
-  Skia.sk_canvas_draw_round_rect(ctx, rect, flt(r), flt(r), paint)
-  Skia.sk_maskfilter_unref(blur)
-  Skia.sk_paint_delete(paint)
+# --- popups ------------------------------------------------------------------
+#
+# A popup floats over the app: a menu, a tooltip, a list of suggestions. What it
+# shows is an ordinary node. It's laid out, drawn and given events the way the
+# app's own nodes are, so a component in a popup works as it does anywhere else.
+
+@def mutable struct Popup
+  key::Symbol = :popup
+  content::Any = nothing                       # a semantic node, or a layout
+  anchor::NTuple{4,px} = (0px, 0px, 0px, 0px)  # the rectangle it's put beside: left, top, width, height
+  placement::Symbol = :below
+  gap::px = 0px
+  width::Union{Nothing,px} = nothing
+  input::Bool = true
+  onclose::Any = nothing
+  theme::Theme = theme()
+  scene::Union{Nothing,ConcreteRect} = nothing   # where its last layout put it
 end
 
-"Draw a Menu component overlay"
-draw_menu_source(ctx, ov) = begin
-  # Update hover states on Items
-  for (i, item) in enumerate(ov.source.children)
-    item.hover = (i == ov.hover)
-  end
-  # Describe and resolve
-  geo = with_theme(() -> describe(ov.source), ov.theme)
-  geo.from = ov.source
-  concrete = describe(geo, (ov.width, 9999px))
-  offset!(concrete, ov.x, ov.y)
-  # Shadow
-  soft_shadow(ctx, ov.x, ov.y, concrete.width, concrete.height, 6px)
-  # Draw the resolved component tree
-  draw(ctx, concrete.size, concrete)
+const _popups = Dict{UInt, Vector{Popup}}()
+
+"The popups a window is showing, in the order they opened"
+popups(w) = get(_popups, objectid(w), ())
+
+"A length in px, from a plain number or from a length in any unit"
+inpx(x) = x isa px ? x : x isa Union{Integer,AbstractFloat} ? px(x) : convert(px, x)
+
+"An anchor as a rectangle: left, top, width, height. A place is a rectangle with no size."
+box(r::ConcreteRect) = (r.left, r.top, r.width, r.height)
+box(r::NTuple{4,Any}) = (inpx(r[1]), inpx(r[2]), inpx(r[3]), inpx(r[4]))
+box(r::Union{Tuple{Any,Any},Vec2}) = (inpx(r[1]), inpx(r[2]), 0px, 0px)
+
+"""
+Show `content` floating over the app in `window`. `content` is a semantic node
+or a layout. It gets clicks, mouse moves and key presses like any other node,
+and key presses go to it before they go to the node that has the keyboard. A
+click outside it, or Escape, closes it and calls `onclose()`.
+
+`anchor` is what it's put beside: a place `(x, y)`, a rectangle
+`(left, top, width, height)` or what `rect(node)` returns. Without one it's put
+at the mouse. `placement` says where:
+
+- `:below`: under the anchor, with their left edges in line. A menu goes here.
+- `:bottom`, `:top`, `:left`, `:right`: on that side of the anchor, centred on it.
+
+`width` lays it out that wide. Without it, it's as wide as its content.
+`input=false` makes it something to look at only, like a tooltip: the mouse
+goes through it and it never closes by itself. A window shows one popup for
+each `key`, so a new one takes the place of the last one with its `key`.
+
+    onkey(b::MoreButton, e::KeyPress{Keys.mouse_left}) = popup!(e.window, Settings(), anchor=rect(b), gap=4px)
+"""
+popup!(window, content; anchor=window.mouse, placement=:below, gap=0px, width=nothing, key=:popup, input=true, onclose=nothing,
+       theme=theme()) = begin
+  close_popup!(window, key)
+  # A node of its own finds its window through a root, as the app's nodes do
+  content isa UITree && content.parent === nothing && Root(content, window=window)
+  popup = Popup(key=key, content=content, anchor=box(anchor), placement=placement, gap=gap, width=width, input=input,
+                onclose=onclose, theme=theme)
+  push!(get!(Vector{Popup}, _popups, objectid(window)), popup)
+  popup
 end
 
-"Draw the menu overlay"
-draw_menu(ctx, ov::MenuOverlay) = begin
-  if ov.source !== nothing
-    return draw_menu_source(ctx, ov)
+"Take away the popup that was shown with `key`. Its `onclose` isn't called: that's for when the user closes it."
+close_popup!(window, key::Symbol=:popup) = begin
+  list = get(_popups, objectid(window), nothing)
+  list === nothing || filter!(p -> p.key != key, list)
+  nothing
+end
+
+"Close a popup because the user clicked outside it or pressed Escape, and tell it so"
+dismiss!(window, popup::Popup) = begin
+  filter!(p -> p !== popup, _popups[objectid(window)])
+  popup.onclose === nothing || popup.onclose()
+  nothing
+end
+
+"Lay a popup out and put it beside its anchor, inside a window of `size`"
+place!(popup::Popup, size) = begin
+  geo = with_theme(() -> convert(GeometricUI, popup.content), popup.theme)
+  ui = describe(geo, (something(popup.width, 9999px), 9999px))
+  left, top, w, h = popup.anchor
+  gap = popup.gap
+  x, y = popup.placement == :below  ? (left, top + h + gap) :
+         popup.placement == :bottom ? (left + w/2 - ui.width/2, top + h + gap) :
+         popup.placement == :top    ? (left + w/2 - ui.width/2, top - ui.height - gap) :
+         popup.placement == :right  ? (left + w + gap, top + h/2 - ui.height/2) :
+         popup.placement == :left   ? (left - ui.width - gap, top + h/2 - ui.height/2) :
+                                      error("unknown placement: $(popup.placement)")
+  # One that's above or below its anchor moves in from the edge of the window
+  popup.placement in (:below, :bottom, :top) && (x = clamp(x, min(x, 4px), max(4px, size[1] - ui.width - 4px)))
+  # A menu that would run off the bottom of the window moves up
+  popup.placement == :below && (y = clamp(y, min(y, 4px), max(4px, size[2] - ui.height - 4px)))
+  offset!(ui, x, y)
+  popup.scene = ui
+end
+
+"The popup that takes the mouse at `pos`: the one on top of those under it"
+popup_at(w, pos) = begin
+  for popup in Iterators.reverse(popups(w))
+    popup.input && popup.scene !== nothing && inside(popup.scene, pos) && return popup
   end
-  n = length(ov.items)
-  n == 0 && return
-  total_h = ov.item_height * n
-  # shadow
-  soft_shadow(ctx, ov.x, ov.y, ov.width, total_h, 6px, lift=ov.lift)
-  # background
-  rounded_rectangle(ctx, ov.x, ov.y, ov.width, total_h, 6px,
-                    background=ov.theme.surface,
-                    color=ov.theme.line, stroke_width=1px)
-  k = scale(ov.theme)
-  f = skia_font(ov.theme.family, 13pt * k)
+  nothing
+end
+
+"The popup that key presses go to first: the last one opened that takes input"
+key_popup(w) = begin
+  for popup in Iterators.reverse(popups(w))
+    popup.input && return popup
+  end
+  nothing
+end
+
+# --- menus -------------------------------------------------------------------
+
+"""
+A list of choices that floats over the app. `show_menu!` makes one. The mouse
+or the up and down arrows highlight a choice, and a click or Return picks it.
+"""
+@def mutable struct MenuList <: SemanticUI
+  items::Vector{String} = String[]
+  onselect::Any = nothing
+  item_height::px = 32px
+  dividers::Bool = false
+  lift::Float64 = 1.0
+  active::Int = 0          # the item that's highlighted, or 0
+  by_mouse::Bool = false   # the mouse highlighted it, so it's plain again when the mouse leaves
+end
+
+"One choice in a `MenuList`"
+@def mutable struct MenuRow <: SemanticUI
+  list::Any = nothing
+  index::Int = 0
+end
+
+"The item that shows as highlighted, or 0"
+highlighted(list::MenuList) = list.by_mouse && !ishovered(list) ? 0 : list.active
+
+describe(list::MenuList) = begin
+  t = theme(list)
+  # A faint shadow, so that the menu's own border still marks its edge. A bigger `lift` makes it darker, wider and lower.
+  column = Column(width(grow=GrowType.Grow), radius(6px), background(t.surface), border(1px, :solid, t.line),
+                  shadow(0px, 2px * list.lift, (5 + 5list.lift) * 1px, RGBA(0, 0, 0, clamp(0.05 + 0.05list.lift, 0, 0.5))))
+  list.dividers && mixin!(column, border(1px, :solid, fade(t.line, 0.6), between=true)[:between])
+  for i in eachindex(list.items)
+    mixin!(column, MenuRow(list=list, index=i))
+  end
+  column
+end
+
+describe(row::MenuRow) = begin
+  list = row.list
+  t = theme(row)
+  k = scale(t)
   inset = 3px * k   # between the highlight of an item and the edges of the item, the same on every side
-  for (i, item) in enumerate(ov.items)
-    iy = ov.y + (i - 1) * ov.item_height
-    if i == ov.hover
-      rounded_rectangle(ctx, ov.x + inset, iy + inset, ov.width - 2inset, ov.item_height - 2inset, 4px,
-                        background=ov.theme.select)
-    end
-    # A line above each item but the first, from one edge of the menu to the other
-    if ov.dividers && i > 1
-      rounded_rectangle(ctx, ov.x + 1px, iy - 0.5px, ov.width - 2px, 1px, 0px, background=fade(ov.theme.line, 0.6))
-    end
-    text_y = iy + ov.item_height / 2 + 5px * k
-    text(ctx, (ov.x + 12px * k, text_y), f, ov.theme.text, item)
-  end
+  item = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), radius(4px), padding(0px, 0px, 0px, 12px * k - inset),
+             Box(offset_y=-1px * k, Text(list.items[row.index], size=13pt * k, wrap=WrapMode.none)))
+  row.index == highlighted(list) && mixin!(item, background(t.select))
+  Row(width(grow=GrowType.Grow), height(list.item_height), padding(inset), item)
 end
 
-# Tooltip overlay system
-@def mutable struct TooltipOverlay
+"Pick item `i`: close the menu, then tell `onselect`"
+choose!(list::MenuList, i::Int) = begin
+  w = window_of(list)
+  w === nothing || close_popup!(w, :menu)
+  list.onselect === nothing || list.onselect(i)
+  nothing
+end
+
+"Move the highlight up or down by one item. It goes round from the last item to the first."
+step!(list::MenuList, by::Int) = begin
+  n = length(list.items)
+  n == 0 && return
+  at = highlighted(list)
+  list.active = at == 0 ? (by > 0 ? 1 : n) : mod1(at + by, n)
+  list.by_mouse = false
+  nothing
+end
+
+cursor(::MenuRow) = :hand
+onmouse(row::MenuRow, ::MouseMove) = (row.list.active = row.index; row.list.by_mouse = true; nothing)
+onkey(row::MenuRow, ::KeyPress{Keys.mouse_left}) = (choose!(row.list, row.index); handled)
+onkey(list::MenuList, ::KeyPress{Keys.down}) = (step!(list, 1); handled)
+onkey(list::MenuList, ::KeyPress{Keys.up}) = (step!(list, -1); handled)
+onkey(list::MenuList, ::KeyPress{Keys.enter}) = (i = highlighted(list); i > 0 && choose!(list, i); handled)
+
+"""
+Show a floating menu in a window, with its top left corner at `(x, y)`. When an
+item is picked, `onselect` is called with its place in `items`. It's called
+with 0 when the menu closes with nothing picked: after a click outside it, or
+Escape. The up and down arrows move the highlight and Return picks.
+
+Its text is the size the theme asks for, so give it an `item_height` that
+fits: 32px with the usual size. `dividers=true` draws a faint line between
+each item and the next. `lift` is how high the menu seems to float: a bigger
+number gives it a darker, wider shadow.
+"""
+show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, theme=theme(), dividers=false, lift=1.0) = begin
+  list = MenuList(items=items, onselect=onselect, item_height=item_height, dividers=dividers, lift=lift)
+  popup!(window, list, anchor=(x, y), width=w, key=:menu, theme=theme, onclose=() -> onselect === nothing || onselect(0))
+end
+
+"Hide the floating menu"
+hide_menu!(window) = close_popup!(window, :menu)
+
+# --- tooltips ----------------------------------------------------------------
+
+"The dark box of a tooltip, with an arrow that points at what the tooltip is about"
+@def mutable struct Bubble <: SemanticUI
   content::Any = nothing
-  x::px = 0px
-  y::px = 0px
-  target_w::px = 0px
-  target_h::px = 0px
   placement::Symbol = :bottom
-  gap::px = 4px
+  target::NTuple{4,px} = (0px, 0px, 0px, 0px)
 end
 
-const _tooltip = Dict{UInt, TooltipOverlay}()
+const bubble_colour = colorant"rgb(50,50,50)"
 
-show_tooltip!(window, content, x, y, w, h; placement=:bottom, gap=4px) = begin
-  _tooltip[objectid(window)] = TooltipOverlay(content=content, x=x, y=y, target_w=w, target_h=h, placement=placement, gap=gap)
-end
+describe(b::Bubble) = Box(radius(6px), background(bubble_colour), shadow(1px, 1px, 0px, RGBA(0, 0, 0, 0.15)), b.content)
 
-hide_tooltip!(window) = delete!(_tooltip, objectid(window))
-
-"Draw the tooltip overlay, keeping it inside a window `room` wide"
-draw_tooltip(ctx, ov::TooltipOverlay, room) = begin
-  ov.content === nothing && return
-  # resolve content through normal pipeline
-  concrete = describe(ov.content, (9999px, 9999px))
-  tw = concrete.width
-  th = concrete.height
-  # position relative to target
-  if ov.placement == :bottom
-    tx = ov.x + ov.target_w/2 - tw/2
-    ty = ov.y + ov.target_h + ov.gap
-  elseif ov.placement == :top
-    tx = ov.x + ov.target_w/2 - tw/2
-    ty = ov.y - th - ov.gap
-  elseif ov.placement == :right
-    tx = ov.x + ov.target_w + ov.gap
-    ty = ov.y + ov.target_h/2 - th/2
-  else # :left
-    tx = ov.x - tw - ov.gap
-    ty = ov.y + ov.target_h/2 - th/2
-  end
-  bg = colorant"rgb(50,50,50)"
-  arrow_size = 5px
-  # A tooltip above or below a target near the edge of the window moves in from
-  # the edge, and its arrow still points at the middle of the target
-  above_below = ov.placement in (:top, :bottom)
-  above_below && (tx = clamp(tx, 4px, max(4px, room - tw - 4px)))
-  # shadow
-  rounded_rectangle(ctx, tx + 1px, ty + 1px, tw, th, 6px,
-                    background=RGBA(0,0,0,0.15))
-  # background
-  rounded_rectangle(ctx, tx, ty, tw, th, 6px, background=bg)
-  # arrow
-  cx = above_below ? clamp(ov.x + ov.target_w/2, tx + 6px + arrow_size, tx + tw - 6px - arrow_size) : tx + tw/2
-  cy = ty + th/2
-  path(ctx, close=true, background=bg) do p
-    if ov.placement == :bottom
-      move_to(p, (cx - arrow_size, ty))
-      line_to(p, (cx, ty - arrow_size))
-      line_to(p, (cx + arrow_size, ty))
-    elseif ov.placement == :top
-      move_to(p, (cx - arrow_size, ty + th))
-      line_to(p, (cx, ty + th + arrow_size))
-      line_to(p, (cx + arrow_size, ty + th))
-    elseif ov.placement == :right
-      move_to(p, (tx, cy - arrow_size))
-      line_to(p, (tx - arrow_size, cy))
-      line_to(p, (tx, cy + arrow_size))
-    else # :left
-      move_to(p, (tx + tw, cy - arrow_size))
-      line_to(p, (tx + tw + arrow_size, cy))
-      line_to(p, (tx + tw, cy + arrow_size))
+draw(ctx, size, ui::ConcreteRect, b::Bubble) = begin
+  (;left, top, width, height) = ui
+  x, y, w, h = b.target
+  arrow = 5px
+  # The arrow points at the middle of the target, even when the tooltip has moved in from the edge of the window
+  cx = clamp(x + w/2, left + 6px + arrow, max(left + 6px + arrow, left + width - 6px - arrow))
+  cy = top + height/2
+  path(ctx, close=true, background=bubble_colour) do p
+    if b.placement == :bottom
+      move_to(p, (cx - arrow, top)); line_to(p, (cx, top - arrow)); line_to(p, (cx + arrow, top))
+    elseif b.placement == :top
+      move_to(p, (cx - arrow, top + height)); line_to(p, (cx, top + height + arrow)); line_to(p, (cx + arrow, top + height))
+    elseif b.placement == :right
+      move_to(p, (left, cy - arrow)); line_to(p, (left - arrow, cy)); line_to(p, (left, cy + arrow))
+    else
+      move_to(p, (left + width, cy - arrow)); line_to(p, (left + width + arrow, cy)); line_to(p, (left + width, cy + arrow))
     end
   end
-  # draw resolved content at tooltip position
-  offset!(concrete, tx, ty)
-  draw(ctx, concrete.size, concrete)
 end
+
+"""
+Show a tooltip beside the rectangle at `(x, y)` that's `w` wide and `h` tall.
+`content` is the layout to show in it. `placement` is the side of the
+rectangle it goes on: `:bottom`, `:top`, `:left` or `:right`. The mouse goes
+through a tooltip, and the next mouse move takes it away.
+"""
+show_tooltip!(window, content, x, y, w, h; placement=:bottom, gap=4px) =
+  popup!(window, Bubble(content=content, placement=placement, target=box((x, y, w, h))), anchor=(x, y, w, h),
+         placement=placement, gap=gap, key=:tooltip, input=false)
+
+hide_tooltip!(window) = close_popup!(window, :tooltip)
 
 Base.setproperty!(w::AbstractWindow, ::Field{:ui}, node::UITree) = begin
   Root(node, window=w)
@@ -540,27 +698,77 @@ ui(window) = window.ui
 
 const _scenes = Dict{UInt, ConcreteRect}()
 
-# Per-window memo of (geometric-tree id, size, ConcreteRect tree).
-# `frame` reuses the cached tree whenever the geometric input is the same
-# instance and the window hasn't been resized — `initialize` and `fit!`
-# produce identical output in that case, so we skip them and just rerun
-# `position!` to pick up scroll-offset changes (and any other state that
-# only affects coordinates). `describe(::SemanticUI)` that produces a
-# fresh geometric tree each frame will always miss the cache and hit the
-# full pipeline, which is correct.
-const _layout_cache = Dict{UInt, Tuple{UInt, Vec2{px}, ConcreteRect}}()
+"The layout a window last drew: the rectangle of its whole app, with a rectangle in it for each element. `nothing` before the first frame."
+scene(w::AbstractWindow) = get(_scenes, objectid(w), nothing)
 
+# Each window's list of where its last layout put each semantic node. It's made
+# the first time `rect` is asked for one after a frame.
+const _rects = Dict{UInt, IdDict{SemanticUI,ConcreteRect}}()
+
+index_rects!(index, ui::ConcreteRect) = begin
+  from = ui.from
+  source = from isa GeometricUI ? from.from : nothing
+  source isa SemanticUI && get!(index, source, ui)
+  for child in ui.children
+    child isa ConcreteRect && index_rects!(index, child)
+  end
+  index
+end
+
+"""
+Where the last layout put `node`: the rectangle that its `describe` came out
+as, with `left`, `top`, `width` and `height`, and the rectangles of its
+geometry in `children`. It's `nothing` when `node` isn't in a window, or wasn't
+in the last frame. Use it in an event handler to learn where a click landed in
+the node, or where to put a menu:
+
+    onkey(d::Dropdown, e::KeyPress{Keys.mouse_left}) = (r = rect(d); show_menu!(e.window, d.options, r.left, r.top + r.height, r.width))
+"""
+rect(node::SemanticUI) = begin
+  w = window_of(node)
+  w === nothing && return nothing
+  index = get!(_rects, objectid(w)) do
+    index = IdDict{SemanticUI,ConcreteRect}()
+    s = scene(w)
+    s === nothing || index_rects!(index, s)
+    for popup in popups(w)
+      popup.scene === nothing || index_rects!(index, popup.scene)
+    end
+    index
+  end
+  found = get(index, node, nothing)
+  (found !== nothing || getfield(node, :slot) == 0) && return found
+  # `node` was made by a `describe` on an earlier frame. This frame's one is where it is now.
+  for (other, r) in index
+    same(other, node) && return r
+  end
+  nothing
+end
+
+# Each window keeps the layout it resolved last: the geometric tree it came from,
+# the size, how many changes had been made to layouts by then, and the result.
+# `frame` uses it again when the app returns the same geometric tree, the window
+# is the same size and no layout has been changed since. Then only `position!`
+# runs, to move what a Scroll has scrolled. An app whose `describe` makes a new
+# geometric tree on each frame never has a layout to use again.
+const _layout_cache = Dict{UInt, Tuple{UInt, Vec2{px}, Int, ConcreteRect}}()
+
+"""
+Forget the layout that was kept for a window. A window notices a change to a
+layout by itself, so this is only for a change it can't see, like a font
+registered under a name that's already in use.
+"""
 invalidate_layout!(w::AbstractWindow) = (delete!(_layout_cache, objectid(w)); nothing)
 
 resolve_layout(geo::Container, size, window_id::UInt) = begin
   cached = get(_layout_cache, window_id, nothing)
-  if cached !== nothing && cached[1] == objectid(geo) && cached[2] == size
-    cui = cached[3]
+  if cached !== nothing && cached[1] == objectid(geo) && cached[2] == size && cached[3] == edits[]
+    cui = cached[4]
     position!(geo, cui)
     return cui
   end
   cui = describe(geo, size)
-  _layout_cache[window_id] = (objectid(geo), size, cui)
+  _layout_cache[window_id] = (objectid(geo), size, edits[], cui)
   cui
 end
 
@@ -655,13 +863,17 @@ frame(window::Window) = begin
   scene = resolve_layout(geo, app_size(t, window.size), id)
   t2 = time_ns()
   _scenes[id] = scene
+  delete!(_rects, id)
+  shown = popups(window)
+  for popup in shown
+    place!(popup, scene.size)
+  end
   update_hover!(window, scene)
-  ov = get(_overlay, id, nothing)
-  tt = get(_tooltip, id, nothing)
   pixels = drawing(window, scene) do ctx, size, scene
     draw(ctx, size, scene)
-    ov !== nothing && draw_menu(ctx, ov)
-    tt !== nothing && draw_tooltip(ctx, tt, scene.width)
+    for popup in shown
+      draw(ctx, popup.scene.size, popup.scene)
+    end
     t === nothing || draw_tool(ctx, window, t, scene)
   end
   stats.describe = (t1 - t0) / 1e6
@@ -715,37 +927,86 @@ mouse is only after the handler returns.
 hittest(w::Window, pos=w.mouse) = begin
   scene = get(_scenes, objectid(w), nothing)
   scene === nothing && return nothing
-  hittest(scene, pos)
+  hittest(w, scene, pos)
 end
 
-"Dispatch an event to a target, bubbling up through parent SemanticUI nodes"
+"The semantic node at `pos` in a window whose app is laid out as `scene`. A popup is on top of the app."
+hittest(w::Window, scene::ConcreteRect, pos) = begin
+  popup = popup_at(w, pos)
+  popup === nothing ? hittest(scene, pos) : hittest(popup.scene, pos)
+end
+
+"""
+Give an event to `target`, then to each semantic node above it in turn. A
+handler that returns `handled` keeps the event from the nodes above, and `emit`
+then returns `handled` too.
+"""
 emit(target::SemanticUI, event) = begin
   node = target
   while node !== nothing
-    on(node, event)
-    node = node.parent
-    while node !== nothing && !(node isa SemanticUI)
-      node = node.parent
-    end
+    on(node, event) === handled && return handled
+    node = semantic_parent(node)
   end
+  nothing
 end
 
 on(target::SemanticUI, e::KeyEvent) = onkey(target, e)
 on(target::SemanticUI, e::MouseMove) = onmouse(target, e)
+on(target::SemanticUI, e::Typed) = ontype(target, e)
+
+"A typed character goes to the node that has the keyboard, then up through the nodes above it"
+ontype(w::Window, e::Typed) = begin
+  t = get(_tools, objectid(w), nothing)
+  t !== nothing && tool_input(t, w, e) && return
+  w.focus === nothing || emit(w.focus, e)
+end
+
+# What each key types on a US keyboard, alone and with Shift
+const us_keys = Dict{Keys,Tuple{Char,Char}}()
+for c in 'a':'z'; us_keys[getproperty(Keys, Symbol(c))] = (c, uppercase(c)) end
+for (d, shifted) in zip(0:9, ")!@#\$%^&*(")
+  us_keys[getproperty(Keys, Symbol(d))] = (Char('0' + d), shifted)
+  us_keys[getproperty(Keys, Symbol(:num, d))] = (Char('0' + d), Char('0' + d))
+end
+for (key, chars) in (:space => "  ", :tilde => "`~", :minus => "-_", :equal => "=+", :left_bracket => "[{", :right_bracket => "]}",
+                     :semicolon => ";:", :apostrophe => "'\"", :comma => ",<", :period => ".>", :slash => "/?", :backslash => "\\|",
+                     :plus => "++", :times => "**")
+  us_keys[getproperty(Keys, key)] = (chars[1], chars[2])
+end
+
+"What a key press types on a US keyboard, or `nothing` if it types nothing"
+us_char(::Any, w) = nothing
+us_char(::KeyPress{K}, w) where K = begin
+  (Keys.cmd in w.keys || Keys.ctrl in w.keys) && return nothing
+  chars = get(us_keys, K, nothing)
+  chars === nothing ? nothing : chars[Keys.shft in w.keys ? 2 : 1]
+end
+
+# A window that isn't open has no clipboard to ask, so this stands in for it. Tests use it.
+const pasteboard = Ref("")
+
+"The text on the system's clipboard"
+clipboard(w::AbstractWindow) = begin
+  isempty(w.glfw) && return pasteboard[]
+  text = ccall((:glfwGetClipboardString, GLFW.libglfw), Cstring, (GLFW.Window,), w.glfw[1])
+  text == C_NULL ? "" : unsafe_string(text)
+end
+
+"Put `text` on the system's clipboard"
+clipboard!(w::AbstractWindow, text::AbstractString) = begin
+  if isempty(w.glfw)
+    pasteboard[] = String(text)
+  else
+    ccall((:glfwSetClipboardString, GLFW.libglfw), Cvoid, (GLFW.Window, Cstring), w.glfw[1], String(text))
+  end
+  nothing
+end
 
 # Hover tracking. After each layout and each mouse move the window records
 # which semantic nodes sit under the cursor: the deepest one and all of its
 # semantic ancestors. `describe` methods ask `ishovered(self)` to pick a hover
 # style, the same way Clay's `Clay_Hovered()` works.
 const _hovered = Dict{UInt, Vector{SemanticUI}}()
-
-semantic_parent(node) = begin
-  node = node.parent
-  while node !== nothing && !(node isa SemanticUI)
-    node = node.parent
-  end
-  node
-end
 
 hover_chain(target) = begin
   chain = SemanticUI[]
@@ -761,7 +1022,7 @@ end
 ishovered(node::SemanticUI) = begin
   w = window_of(node)
   w === nothing && return false
-  any(n -> n === node, get(_hovered, objectid(w), ()))
+  any(n -> same(n, node), get(_hovered, objectid(w), ()))
 end
 
 """
@@ -782,12 +1043,15 @@ end
 
 update_hover!(w::Window, scene::ConcreteRect, pos=w.mouse) = begin
   id = objectid(w)
-  chain = hover_chain(hittest(scene, pos))
+  chain = hover_chain(hittest(w, scene, pos))
   old = get(_hovered, id, SemanticUI[])
-  # A node can change its cursor while the mouse stays over it, e.g. when a key goes down
-  set_cursor!(w, something((cursor(n) for n in chain)..., :arrow))
-  length(chain) == length(old) && all(a === b for (a, b) in zip(chain, old)) && return false
+  # A node can change its cursor while the mouse stays over it, e.g. when a key goes down.
+  # An open menu is over the rest of the window: a hand over its items, and an arrow everywhere else.
+  behind_popup = key_popup(w) !== nothing && popup_at(w, pos) === nothing
+  set_cursor!(w, behind_popup ? :arrow : something((cursor(n) for n in chain)..., :arrow))
   _hovered[id] = chain
+  # A node that `describe` makes afresh on each frame is still the node it was
+  length(chain) == length(old) && (isempty(chain) || same(chain[1], old[1])) && return false
   # The hover style changes the next frame, so make sure there is one
   isempty(w.glfw) || GLFW.PostEmptyEvent()
   true
@@ -868,18 +1132,41 @@ sync_mouse!(w::Window) = begin
 end
 
 onkey(w::Window, e) = begin
+  route_key(w, e)
+  # An open window is told what each key types. One that isn't open, as in a test, has no keyboard
+  # to ask, so its keys type what they would on a US keyboard.
+  if isempty(w.glfw)
+    char = us_char(e, w)
+    char === nothing || ontype(w, Typed(char, w))
+  end
+  nothing
+end
+
+"Give a key or mouse button event to the part of the window it's for"
+route_key(w::Window, e) = begin
   id = objectid(w)
   is_mouse_button(e) && sync_mouse!(w)
   t = get(_tools, id, nothing)
   t !== nothing && tool_input(t, w, e) && return
-  ov = get(_overlay, id, nothing)
-  if ov !== nothing && is_mouse_button(e)
-    if e isa KeyPress{Keys.mouse_left} && ov.onselect !== nothing
-      idx = menu_hittest(ov, w.mouse)
-      ov.onselect(idx) # 0 if clicked outside
+  if is_mouse_button(e)
+    popup = popup_at(w, w.mouse)
+    if popup !== nothing
+      # A click in a popup goes to the node under it, and never to the app behind
+      target = hittest(popup.scene, w.mouse)
+      target === nothing || (_captured[id] = target; emit(target, e))
+      return
+    elseif key_popup(w) !== nothing
+      # A click outside closes every popup that takes input, and the app doesn't see it
+      foreach(p -> dismiss!(w, p), filter(p -> p.input, collect(popups(w))))
+      return
     end
-    hide_menu!(w)
-    return
+  elseif e isa KeyPress
+    # A popup sees a key before the node that has the keyboard, and Escape closes it
+    popup = key_popup(w)
+    if popup !== nothing
+      popup.content isa SemanticUI && emit(popup.content, e) === handled && return
+      e isa KeyPress{Keys.escape} && return dismiss!(w, popup)
+    end
   end
   scene = get(_scenes, id, nothing)
   e isa KeyRelease{Keys.mouse_left} && end_scroll_drag!(w) && return
@@ -957,7 +1244,7 @@ update_scroll_hover!(w, scene::ConcreteRect, pos) = begin
   rect = find_scroll_at(scene, pos)
   current = rect === nothing ? nothing : rect.from::Scroll
   prev = get(_hovered_scroll, id, nothing)
-  if prev !== nothing && prev !== current
+  if prev !== nothing && (current === nothing || getfield(prev, :state) !== getfield(current, :state))
     prev.hover = false
     prev.thumb_hover = false
   end
@@ -995,13 +1282,16 @@ onmouse(w::Window, e::MouseMove) = begin
     update_scroll_hover!(w, scene, e.position)
     update_hover!(w, scene, e.position)
   end
-  ov = get(_overlay, id, nothing)
-  if ov !== nothing
-    ov.hover = menu_hittest(ov, e.position)
+  # Hide tooltip before emit — if still hovered, Tooltip's onmouse will re-show it
+  hide_tooltip!(w)
+  popup = popup_at(w, e.position)
+  if popup !== nothing
+    target = hittest(popup.scene, e.position)
+    target === nothing || emit(target, e)
     return
   end
-  # Hide tooltip before emit — if still hovered, Tooltip's onmouse will re-show it
-  haskey(_tooltip, id) && hide_tooltip!(w)
+  # While a menu is open the app behind it doesn't follow the mouse
+  key_popup(w) === nothing || return
   captured = get(_captured, id, nothing)
   if captured !== nothing
     if Keys.mouse_left in w.keys || Keys.mouse_right in w.keys || Keys.mouse_middle in w.keys
@@ -1010,7 +1300,7 @@ onmouse(w::Window, e::MouseMove) = begin
     end
     delete!(_captured, id)
   end
-  target = hittest(w)
+  target = hittest(w, e.position)
   if target !== nothing
     emit(target, e)
   elseif w.focus !== nothing
@@ -1018,6 +1308,6 @@ onmouse(w::Window, e::MouseMove) = begin
   end
 end
 
-export draw, ui, hittest, emit, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
+export draw, ui, hittest, emit, handled, rect, scene, clipboard, clipboard!, popup!, close_popup!, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
        invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, inside, offset!,
        frame_stats, FrameStats, semantic_source, viewport, redraw_in!

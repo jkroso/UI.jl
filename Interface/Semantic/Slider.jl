@@ -4,8 +4,8 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"... text_width
-@use "../abstract" SemanticUI WrapMode describe focus theme scale
-@use "../draw" draw
+@use "../abstract" SemanticUI WrapMode describe focus theme scale handled integrate
+@use "../draw" draw rect cursor
 @use Colors: @colorant_str
 
 @def mutable struct Slider <: SemanticUI
@@ -20,8 +20,6 @@
   # The gap between its detents: the values it stops at, counted from `min`. With `step=1` and
   # `min=11` it stops at 11, 12, 13 and so on. 0 lets it stop anywhere.
   step::Float64 = 0.0
-  cached_left::px = 0px
-  cached_width::px = 0px
 end
 
 # These are the sizes when the theme's text has its usual size. `scale` makes them fit other sizes.
@@ -56,20 +54,28 @@ move!(s::Slider, v) = begin
   s.onchange(s)
 end
 
-update_from_mouse!(s::Slider, mouse_x::px) = begin
-  frac = clamp(Float64((mouse_x - s.cached_left) / s.cached_width), 0.0, 1.0)
+"Where the last layout put the slider's track, or `nothing` before its first frame"
+track(s::Slider) = (r = rect(s); r === nothing ? nothing : r.children[1])
+
+update_from_mouse!(s::Slider, mouse_x::px, t=track(s)) = begin
+  t === nothing && return
+  frac = clamp(Float64((mouse_x - t.left) / t.width), 0.0, 1.0)
   move!(s, s.min + frac * (s.max - s.min))
 end
 
 "How far an arrow key moves it: one detent, or a fiftieth of its length"
 step(s::Slider) = s.step > 0 ? s.step : (s.max - s.min) * 0.02
 
+cursor(::Slider) = :hand
+
 onkey(s::Slider, e::KeyPress{Keys.mouse_left}) = begin
   focus(s)
   x = e.window.mouse[1]
+  t = track(s)
   # A click on the text beside the slider only gives it the keyboard
   r = THUMB_R * scale(theme(s))
-  s.cached_left > 0px && s.cached_left - r <= x <= s.cached_left + s.cached_width + r && update_from_mouse!(s, x)
+  t !== nothing && t.left - r <= x <= t.left + t.width + r && update_from_mouse!(s, x, t)
+  handled
 end
 
 onkey(s::Slider, ::KeyPress{Keys.left}) = move!(s, s.value - step(s))
@@ -80,9 +86,6 @@ onmouse(s::Slider, e::MouseMove) =
 
 draw(ctx, size, ui::ConcreteRect, s::Slider) = begin
   track = ui.children[1]
-  # cache layout for mouse hit-testing
-  s.cached_left = track.left
-  s.cached_width = track.width
   # filled portion
   fill_w = track.width * fraction(s)
   k = scale(theme(s))
@@ -107,5 +110,8 @@ draw(ctx, size, ui::ConcreteRect, s::Slider) = begin
   rounded_rectangle(ctx, thumb_x + thumb_r - inner_r, thumb_y + thumb_r - inner_r,
                     2inner_r, 2inner_r, inner_r, background=theme(s).on_accent)
 end
+
+"The value the slider is at"
+integrate(s::Slider) = s.value
 
 export Slider

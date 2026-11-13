@@ -4,8 +4,8 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe add_child! theme scale
-@use "../draw" draw
+@use "../abstract" SemanticUI describe add_child! theme scale handled integrate
+@use "../draw" draw cursor
 @use Colors: @colorant_str, RGBA
 @use GeometryBasics: Vec2
 
@@ -37,9 +37,12 @@ describe(c::Checkbox) = begin
   inner
 end
 
+cursor(::Checkbox) = :hand
+
 onkey(c::Checkbox, ::KeyPress{Keys.mouse_left}) = begin
   c.checked = !c.checked
   c.onchange(c)
+  handled
 end
 
 draw(ctx, size, ui::ConcreteRect, c::Checkbox) = begin
@@ -56,5 +59,8 @@ draw(ctx, size, ui::ConcreteRect, c::Checkbox) = begin
   line(ctx, Vec2{px}(x, y + h*0.5), Vec2{px}(mid_x, mid_y), 2px * k, theme(c).on_accent)
   line(ctx, Vec2{px}(mid_x, mid_y), Vec2{px}(x + w, y), 2px * k, theme(c).on_accent)
 end
+
+"Whether the box is ticked"
+integrate(c::Checkbox) = c.checked
 
 export Checkbox

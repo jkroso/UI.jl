@@ -3,7 +3,8 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate
+@use "../draw" cursor
 @use "./Icon" Icon
 @use Colors: @colorant_str
 
@@ -28,9 +29,15 @@ describe(s::Select) = begin
       describe!(Icon("chevron-down", size=12px * k, color=theme(s).dim))))
 end
 
+cursor(::Select) = :hand
+
 onkey(s::Select, ::KeyPress{Keys.mouse_left}) = begin
   isempty(s.options) && return
   s.selected = mod1(s.selected + 1, length(s.options))
+  handled
 end
+
+"The option that's chosen, or `nothing` when there are no options"
+integrate(s::Select) = isempty(s.options) ? nothing : current_label(s)
 
 export Select

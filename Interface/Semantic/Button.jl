@@ -2,13 +2,13 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "github.com/jkroso/MiniFB.jl" onkey KeyPress Keys
 @use "../Geometric"...
-@use "../abstract" SemanticUI describe describe! mixin! add_child! theme scale
+@use "../abstract" SemanticUI describe describe! mixin! add_child! theme scale handled
 @use "../draw" ishovered cursor
 @use Colors: @colorant_str
 
 export Button, ButtonGroup
 
-"A button. Clicking it calls `onclick(button)` when one is given."
+"A button. Clicking it calls `onclick(button)` when one is given. The click then stops at the button."
 @def mutable struct Button <: SemanticUI
   label::String = ""
   onclick::Any = nothing
@@ -26,7 +26,7 @@ function describe(b::Button)
   content = if b.firstchild isa SemanticUI
     describe!(b.firstchild)
   else
-    Text(b.label, size=12pt * scale(theme(b)), weight=600, align=TextAlign.Center)
+    Text(b.label, size=12pt * scale(theme(b)), align=TextAlign.Center)
   end
   Box(padding(6px * scale(theme(b)), 4px * scale(theme(b))), radius(6px),
       background(ishovered(b) ? theme(b).hover : theme(b).surface),
@@ -35,7 +35,7 @@ function describe(b::Button)
       content)
 end
 
-onkey(b::Button, ::KeyPress{Keys.mouse_left}) = b.onclick === nothing || b.onclick(b)
+onkey(b::Button, ::KeyPress{Keys.mouse_left}) = b.onclick === nothing ? nothing : (b.onclick(b); handled)
 cursor(::Button) = :hand
 
 function describe(b::ButtonGroup)
