@@ -2,6 +2,8 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../abstract" SemanticUI describe mixin! describe! theme
+@use "../fonts" skia_font
+@use "github.com/jkroso/MiniFB.jl/skia" font_metrics text_bounds
 @use "./Icon" Icon
 @use Colors: @colorant_str
 
@@ -10,8 +12,10 @@ const key_icons = Dict(:ArrowDown => "arrow-down", :ArrowUp => "arrow-up",
                        :ArrowLeft => "arrow-left", :ArrowRight => "arrow-right",
                        :Delete => "backspace-reverse")
 
-# horizontal padding (5px * 2) + border (1px * 2) = 12px
-const keycap_extra = 12px
+const KEY_HEIGHT = 24px
+const ICON_SIZE = 14px
+const SIDE_GAP = 5px   # between a key's label and its sides, at least
+const BORDER = 1px
 
 @def mutable struct KeyCombo <: SemanticUI
   mods::Vector{Symbol} = Symbol[]
@@ -21,27 +25,35 @@ end
 KeyCombo(key::Symbol; mods::Vector{Symbol}=Symbol[]) = KeyCombo(mods=mods, key=key)
 KeyCombo(key::Symbol, mods::Symbol...) = KeyCombo(mods=collect(mods), key=key)
 
-keycap(content, w) = begin
-  Box(width(w), height(24px), padding(5px, 3px),
-      radius(4px), Alignment.Center,
-      border(1px, :solid, theme().line),
-      background(theme().surface),
-      content)
-end
+# A box only moves its child to the centre when the move is 2px or more (see
+# `place` in Specific), and a key has less room than that. So a key doesn't
+# centre its label. Its padding puts the label in the middle.
+"A key `w` wide with `content` in it. The content's top left corner is `left` and `top` inside the border."
+keycap(content, w, left, top) =
+  Box(width(w), height(KEY_HEIGHT), padding(top, 0px, 0px, left), Alignment.Start,
+      radius(4px), border(BORDER, :solid, theme().line), background(theme().surface), content)
 
 describe_icon_key(icon_name::String) = begin
-  keycap(describe!(Icon(icon_name, size=14px)), 14px + keycap_extra)
+  w = ICON_SIZE + 2SIDE_GAP + 2BORDER
+  gap = (KEY_HEIGHT - 2BORDER - ICON_SIZE) / 2
+  keycap(describe!(Icon(icon_name, size=ICON_SIZE)), w, (w - 2BORDER - ICON_SIZE) / 2, gap)
 end
 
+# A label is centred by its ink, not by the box its font gives it. A text
+# node's box is as tall as a capital letter, with its baseline at the bottom.
 describe_text_key(label::String) = begin
-  tw = px(length(label) * 9)
-  w = max(tw + keycap_extra, 14px + keycap_extra)
-  keycap(Box(width(tw), height(grow=GrowType.Grow),
-             Text(label, size=11pt)), w)
+  text = Text(label, size=11pt)
+  font = skia_font(text.family, text.size, text.subfamily)
+  # Skia rounds the ink's edges to whole pixels. It's measured 10 times bigger to get the fractions too.
+  ink = text_bounds(skia_font(text.family, 10text.size, text.subfamily), label)
+  inkw = px(ink.right - ink.left) / 10
+  w = max(inkw + 2SIDE_GAP, ICON_SIZE + 2SIDE_GAP) + 2BORDER
+  caps = px(font_metrics(font).capHeight)
+  keycap(text, w, (w - 2BORDER - inkw) / 2 - px(ink.left) / 10, (KEY_HEIGHT - 2BORDER - caps) / 2)
 end
 
 describe(kc::KeyCombo) = begin
-  row = Row(height(24px))
+  row = Row(height(KEY_HEIGHT))
   for mod in kc.mods
     icon_name = get(mod_icons, mod, nothing)
     if icon_name !== nothing
