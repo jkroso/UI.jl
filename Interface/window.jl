@@ -1,10 +1,10 @@
 # Window chrome on macOS: hiding the title bar, moving the window by dragging
-# the app's own top bar instead, and dark mode. None of it does anything on
-# other systems.
+# the app's own top bar instead, dark mode and the system's own menus. None of
+# it does anything on other systems.
 
 @use GLFW
 @use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys
-@use "./objc" cls msg send get_value nsstring jstring with_pool
+@use "./objc" libobjc cls sel msg send get_value nsstring jstring with_pool
 
 nswindow(w::AbstractWindow) = ccall((:glfwGetCocoaWindow, GLFW.libglfw), Ptr{Cvoid}, (GLFW.Window,), w.glfw[1])
 
@@ -66,4 +66,86 @@ set_dark!(w::AbstractWindow, dark::Bool) = begin
   w
 end
 
-export hide_titlebar!, drag_window!, dark_mode, set_dark!
+# --- the system's menu ---------------------------------------------------------
+#
+# macOS draws this menu and runs it, so it looks and works like every other
+# menu on the Mac: its shape, its highlight, the arrow keys and Return. macOS
+# tells an object which item was chosen, so there's a small class for that.
+
+struct NSPoint
+  x::Float64
+  y::Float64
+end
+
+const on_choice = Ref{Any}(nothing)           # what to call with the item that's chosen from the menu that's showing
+const menu_target = Ref{Ptr{Cvoid}}(C_NULL)
+
+"macOS calls this with the item that was chosen"
+note_choice(self::Ptr{Cvoid}, cmd::Ptr{Cvoid}, item::Ptr{Cvoid})::Cvoid = begin
+  try
+    on_choice[] === nothing || Base.invokelatest(on_choice[], get_value(Int, item, "tag"))
+  catch err
+    # An error mustn't go back into macOS's own code
+    @error "A menu's `onselect` failed" exception=(err, catch_backtrace())
+  end
+  nothing
+end
+
+"The object that each item of a menu tells when it's chosen"
+target() = begin
+  menu_target[] == C_NULL || return menu_target[]
+  class = cls("UIMenuTarget")
+  if class == C_NULL
+    class = ccall((:objc_allocateClassPair, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Cstring, Csize_t), cls("NSObject"), "UIMenuTarget", 0)
+    ccall((:objc_registerClassPair, libobjc), Cvoid, (Ptr{Cvoid},), class)
+  end
+  # The class outlives this file when the file is loaded again, so give it the function as it is now
+  ccall((:class_replaceMethod, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring), class, sel("choose:"),
+        @cfunction(note_choice, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid})), "v@:@")
+  menu_target[] = msg(msg(class, "alloc"), "init")
+end
+
+"""
+Show a macOS menu of `items` in the window and wait until it closes. When an
+item is chosen, `onselect` is called with its place in `items`. An item that
+is "-" is a line between two groups of items. The menu's top left corner is
+at `at`, which is where the mouse is unless you give another place.
+
+It's true when the menu was shown. It's false when there's no macOS window to
+show it in, so that you can show a menu of your own with `show_menu!`.
+
+    system_menu(window, ["Rename", "Copy Path", "-", "Move to Trash"], i -> println("chose ", i))
+"""
+system_menu(w::AbstractWindow, items::Vector{String}, onselect; at=w.mouse) = begin
+  (Sys.isapple() && !isempty(w.glfw)) || return false
+  on_choice[] = onselect
+  with_pool() do
+    menu = msg(msg(msg(cls("NSMenu"), "alloc"), "init"), "autorelease")
+    send(menu, "setAutoenablesItems:", false)
+    for (i, title) in enumerate(items)
+      item = if title == "-"
+        msg(cls("NSMenuItem"), "separatorItem")
+      else
+        made = ccall((:objc_msgSend, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+                     msg(cls("NSMenuItem"), "alloc"), sel("initWithTitle:action:keyEquivalent:"), nsstring(title), sel("choose:"), nsstring(""))
+        msg(made, "setTarget:", target())
+        send(made, "setTag:", i)
+        msg(made, "autorelease")
+      end
+      msg(menu, "addItem:", item)
+    end
+    # The menu goes in the window's own view, so it's dark when the window is.
+    # The view measures up from its bottom edge, and the window measures down from its top.
+    view = msg(nswindow(w), "contentView")
+    place = NSPoint(Float64(at[1].value), Float64((w.size[2] - at[2]).value))
+    ccall((:objc_msgSend, libobjc), Bool, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, NSPoint, Ptr{Cvoid}),
+          menu, sel("popUpMenuPositioningItem:atLocation:inView:"), C_NULL, place, view)
+  end
+  # The menu uses up the release of the button that opened it, so the window never hears it go up
+  for key in (Keys.mouse_right, Keys.mouse_left)
+    key in w.keys && (w.keys ⊻= key)
+  end
+  true
+end
+
+export hide_titlebar!, drag_window!, dark_mode, set_dark!, system_menu
