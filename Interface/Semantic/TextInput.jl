@@ -280,8 +280,11 @@ onkey(input::TextInput, e::KeyPress{Keys.mouse_left}) = begin
 end
 onkey(input::TextInput, e::KeyPress{K}) where K = handle_key!(input, K, e.window)
 # Dragging selects from where the button went down. After a double click the word stays selected.
-onmouse(input::TextInput, e::MouseMove) =
-  Keys.mouse_left in e.window.keys && !input.picked_word && move!(input, index_at(input, e.position[1]), true)
+onmouse(input::TextInput, e::MouseMove) = begin
+  Keys.mouse_left in e.window.keys || return
+  input.picked_word || move!(input, index_at(input, e.position[1]), true)
+  handled   # the drag is the field's, so the nodes above don't act on it too
+end
 
 # What the keyboard types goes in at the caret
 ontype(input::TextInput, e::Typed) = begin

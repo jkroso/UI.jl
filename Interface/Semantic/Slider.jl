@@ -81,8 +81,9 @@ end
 onkey(s::Slider, ::KeyPress{Keys.left}) = move!(s, s.value - step(s))
 onkey(s::Slider, ::KeyPress{Keys.right}) = move!(s, s.value + step(s))
 
+# A drag is the slider's, so the nodes above don't act on it too
 onmouse(s::Slider, e::MouseMove) =
-  Keys.mouse_left in e.window.keys && update_from_mouse!(s, e.position[1])
+  Keys.mouse_left in e.window.keys ? (update_from_mouse!(s, e.position[1]); handled) : nothing
 
 draw(ctx, size, ui::ConcreteRect, s::Slider) = begin
   track = ui.children[1]
