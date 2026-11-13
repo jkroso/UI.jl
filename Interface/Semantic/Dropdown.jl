@@ -1,13 +1,12 @@
 @use "github.com/jkroso/Prospects.jl" @def
-@use "github.com/jkroso/MiniFB.jl/skia" line path move_to line_to
 @use "github.com/jkroso/MiniFB.jl" Keys KeyPress onkey int
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe theme
+@use "../abstract" SemanticUI describe describe! theme scale
+@use "./Icon" Icon
 @use "../draw" draw show_menu! hide_menu!
 @use Colors: @colorant_str
-@use GeometryBasics: Vec2
 
 @def mutable struct Dropdown <: SemanticUI
   selected::Int = 1
@@ -22,15 +21,19 @@ end
 
 current_label(d::Dropdown) = isempty(d.options) ? "" : d.options[clamp(d.selected, 1, length(d.options))]
 
-describe(d::Dropdown) =
-  Row(width(grow=GrowType.Grow), height(36px),
-    padding(8px),
+describe(d::Dropdown) = begin
+  k = scale(theme(d))
+  Row(width(grow=GrowType.Grow), height(36px * k),
+    padding(8px * k),
     border(1px, :solid, theme(d).line),
     radius(4px),
     background(theme(d).surface),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      Text(current_label(d), size=13pt)),
-    Box(width(20px), height(grow=GrowType.Grow)))
+      Text(current_label(d), size=13pt * k)),
+    # The arrow is the same thin one a tree has
+    Box(width(20px * k), height(grow=GrowType.Grow), Alignment.Center,
+      describe!(Icon(d.open ? "chevron-up" : "chevron-down", size=12px * k, color=theme(d).dim))))
+end
 
 onkey(d::Dropdown, e::KeyPress{Keys.mouse_left}) = begin
   isempty(d.options) && return
@@ -41,7 +44,7 @@ onkey(d::Dropdown, e::KeyPress{Keys.mouse_left}) = begin
     d.open = true
     show_menu!(e.window, d.options,
                d.cached_left, d.cached_top + d.cached_height + 2px, d.cached_width,
-               theme=theme(d),
+               theme=theme(d), item_height=32px * scale(theme(d)),
                onselect=idx -> begin
                  d.open = false
                  (idx > 0 && idx != d.selected) || return
@@ -57,25 +60,6 @@ draw(ctx, size, ui::ConcreteRect, d::Dropdown) = begin
   d.cached_top = ui.top
   d.cached_width = ui.width
   d.cached_height = ui.height
-  # draw chevron
-  chevron_box = ui.children[end]
-  cx = chevron_box.left + chevron_box.width / 2
-  cy = chevron_box.top + chevron_box.height / 2
-  hw = 4px
-  hh = 3px
-  if d.open
-    path(ctx, color=theme(d).dim, width=2px) do p
-      move_to(p, Vec2{px}(cx - hw, cy + hh))
-      line_to(p, Vec2{px}(cx, cy - hh))
-      line_to(p, Vec2{px}(cx + hw, cy + hh))
-    end
-  else
-    path(ctx, color=theme(d).dim, width=2px) do p
-      move_to(p, Vec2{px}(cx - hw, cy - hh))
-      line_to(p, Vec2{px}(cx, cy + hh))
-      line_to(p, Vec2{px}(cx + hw, cy - hh))
-    end
-  end
 end
 
 export Dropdown

@@ -6,7 +6,7 @@
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
 @use GLFW
-@use "./abstract" theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI window_of
+@use "./abstract" theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI window_of scale
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
@@ -38,6 +38,21 @@ function with_clip(f, ctx, left::px, top::px, w::px, h::px)
     f()
   finally
     Skia.sk_canvas_restore(ctx)
+  end
+end
+
+"Run `f` with the canvas clipped to the given rect with its corners rounded by `r`, then restore."
+function with_round_clip(f, ctx, left::px, top::px, w::px, h::px, r::px)
+  Skia.sk_canvas_save(ctx)
+  path = Skia.sk_path_new()
+  rect = Ref(Skia.sk_rect_t(flt(left), flt(top), flt(left + w), flt(top + h)))
+  Skia.sk_path_add_rounded_rect(path, rect, flt(r), flt(r), Skia.SK_PATH_DIRECTION_CW)
+  Skia.sk_canvas_clip_path_with_operation(ctx, path, Skia.SK_CLIP_OP_INTERSECT, true)
+  try
+    f()
+  finally
+    Skia.sk_canvas_restore(ctx)
+    Skia.sk_path_delete(path)
   end
 end
 
@@ -313,13 +328,22 @@ end
   item_height::px = 32px
   onselect::Any = nothing
   theme::Theme = theme()   # the theme of the node that opened the menu
+  dividers::Bool = false   # draw a faint line between each item and the next
+  lift::Float64 = 1.0      # how high it seems to float. A bigger number gives it a darker, wider shadow.
 end
 
 const _overlay = Dict{UInt, MenuOverlay}()
 
-"Show a floating menu overlay on a window"
-show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, source=nothing, theme=theme()) = begin
-  _overlay[objectid(window)] = MenuOverlay(theme=theme, source=source, items=items, x=x, y=y, width=w, item_height=item_height, onselect=onselect)
+"""
+Show a floating menu overlay on a window. Its text is the size the theme asks
+for, so give it an `item_height` that fits: 32px with the usual size.
+`dividers=true` draws a faint line between each item and the next. `lift` is
+how high the menu seems to float: a bigger number gives it a darker, wider shadow.
+"""
+show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, source=nothing, theme=theme(),
+           dividers=false, lift=1.0) = begin
+  _overlay[objectid(window)] = MenuOverlay(theme=theme, source=source, items=items, x=x, y=y, width=w, item_height=item_height,
+                                           onselect=onselect, dividers=dividers, lift=lift)
 end
 
 "Hide the floating menu overlay"
@@ -358,14 +382,17 @@ end
 """
 A faint shadow under a floating box, like a menu: the box's shape, 2px lower
 and blurred. It's light, so that the box's own border still marks its edge.
+`lift` is how high the box seems to float. A bigger number makes the shadow
+darker, wider and lower: `lift=3` suits a menu that opens over busy content.
 """
-function soft_shadow(ctx, x, y, w, h, r)
+function soft_shadow(ctx, x, y, w, h, r; lift=1.0)
   paint = Skia.sk_paint_new()
   Skia.sk_paint_set_antialias(paint, true)
-  Skia.sk_paint_set_color(paint, sk_color(RGBA(0, 0, 0, 0.1)))
-  blur = Skia.sk_maskfilter_new_blur_with_flags(Skia.SK_BLUR_STYLE_NORMAL, 5f0, true)
+  Skia.sk_paint_set_color(paint, sk_color(RGBA(0, 0, 0, clamp(0.05 + 0.05lift, 0, 0.5))))
+  blur = Skia.sk_maskfilter_new_blur_with_flags(Skia.SK_BLUR_STYLE_NORMAL, Float32(2.5 + 2.5lift), true)
   Skia.sk_paint_set_maskfilter(paint, blur)
-  rect = Ref(Skia.sk_rect_t(flt(x), flt(y + 2px), flt(x + w), flt(y + h + 2px)))
+  drop = 2px * lift
+  rect = Ref(Skia.sk_rect_t(flt(x), flt(y + drop), flt(x + w), flt(y + h + drop)))
   Skia.sk_canvas_draw_round_rect(ctx, rect, flt(r), flt(r), paint)
   Skia.sk_maskfilter_unref(blur)
   Skia.sk_paint_delete(paint)
@@ -397,32 +424,26 @@ draw_menu(ctx, ov::MenuOverlay) = begin
   n == 0 && return
   total_h = ov.item_height * n
   # shadow
-  soft_shadow(ctx, ov.x, ov.y, ov.width, total_h, 6px)
+  soft_shadow(ctx, ov.x, ov.y, ov.width, total_h, 6px, lift=ov.lift)
   # background
   rounded_rectangle(ctx, ov.x, ov.y, ov.width, total_h, 6px,
                     background=ov.theme.surface,
                     color=ov.theme.line, stroke_width=1px)
-  f = skia_font(ov.theme.family, 13pt)
+  k = scale(ov.theme)
+  f = skia_font(ov.theme.family, 13pt * k)
+  inset = 3px * k   # between the highlight of an item and the edges of the item, the same on every side
   for (i, item) in enumerate(ov.items)
     iy = ov.y + (i - 1) * ov.item_height
     if i == ov.hover
-      # clip hover highlight to rounded rect bounds
-      if n == 1
-        rounded_rectangle(ctx, ov.x + 1px, iy + 1px, ov.width - 2px, ov.item_height - 2px, 5px,
-                          background=ov.theme.select)
-      elseif i == 1
-        rounded_rectangle(ctx, ov.x + 1px, iy + 1px, ov.width - 2px, ov.item_height - 1px, 5px,
-                          background=ov.theme.select)
-      elseif i == n
-        rounded_rectangle(ctx, ov.x + 1px, iy, ov.width - 2px, ov.item_height - 1px, 5px,
-                          background=ov.theme.select)
-      else
-        rounded_rectangle(ctx, ov.x + 1px, iy, ov.width - 2px, ov.item_height, 0px,
-                          background=ov.theme.select)
-      end
+      rounded_rectangle(ctx, ov.x + inset, iy + inset, ov.width - 2inset, ov.item_height - 2inset, 4px,
+                        background=ov.theme.select)
     end
-    text_y = iy + ov.item_height / 2 + 5px
-    text(ctx, (ov.x + 12px, text_y), f, ov.theme.text, item)
+    # A line above each item but the first, from one edge of the menu to the other
+    if ov.dividers && i > 1
+      rounded_rectangle(ctx, ov.x + 1px, iy - 0.5px, ov.width - 2px, 1px, 0px, background=fade(ov.theme.line, 0.6))
+    end
+    text_y = iy + ov.item_height / 2 + 5px * k
+    text(ctx, (ov.x + 12px * k, text_y), f, ov.theme.text, item)
   end
 end
 
