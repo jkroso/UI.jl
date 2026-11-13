@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme light scale handled
+@use "../abstract" adopt_theme! UITree SemanticUI describe mixin! add_child! describe! focus theme light scale handled sized
 @use "../draw" draw hittest ishovered cursor
 @use "./Icon" Icon
 @use Colors: @colorant_str
@@ -172,7 +172,7 @@ describe_label(t::Text) = Box(width(grow=GrowType.Grow), height(grow=GrowType.Gr
 "A copy of a label's text in the theme's colour and its font for code. Text that was given its own font keeps it."
 label_text(t::Text) = begin
   own = t.family != light.family
-  adopt_theme!(Text(t.content, size=t.size * scale(), color=t.color, weight=t.weight,
+  adopt_theme!(Text(t.content, size=sized(t.size), color=t.color, weight=t.weight,
                     family=own ? t.family : theme().mono, subfamily=own ? t.subfamily : theme().mono_style))
 end
 

@@ -93,13 +93,29 @@ theme(node) = begin
   THEME[]
 end
 
+# 12pt in pixels on the screen that the components were drawn on, which has 105 pixels to the inch
+const USUAL_PX = 17.5
+
 """
 How much bigger the theme's text is than the usual size, 12pt. A component
-multiplies its lengths by this, so that its text is the size the theme asks
-for and its boxes still fit the text. With the usual size a label is 13pt, so
-`Theme(size=24pt)` makes labels 26pt.
+multiplies its lengths by this, so that its boxes still fit its text. With the
+usual size a label is 13pt, so `Theme(size=24pt)` makes labels 26pt.
+
+A theme can give its size in pixels, as an app does when its own sizes are all
+in pixels. Then the usual size is 17.5px, which is what 12pt was on the screen
+the components were drawn on. How many pixels a point is depends on the
+screen, so a size in points would make the boxes of such an app bigger or
+smaller against its text from one screen to the next.
 """
-scale(t::Theme=theme()) = convert(px, t.size).value / convert(px, 12pt).value
+scale(t::Theme=theme()) = t.size isa px ? t.size.value / USUAL_PX : convert(pt, t.size).value / 12
+
+"""
+The size for text that is `size` when the theme's text is the usual 12pt:
+`sized(13pt)` for a label. It's in the unit of the theme's own size, so in a
+theme of pixels it's the same number of pixels on every screen. A `size` in
+pixels is multiplied by `scale(t)`, like any other length in pixels.
+"""
+sized(size, t::Theme=theme()) = size isa px ? size * scale(t) : t.size * (convert(pt, size).value / 12)
 
 @Enum WrapMode words newlines none
 

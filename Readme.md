@@ -63,6 +63,8 @@ onkey(b::DeleteButton, ::KeyPress{Keys.mouse_left}) = (remove!(b.parent); handle
 
 The built-in components keep the clicks they act on. A `TextInput` keeps the keys it uses, and lets the others, like Return, Escape and the up and down arrows, go on up to your own nodes.
 
+The scroll wheel goes to the node under the mouse as a `MouseScroll`, with how far it turned in `event.delta`. A node that wants it defines `onscroll(node, event)` and returns `handled`, as the `STLViewer` does to make its model bigger while ⌘ is held. If no node takes it, the `Scroll` under the mouse scrolls.
+
 A key press says which key went down. `ontype(node, event)` gets each character the user types as `event.char`, after the keyboard's layout, Shift, Option and dead keys have been applied to it. Use it for text, and `onkey` for shortcuts and arrows.
 
 ## Layout

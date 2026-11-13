@@ -134,6 +134,38 @@ let w = Window(Feed(), size=(200px, 100px))
   @test scrolls()[2].content_height == 1000px
 end
 
+# The wheel moves the Scroll under the mouse. When that Scroll is at its end, a
+# new run of the wheel moves the Scroll round it.
+@def mutable struct Nest <: SemanticUI end
+describe(n::Nest) = Scroll(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
+                           Column(width(grow=GrowType.Grow),
+                                  Scroll(width(grow=GrowType.Grow), height(80px), key=:inner, tall()),
+                                  tall()))
+let w = Window(Nest(), size=(200px, 100px))
+  frame(w)
+  outer() = scene(w).from
+  inner() = scene(w).children[1].children[1].from
+  w.mouse = Vec2{px}(100px, 40px)              # over the Scroll that's inside
+  onscroll(w, Vec2{px}(0px, -1px))
+  frame(w)
+  @test inner().offset == 30px && outer().offset == 0px
+  # The same run of the wheel stays with the inner Scroll when it gets to its end
+  foreach(_ -> onscroll(w, Vec2{px}(0px, -100px)), 1:3)
+  frame(w)
+  @test inner().offset == 920px && outer().offset == 0px
+  # ... and a new run moves the outer one
+  sleep(0.25)
+  onscroll(w, Vec2{px}(0px, -1px))
+  frame(w)
+  @test inner().offset == 920px && outer().offset == 30px
+  # The other way, the inner Scroll has somewhere to go, so it moves
+  sleep(0.25)
+  w.mouse = Vec2{px}(100px, 40px)
+  onscroll(w, Vec2{px}(0px, 1px))
+  frame(w)
+  @test inner().offset == 890px && outer().offset == 30px
+end
+
 # Each corner of a box has its own radius. Here the two at the top are round and the two at the bottom are square.
 paint(ui, size=(40px, 40px)) = drawing(draw, size, describe(ui, size), scale=(1f0, 1f0))
 inked(pixels, x, y) = reinterpret(UInt32, pixels[y, x]) >> 24 > 0x80
@@ -198,6 +230,18 @@ let picked = Int[], w = Window(Page(Dropdown(options=["a", "b"])), size=(300px, 
   @test menu.top == rect(dropdown).top + rect(dropdown).height + 2px
   press(Keys.down); press(Keys.down); press(Keys.enter)
   @test dropdown.selected == 2 && !dropdown.open
+
+  # The menu stays under the dropdown when the dropdown moves, and closes when the dropdown is gone
+  click(50, 18)
+  spacer = Box(height(30px))
+  w.ui.firstchild = spacer; spacer.nextsibling = dropdown; dropdown.prevsibling = spacer; setfield!(spacer, :parent, w.ui)
+  frame(w)
+  @test rect(dropdown).top == 30px
+  @test only(popups(w)).scene.top == rect(dropdown).top + rect(dropdown).height + 2px
+  w.ui.firstchild = spacer; spacer.nextsibling = nothing
+  frame(w)
+  @test isempty(popups(w)) && !dropdown.open
+  w.ui.firstchild = dropdown; dropdown.prevsibling = nothing; frame(w)
 
   # A menu near the bottom of the window moves up to stay in it
   show_menu!(w, ["One", "Two", "Three"], 100px, 190px, 120px); frame(w)

@@ -5,7 +5,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! add_child! focus theme scale handled window_of integrate
+@use "../abstract" SemanticUI describe describe! add_child! focus theme scale handled window_of integrate sized
 @use "../draw" draw ishovered cursor show_tooltip! redraw_in! rect inside
 @use "./Icon" Icon
 @use Colors: @colorant_str, HSV, RGB, RGBA, hex
@@ -59,7 +59,7 @@ cursor(::CopyButton) = :hand
 
 "What the tooltip over the button says"
 tip(btn::CopyButton) = Box(padding(8px, 6px),
-  Box(Text((since_copy(btn) < GLOW ? "Copied " : "Copy ") * hexcode(btn), size=12pt, color=colorant"rgb(240,240,240)")))
+  Box(Text((since_copy(btn) < GLOW ? "Copied " : "Copy ") * hexcode(btn), size=sized(12pt, theme(btn)), color=colorant"rgb(240,240,240)")))
 
 show_tip!(btn::CopyButton, window) = begin
   r = rect(btn)
@@ -96,7 +96,7 @@ describe(cp::ColorPicker) = begin
           background(rgb), border(1px, :solid, theme(cp).line)),
       Box(width(8px)),
       Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-          Text("#" * hex(rgb), size=12pt * scale(theme(cp)))),
+          Text("#" * hex(rgb), size=sized(12pt, theme(cp)))),
       describe!(copy_button(cp))))
 end
 

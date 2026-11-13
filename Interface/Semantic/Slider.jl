@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"... text_width
-@use "../abstract" SemanticUI WrapMode describe focus theme scale handled integrate inputs
+@use "../abstract" SemanticUI WrapMode describe focus theme scale handled integrate inputs sized
 @use "../draw" draw rect cursor
 @use Colors: @colorant_str
 
@@ -34,7 +34,7 @@ describe(s::Slider) = begin
   k = scale(theme(s))
   track = Box(width(grow=GrowType.Grow), height(6px * k), radius(3px * k), background(theme(s).track))
   s.format === nothing && return Row(width(grow=GrowType.Grow), height(24px * k), track)
-  text = Text(shown(s), size=13pt * k, wrap=WrapMode.none)
+  text = Text(shown(s), size=sized(13pt, theme(s)), wrap=WrapMode.none)
   # Room for its widest value, so the slider keeps its length while the text changes
   room = maximum(v -> text_width(text, shown(s, v)), (s.min, s.max, s.value))
   Row(width(grow=GrowType.Grow), height(24px * k), child_gap=(THUMB_R + 8px) * k, track,

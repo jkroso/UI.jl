@@ -2,9 +2,10 @@
 @use "github.com/jkroso/MiniFB.jl/skia" SkiaFont rectangle line font_metrics
 @use "github.com/jkroso/MiniFB.jl" Window Keys KeyPress MouseMove Typed onkey onmouse ontype int
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
+@use "github.com/jkroso/Units.jl" Length
 @use "../Geometric"...
 @use "../Specific"... text_width font
-@use "../abstract" SemanticUI WrapMode describe integrate window_of focus theme scale handled
+@use "../abstract" SemanticUI WrapMode describe integrate window_of focus theme scale handled sized
 @use "../draw" draw cursor rect clipboard clipboard! with_clip redraw_in!
 @use "../fonts" skia_font
 @use Colors: @colorant_str, Colorant, RGBA
@@ -27,7 +28,7 @@ sideways to keep the caret in view.
   last_action::Float64 = time()
   # config
   font_family::String = "Helvetica"
-  font_size::pt = 14pt
+  font_size::Length = 14pt   # in points, or in pixels to be the same number of pixels on every screen
   placeholder::String = "Type here..."
   color::Union{Colorant,Nothing} = nothing               # the typed text and the caret. `nothing` uses the theme's text
   placeholder_color::Union{Colorant,Nothing} = nothing   # `nothing` uses the theme's dim
@@ -43,7 +44,7 @@ end
 ink(input::TextInput) = something(input.color, theme(input).text)
 
 "The size its text is drawn at: `font_size` when the theme's text has its usual size, and bigger or smaller with the theme"
-text_size(input::TextInput) = input.font_size * scale(theme(input))
+text_size(input::TextInput) = sized(input.font_size, theme(input))
 
 "The Skia font that measures and draws its text"
 font(input::TextInput) = skia_font(input.font_family, text_size(input))

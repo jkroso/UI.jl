@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs sized
 @use "../draw" draw cursor
 @use Colors: @colorant_str
 
@@ -41,7 +41,7 @@ describe(item::RadioItem) = begin
       background(circle_color)),
     Box(width(8px * k), height(20px * k)),
     Box(height(20px * k),
-      Text(item.group.labels[item.index], size=13pt * k)))
+      Text(item.group.labels[item.index], size=sized(13pt, t))))
 end
 
 describe(rg::RadioGroup) =

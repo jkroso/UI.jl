@@ -4,7 +4,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe add_child! theme scale handled integrate inputs
+@use "../abstract" SemanticUI describe add_child! theme scale handled integrate inputs sized
 @use "../draw" draw cursor
 @use Colors: @colorant_str, RGBA
 @use GeometryBasics: Vec2
@@ -32,7 +32,7 @@ describe(c::Checkbox) = begin
   if !isempty(c.label)
     add_child!(inner, Box(width(8px * k), height(20px * k)))
     add_child!(inner, Box(height(20px * k),
-      Text(c.label, size=13pt * k)))
+      Text(c.label, size=sized(13pt, t))))
   end
   inner
 end

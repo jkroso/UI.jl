@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
-@use "../abstract" SemanticUI UITree describe mixin! add_child! theme scale
+@use "../abstract" SemanticUI UITree describe mixin! add_child! theme scale sized
 @use Colors: @colorant_str
 
 @def mutable struct TableCell <: SemanticUI
@@ -42,10 +42,10 @@ describe(cell::TableCell) = begin
   box = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), padding(8px * k, 6px * k))
   if cell.header
     mixin!(box, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                    Text(cell.value, size=13pt * k, weight=700)))
+                    Text(cell.value, size=sized(13pt), weight=700)))
   else
     mixin!(box, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                    Text(cell.value, size=13pt * k)))
+                    Text(cell.value, size=sized(13pt))))
   end
   box
 end

@@ -1,7 +1,7 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
-@use "../abstract" SemanticUI describe mixin! describe! theme scale
+@use "../abstract" SemanticUI describe mixin! describe! theme scale sized
 @use "../fonts" skia_font
 @use "github.com/jkroso/MiniFB.jl/skia" font_metrics text_bounds
 @use "./Icon" Icon
@@ -45,7 +45,7 @@ end
 # node's box is as tall as a capital letter, with its baseline at the bottom.
 describe_text_key(label::String) = begin
   k = scale()
-  text = Text(label, size=11pt * k)
+  text = Text(label, size=sized(11pt))
   font = skia_font(text.family, text.size, text.subfamily)
   # Skia rounds the ink's edges to whole pixels. It's measured 10 times bigger to get the fractions too.
   ink = text_bounds(skia_font(text.family, 10text.size, text.subfamily), label)

@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs sized
 @use "./Icon" Icon
 @use "../draw" show_menu! hide_menu! rect cursor
 @use Colors: @colorant_str
@@ -25,7 +25,7 @@ describe(d::Dropdown) = begin
     radius(4px),
     background(theme(d).surface),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      Text(current_label(d), size=13pt * k)),
+      Text(current_label(d), size=sized(13pt, theme(d)))),
     # The arrow is the same thin one a tree has
     Box(width(20px * k), height(grow=GrowType.Grow), Alignment.Center,
       describe!(Icon(d.open ? "chevron-up" : "chevron-down", size=12px * k, color=theme(d).dim))))
@@ -42,7 +42,8 @@ onkey(d::Dropdown, e::KeyPress{Keys.mouse_left}) = begin
     hide_menu!(e.window)
   else
     d.open = true
-    show_menu!(e.window, d.options, r.left, r.top + r.height + 2px, r.width,
+    # The menu hangs from the box, so it stays with the box when the page scrolls
+    show_menu!(e.window, d.options, r.left, r.top + r.height + 2px, r.width, under=d, gap=2px,
                theme=theme(d), item_height=36px * scale(theme(d)),
                onselect=idx -> begin
                  d.open = false

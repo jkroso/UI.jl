@@ -6,7 +6,7 @@
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
 @use GLFW
-@use "./abstract" edits epoch ambient timed! theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI WrapMode mixin! window_of scale same semantic_parent handled
+@use "./abstract" edits epoch ambient timed! theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI WrapMode mixin! window_of scale same semantic_parent handled sized
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
@@ -443,6 +443,7 @@ end
   key::Symbol = :popup
   content::Any = nothing                       # a semantic node, or a layout
   anchor::NTuple{4,px} = (0px, 0px, 0px, 0px)  # the rectangle it's put beside: left, top, width, height
+  target::Any = nothing                        # the node that the anchor follows, or nothing for an anchor that stays where it is
   placement::Symbol = :below
   gap::px = 0px
   width::Union{Nothing,px} = nothing
@@ -472,8 +473,10 @@ and key presses go to it before they go to the node that has the keyboard. A
 click outside it, or Escape, closes it and calls `onclose()`.
 
 `anchor` is what it's put beside: a place `(x, y)`, a rectangle
-`(left, top, width, height)` or what `rect(node)` returns. Without one it's put
-at the mouse. `placement` says where:
+`(left, top, width, height)`, what `rect(node)` returns, or a node. Without one
+it's put at the mouse. A popup beside a node follows the node when it moves, as
+it does when the page it's on scrolls. It closes, and calls `onclose()`, when
+the node goes out of sight. `placement` says where:
 
 - `:below`: under the anchor, with their left edges in line. A menu goes here.
 - `:bottom`, `:top`, `:left`, `:right`: on that side of the anchor, centred on it.
@@ -490,8 +493,13 @@ popup!(window, content; anchor=window.mouse, placement=:below, gap=0px, width=no
   close_popup!(window, key)
   # A node of its own finds its window through a root, as the app's nodes do
   content isa UITree && content.parent === nothing && Root(content, window=window)
-  popup = Popup(key=key, content=content, anchor=box(anchor), placement=placement, gap=gap, width=width, input=input,
-                onclose=onclose, theme=theme)
+  target = anchor isa SemanticUI ? anchor : nothing
+  if target !== nothing
+    r = rect(target)
+    anchor = r === nothing ? (0px, 0px) : r
+  end
+  popup = Popup(key=key, content=content, anchor=box(anchor), target=target, placement=placement, gap=gap, width=width,
+                input=input, onclose=onclose, theme=theme)
   push!(get!(Vector{Popup}, _popups, objectid(window)), popup)
   popup
 end
@@ -508,6 +516,38 @@ dismiss!(window, popup::Popup) = begin
   filter!(p -> p !== popup, _popups[objectid(window)])
   popup.onclose === nothing || popup.onclose()
   nothing
+end
+
+"True when the middle of `node`, which `r` is the rectangle of, is in sight: nothing covers it and it isn't scrolled away"
+insight(scene::ConcreteRect, node, r::ConcreteRect) = begin
+  hit = hittest(scene, Vec2{px}(r.left + r.width / 2, r.top + r.height / 2))
+  while hit !== nothing
+    (hit === node || same(hit, node)) && return true
+    hit = semantic_parent(hit)
+  end
+  false
+end
+
+"""
+Move each popup that's beside a node to where the node is in `scene`, the
+layout of this frame. A popup whose node is gone or out of sight closes.
+"""
+follow!(w, scene::ConcreteRect) = begin
+  tracked = [p for p in popups(w) if p.target !== nothing]
+  isempty(tracked) && return
+  id = objectid(w)
+  for popup in tracked
+    r = rect(popup.target)
+    if r === nothing || !insight(scene, popup.target, r)
+      dismiss!(w, popup)
+      # What opened it may draw itself another way now that it's closed
+      _soon[id] = 0.0
+    else
+      popup.anchor = box(r)
+    end
+  end
+  # These rectangles were looked up before the popups were put in place, so look them up again when next asked
+  delete!(_rects, id)
 end
 
 "Lay a popup out and put it beside its anchor, inside a window of `size`"
@@ -589,7 +629,7 @@ describe(row::MenuRow) = begin
   k = scale(t)
   inset = 4px * k   # between the highlight of an item and the edges of the item, the same on every side
   item = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), radius(4px), padding(0px, 0px, 0px, 14px * k - inset),
-             Box(offset_y=-1px * k, Text(list.items[row.index], size=13pt * k, wrap=WrapMode.none)))
+             Box(offset_y=-1px * k, Text(list.items[row.index], size=sized(13pt, t), wrap=WrapMode.none)))
   row.index == highlighted(list) && mixin!(item, background(t.select))
   Row(width(grow=GrowType.Grow), height(list.item_height), padding(inset), item)
 end
@@ -629,10 +669,16 @@ Its text is the size the theme asks for, so give it an `item_height` that
 fits: 32px with the usual size. `dividers=true` draws a faint line between
 each item and the next. `lift` is how high the menu seems to float: a bigger
 number gives it a darker, wider shadow.
+
+`under` is a node to hang the menu from, `gap` under its bottom edge, in place
+of `(x, y)`. The menu then follows the node when it moves, as it does when the
+page it's on scrolls, and closes when the node goes out of sight.
 """
-show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, theme=theme(), dividers=false, lift=1.0) = begin
+show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, theme=theme(), dividers=false, lift=1.0,
+           under=nothing, gap=0px) = begin
   list = MenuList(items=items, onselect=onselect, item_height=item_height, dividers=dividers, lift=lift)
-  popup!(window, list, anchor=(x, y), width=w, key=:menu, theme=theme, onclose=() -> onselect === nothing || onselect(0))
+  popup!(window, list, anchor=under === nothing ? (x, y) : under, gap=under === nothing ? 0px : gap, width=w, key=:menu, theme=theme,
+         onclose=() -> onselect === nothing || onselect(0))
 end
 
 "Hide the floating menu"
@@ -866,6 +912,7 @@ frame(window::Window) = begin
   t2 = time_ns()
   _scenes[id] = scene
   delete!(_rects, id)
+  follow!(window, scene)
   shown = popups(window)
   for popup in shown
     place!(popup, scene.size)
@@ -939,6 +986,17 @@ hittest(w::Window, scene::ConcreteRect, pos) = begin
 end
 
 """
+The scroll wheel turned, or two fingers moved on the trackpad, while the mouse
+was over a node. `delta` is how far, across then up. A node that wants it
+defines `onscroll(node, e::MouseScroll)` and returns `handled`. If no node
+does, the Scroll under the mouse scrolls.
+"""
+struct MouseScroll
+  delta::Vec2{px}
+  window::AbstractWindow
+end
+
+"""
 Give an event to `target`, then to each semantic node above it in turn. A
 handler that returns `handled` keeps the event from the nodes above, and `emit`
 then returns `handled` too.
@@ -955,6 +1013,7 @@ end
 on(target::SemanticUI, e::KeyEvent) = onkey(target, e)
 on(target::SemanticUI, e::MouseMove) = onmouse(target, e)
 on(target::SemanticUI, e::Typed) = ontype(target, e)
+on(target::SemanticUI, e::MouseScroll) = onscroll(target, e)
 
 "A typed character goes to the node that has the keyboard, then up through the nodes above it"
 ontype(w::Window, e::Typed) = begin
@@ -1274,14 +1333,42 @@ onscroll(w::Window, delta::Vec2{px}) = begin
   id = objectid(w)
   t = get(_tools, id, nothing)
   t !== nothing && tool_input(t, w, delta) && return
-  scene = get(_scenes, id, nothing)
+  # The wheel is for the popup under the mouse, or for the app when there's none
+  popup = popup_at(w, w.mouse)
+  scene = popup === nothing ? get(_scenes, id, nothing) : popup.scene
+  target = popup === nothing ? hittest(w) : hittest(scene, w.mouse)
+  target !== nothing && emit(target, MouseScroll(delta, w)) === handled && return
   scene === nothing && return
-  rect = find_scroll_at(scene, w.mouse)
-  rect === nothing && return
-  scroll = rect.from::Scroll
-  max_offset = max(0px, scroll.content_height - rect.height)
+  rects = scrolls_at(scene, w.mouse)
   step = -delta[2] * 30
-  scroll.offset = clamp(scroll.offset + step, 0px, max_offset)
+  (isempty(rects) || step == 0px) && return
+  room(rect) = max(0px, rect.from.content_height - rect.height)
+  moves(rect) = step < 0px ? rect.from.offset > 0px : rect.from.offset < room(rect)
+  # A run of the wheel stays with the Scroll it began in. A new run moves the
+  # innermost Scroll that has somewhere to go, so a Scroll at its end lets the
+  # one round it move.
+  last = get(_wheel, id, nothing)
+  i = last !== nothing && time() - last[2] < WHEEL_RUN ? findfirst(r -> getfield(r.from, :state) === last[1], rects) : nothing
+  i === nothing && (i = something(findfirst(moves, rects), 1))
+  rect = rects[i]
+  scroll = rect.from::Scroll
+  scroll.offset = clamp(scroll.offset + step, 0px, room(rect))
+  _wheel[id] = (getfield(scroll, :state), time())
+  nothing
+end
+
+# What the wheel last scrolled in each window, and when. A page that's moving
+# doesn't stop when a smaller Scroll comes under the mouse.
+const _wheel = Dict{UInt,Tuple{Any,Float64}}()
+const WHEEL_RUN = 0.2   # seconds. Wheel events closer together than this are one run.
+
+"Each Scroll under `pos`, the innermost first"
+scrolls_at(::Any, pos, out=ConcreteRect[]) = out
+scrolls_at(rect::ConcreteRect, pos, out=ConcreteRect[]) = begin
+  inside(rect, pos) || return out
+  foreach(child -> scrolls_at(child, pos, out), rect.children)
+  rect.from isa Scroll && push!(out, rect)
+  out
 end
 
 onmouse(w::Window, e::MouseMove) = begin
@@ -1322,4 +1409,4 @@ end
 
 export draw, ui, hittest, emit, handled, rect, scene, clipboard, clipboard!, popup!, close_popup!, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
        invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, inside, offset!,
-       frame_stats, FrameStats, semantic_source, viewport, redraw_in!
+       frame_stats, FrameStats, semantic_source, viewport, redraw_in!, MouseScroll

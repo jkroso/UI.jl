@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "./Icon" Icon
-@use "../abstract" SemanticUI describe add_child! mixin! theme window_of handled
+@use "../abstract" SemanticUI describe add_child! mixin! theme window_of handled sized
 @use "../draw" show_menu! hide_menu! popup! close_popup! ishovered cursor
 @use Colors: @colorant_str, RGBA
 
@@ -39,7 +39,7 @@ describe(item::Item) = begin
     mixin!(row, Box(width(8px)))
   end
   mixin!(row, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-                  Text(item.label, size=13pt)))
+                  Text(item.label, size=sized(13pt, theme(item)))))
   row
 end
 

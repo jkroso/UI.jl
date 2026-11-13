@@ -21,5 +21,6 @@
 @use "./ColorPicker" ColorPicker
 @use "./Inspector" Inspector inspect
 @use "./Link" Link
+@use "./STLViewer" STLViewer
 
-export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Item, Menu, Dropdown, SVG, SVGPath, Icon, AbstractSatellite, Tooltip, KeyCombo, Table, TableHeader, TableRow, TableCell, ListTree, ItemGroup, ColorPicker, Inspector, inspect, Link
+export Button, ButtonGroup, TextInput, Checkbox, Toggle, Slider, ProgressBar, RadioGroup, Select, Item, Menu, Dropdown, SVG, SVGPath, Icon, AbstractSatellite, Tooltip, KeyCombo, Table, TableHeader, TableRow, TableCell, ListTree, ItemGroup, ColorPicker, Inspector, inspect, Link, STLViewer

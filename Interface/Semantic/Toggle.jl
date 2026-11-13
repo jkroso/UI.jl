@@ -12,9 +12,12 @@
   on::Bool = false
 end
 
-describe(t::Toggle) =
-  Row(width(44px * scale(theme(t))), height(24px * scale(theme(t))), radius(12px * scale(theme(t))),
+# The track is as tall as a Checkbox's box (20px), so the two line up in a list
+describe(t::Toggle) = begin
+  k = scale(theme(t))
+  Row(width(34px * k), height(20px * k), radius(10px * k),
       background(t.on ? theme(t).accent : theme(t).track))
+end
 
 cursor(::Toggle) = :hand
 
@@ -22,9 +25,10 @@ onkey(t::Toggle, ::KeyPress{Keys.mouse_left}) = (t.on = !t.on; handled)
 
 draw(ctx, size, ui::ConcreteRect, t::Toggle) = begin
   k = scale(theme(t))
-  r = 9px * k
-  cy = ui.top + ui.height / 2 - r
-  cx = t.on ? ui.left + ui.width - 3px * k - 2r : ui.left + 3px * k
+  inset = 2px * k
+  r = ui.height / 2 - inset
+  cy = ui.top + inset
+  cx = t.on ? ui.left + ui.width - inset - 2r : ui.left + inset
   rounded_rectangle(ctx, cx, cy, 2r, 2r, r, background=theme(t).on_accent)
 end
 

@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme scale handled
+@use "../abstract" UITree SemanticUI describe mixin! add_child! describe! focus theme scale handled sized
 @use "../draw" draw cursor
 @use "./Icon" Icon
 @use "./TextInput" TextInput
@@ -219,11 +219,14 @@ end
 
 const INDENT_WIDTH = 20px
 const ROW_HEIGHT = 28px
+const ROW_PADDING = 8px    # between a row's text and the ends of its highlight
+const FRAME_PADDING = 6px  # between the rows and the frame's border
+const LABEL_GAP = 6px      # between a label's colon and its value
 const CHEVRON_WIDTH = 12px
-const CHEVRON_GAP = 3px
+const CHEVRON_GAP = 4px
 
 describe(ins::Inspector) = begin
-  col = Column(width(grow=GrowType.Grow), padding(4px),
+  col = Column(width(grow=GrowType.Grow), padding(FRAME_PADDING * scale()),
                radius(6px), border(1px, :solid, theme(ins).line),
                background(theme(ins).surface))
   root = ins.firstchild
@@ -246,47 +249,41 @@ end
 
 flatten_views!(col, lv::LeafView, depth, focused) = mixin!(col, describe_row(lv, depth, focused))
 
-describe_row(cv::CollectionView, depth, focused) = begin
-  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT * scale()), Alignment.Center)
-  row.from = cv
-  cv === focused && mixin!(row, background(theme().select), radius(3px))
-  # indent
-  depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth * scale())))
-  # label
-  if !isempty(cv.label)
+"A row with its highlight, its indent and its label. The caller adds the value."
+row_start(dv::DataView, depth, focused) = begin
+  k = scale()
+  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT * k), padding(ROW_PADDING * k, 0px), Alignment.Center)
+  row.from = dv
+  dv === focused && mixin!(row, background(theme().select), radius(4px * k))
+  depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth * k)))
+  if !isempty(dv.label)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(cv.label * ": ", size=12pt * scale(), color=theme().dim)))
+                    Text(dv.label * ":", size=sized(12pt), color=theme().dim)))
+    mixin!(row, Box(width(LABEL_GAP * k)))
   end
-  # chevron
+  row
+end
+
+describe_row(cv::CollectionView, depth, focused) = begin
+  k = scale()
+  row = row_start(cv, depth, focused)
   name = cv.collapsed ? "chevron-right" : "chevron-down"
-  mixin!(row, Box(width(CHEVRON_GAP * scale())))
-  mixin!(row, Box(width(CHEVRON_WIDTH * scale()), height(ROW_HEIGHT * scale()), Alignment.Center,
-                  describe!(Icon(name, size=12px * scale(), color=theme().dim))))
-  mixin!(row, Box(width(CHEVRON_GAP * scale())))
-  # type brief
+  mixin!(row, Box(width(CHEVRON_WIDTH * k), height(ROW_HEIGHT * k), Alignment.Center,
+                  describe!(Icon(name, size=12px * k, color=theme().dim))))
+  mixin!(row, Box(width(CHEVRON_GAP * k)))
   mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                  Text(type_brief(cv.data), size=11pt * scale(), color=theme().dim)))
+                  Text(type_brief(cv.data), size=sized(11pt), color=theme().dim)))
   row
 end
 
 describe_row(lv::LeafView, depth, focused) = begin
-  row = Row(width(grow=GrowType.Grow), height(ROW_HEIGHT * scale()), Alignment.Center)
-  row.from = lv
-  lv === focused && mixin!(row, background(theme().select), radius(3px))
-  # indent
-  depth > 0 && mixin!(row, Box(width(INDENT_WIDTH * depth * scale())))
-  # label
-  if !isempty(lv.label)
-    mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(lv.label * ": ", size=12pt * scale(), color=theme().dim)))
-  end
-  # value or editor
+  row = row_start(lv, depth, focused)
   if lv.editing && lv.editor !== nothing
     mixin!(row, Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow), describe!(lv.editor)))
   else
     text, color = format_value(lv.data)
     mixin!(row, Box(height(grow=GrowType.Grow), Alignment.Center,
-                    Text(text, size=12pt * scale(), color=color)))
+                    Text(text, size=sized(12pt), color=color)))
   end
   row
 end

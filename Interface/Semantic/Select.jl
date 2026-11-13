@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl" ["units" px]
 @use "../Geometric"...
 @use "../Specific"...
-@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs
+@use "../abstract" SemanticUI describe describe! theme scale handled integrate inputs sized
 @use "../draw" cursor
 @use "./Icon" Icon
 @use Colors: @colorant_str
@@ -23,7 +23,7 @@ describe(s::Select) = begin
     radius(4px),
     background(theme(s).surface),
     Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow),
-      Text(current_label(s), size=13pt * k)),
+      Text(current_label(s), size=sized(13pt, theme(s)))),
     # The arrow is the same thin one a tree has
     Box(width(20px * k), height(grow=GrowType.Grow), Alignment.Center,
       describe!(Icon("chevron-down", size=12px * k, color=theme(s).dim))))
