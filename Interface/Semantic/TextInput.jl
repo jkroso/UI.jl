@@ -27,7 +27,7 @@ sideways to keep the caret in view.
   anchor::Int = 0         # selection anchor; equals cursor when no selection
   last_action::Float64 = time()
   # config
-  font_family::String = "Helvetica"
+  font_family::Union{String,Nothing} = nothing   # `nothing` uses the theme's family, like the labels around it
   font_size::Length = 14pt   # in points, or in pixels to be the same number of pixels on every screen
   placeholder::String = "Type here..."
   color::Union{Colorant,Nothing} = nothing               # the typed text and the caret. `nothing` uses the theme's text
@@ -46,8 +46,11 @@ ink(input::TextInput) = something(input.color, theme(input).text)
 "The size its text is drawn at: `font_size` when the theme's text has its usual size, and bigger or smaller with the theme"
 text_size(input::TextInput) = sized(input.font_size, theme(input))
 
+"The font family of its text"
+family(input::TextInput) = something(input.font_family, theme(input).family)
+
 "The Skia font that measures and draws its text"
-font(input::TextInput) = skia_font(input.font_family, text_size(input))
+font(input::TextInput) = skia_font(family(input), text_size(input))
 
 "How wide the first `n` characters of its text are"
 width_to(input::TextInput, n::Int) = n == 0 ? 0px : text_width(font(input), first(input.text, n))
@@ -59,7 +62,7 @@ a box that cuts it off at the left and right, and it moves left by `scroll`.
 content(input::TextInput) = begin
   empty = isempty(input.text)
   text = Text(empty ? input.placeholder : input.text,
-              size=text_size(input), family=input.font_family, wrap=WrapMode.none,
+              size=text_size(input), family=family(input), wrap=WrapMode.none,
               color=empty ? something(input.placeholder_color, theme(input).dim) : ink(input))
   Row(width(grow=GrowType.Grow), clip_x=true, Box(offset_x=-follow_caret!(input), text))
 end
