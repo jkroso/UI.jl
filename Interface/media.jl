@@ -12,7 +12,7 @@
 # macOS reads the file while the app's event loop runs, so a `Playback` is
 # `ready` a moment after it's made, and only in an app with a window open.
 
-@use "./objc" libobjc cls sel msg nsstring jstring with_pool
+@use "./objc" libobjc cls sel msg send get_value nsstring jstring with_pool
 @use Skia
 
 const AVFoundation = "/System/Library/Frameworks/AVFoundation.framework/AVFoundation"
@@ -377,5 +377,124 @@ level(l::Levels, from, to) = begin
   count == 0 ? 0.0 : sqrt(sum(view(l.squares, a:b)) / count)
 end
 
+# --- recording from the microphone ------------------------------------------------------
+#
+#     r = Recording("memo.m4a")
+#     start!(r)               # false if macOS can't record
+#     elapsed(r), loudness(r)
+#     stop!(r)                # the file can be played once it's stopped
+#
+# macOS records the sound as AAC in an M4A file, as Voice Memos does. It asks
+# the person once whether the app may use the microphone, and `microphone()`
+# says what they said. A recording goes on until it's stopped, or until the app
+# quits, whatever the app shows.
+
+"May the app use the microphone? `:yes`, `:no`, or `:ask` when macOS hasn't asked the person yet."
+microphone() = begin
+  Base.Libc.Libdl.dlopen(AVFoundation)
+  s = ccall((:objc_msgSend, libobjc), Int, (Object, Object, Object), cls("AVCaptureDevice"), sel("authorizationStatusForMediaType:"),
+            constant(AVFoundation, :AVMediaTypeAudio))
+  s == 3 ? :yes : s == 0 ? :ask : :no
+end
+
+"""
+Can macOS ask the person whether the app may use the microphone? It can when the
+app's Info.plist gives a reason. A program that runs in a terminal has none, and
+macOS stops a program that asks without one.
+"""
+can_ask() = with_pool() do
+  info = msg(msg(cls("NSBundle"), "mainBundle"), "infoDictionary")
+  info != C_NULL && msg(info, "objectForKey:", nsstring("NSMicrophoneUsageDescription")) != C_NULL
+end
+
+# macOS gives the answer to a block, the kind of function that Objective-C passes
+# around. This block is global: it has no variables of its own, so macOS uses it
+# where it is. `microphone()` reads the answer, so the block does nothing.
+answered(::Ptr{Cvoid}, ::Bool)::Cvoid = nothing
+const block = Ref{Tuple{Ptr{Cvoid},Int32,Int32,Ptr{Cvoid},Ptr{Cvoid}}}()
+const block_size = Ref((UInt(0), UInt(32)))   # what's known of the block: nothing reserved, and its size in bytes
+
+"Ask the person whether the app may use the microphone, unless macOS has asked already. `microphone()` says when they answer."
+ask_microphone!() = begin
+  (microphone() == :ask && can_ask()) || return
+  global_block = Base.Libc.Libdl.dlsym(Base.Libc.Libdl.dlopen("/usr/lib/libSystem.B.dylib"), :_NSConcreteGlobalBlock)
+  block[] = (global_block, Int32(1 << 28), Int32(0), @cfunction(answered, Cvoid, (Ptr{Cvoid}, Bool)), Base.unsafe_convert(Ptr{Cvoid}, block_size))
+  ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Object, Object), cls("AVCaptureDevice"),
+        sel("requestAccessForMediaType:completionHandler:"), constant(AVFoundation, :AVMediaTypeAudio), Base.unsafe_convert(Ptr{Cvoid}, block))
+  nothing
+end
+
+"Sound from the microphone, recorded into a file"
+mutable struct Recording
+  path::String
+  recorder::Object   # macOS's AVAudioRecorder while it records, or C_NULL
+  took::Float64      # how many seconds it recorded, once it's stopped
+end
+
+Recording(path::AbstractString) = Recording(abspath(path), C_NULL, 0.0)
+
+# The recordings that are going now, so that they stop when the app quits. A file that isn't stopped can't be played.
+const recording_now = Recording[]
+const hooked = Ref(false)   # is the code that stops them set to run when the app quits?
+
+"Start to record into the file, in place of what's in it. It's false if macOS can't record."
+start!(r::Recording) = begin
+  r.recorder == C_NULL || return true
+  Base.Libc.Libdl.dlopen(AVFoundation)
+  mkpath(dirname(r.path))
+  r.recorder = with_pool() do
+    settings = msg(cls("NSMutableDictionary"), "dictionary")
+    set(key, value) = ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Object, Object), settings, sel("setObject:forKey:"),
+                            value, constant(AVFoundation, key))
+    set(:AVFormatIDKey, number(code("aac ")))
+    set(:AVSampleRateKey, number(44100))
+    set(:AVNumberOfChannelsKey, number(1))   # a microphone hears one sound
+    set(:AVEncoderAudioQualityKey, number(0x60))   # high
+    url = msg(cls("NSURL"), "fileURLWithPath:", nsstring(r.path))
+    ccall((:objc_msgSend, libobjc), Object, (Object, Object, Object, Object, Ptr{Cvoid}), msg(cls("AVAudioRecorder"), "alloc"),
+          sel("initWithURL:settings:error:"), url, settings, C_NULL)
+  end
+  r.recorder == C_NULL && return false
+  send(r.recorder, "setMeteringEnabled:", true)
+  if !(get_value(Bool, r.recorder, "prepareToRecord") && get_value(Bool, r.recorder, "record"))
+    msg(r.recorder, "release")
+    r.recorder = C_NULL
+    return false
+  end
+  hooked[] || (atexit(() -> foreach(stop!, copy(recording_now))); hooked[] = true)
+  push!(recording_now, r)
+  r.took = 0.0
+  true
+end
+
+"Stop recording. The file is whole once it's stopped."
+stop!(r::Recording) = begin
+  r.recorder == C_NULL && return r
+  r.took = get_value(Float64, r.recorder, "currentTime")
+  msg(r.recorder, "stop")
+  msg(r.recorder, "release")
+  r.recorder = C_NULL
+  filter!(x -> x !== r, recording_now)
+  r
+end
+
+"Is it recording now?"
+recording(r::Recording) = r.recorder != C_NULL
+
+"How many seconds it has recorded"
+elapsed(r::Recording) = recording(r) ? get_value(Float64, r.recorder, "currentTime") : r.took
+
+"""
+How loud the microphone is now, from 0 for silence to 1 for as loud as it can be.
+macOS gives it in decibels, and the 50 decibels under the loudest are spread
+evenly from 0 to 1, as the meters of a sound app have them.
+"""
+loudness(r::Recording) = begin
+  recording(r) || return 0.0
+  msg(r.recorder, "updateMeters")
+  db = ccall((:objc_msgSend, libobjc), Float32, (Object, Object, UInt), r.recorder, sel("averagePowerForChannel:"), 0)
+  clamp((db + 50) / 50, 0.0, 1.0)
+end
+
 export Playback, ready, failed, duration, playing, play!, pause!, seek!, volume!, picture_size, watch!, watching, picture, shown!, close!, silence!,
-       sounding, Levels, finished, progress, level
+       sounding, Levels, finished, progress, level, Recording, start!, stop!, recording, elapsed, loudness, microphone, ask_microphone!, can_ask
