@@ -28,8 +28,10 @@ let tree = ListTree(ItemGroup("Cars", Tree.Item("Fast"), Tree.Item("Slow"))),
       Select(options=["x", "y"]), Dropdown(options=["x", "y"]), Tooltip("Hover", "A tip"), KeyCombo(:S, :cmd),
       Table(TableHeader("Name", "Price"), TableRow("Pen", "\$2")), tree, ColorPicker(color=HSV(225, 0.8, 0.8)),
       Inspector(inspect(Dict(:a => 1, :b => [true, "two"]), label="data")), Icon("search"), Link(_ -> Box(Text("Link")), "https://example.com"),
-      STLViewer(model, height=120px))
-  w = Window(gallery, size=(420px, 1600px))
+      STLViewer(model, height=120px),
+      # A window that isn't open reads no sound, so the players only show. They make no noise.
+      AudioPlayer("/System/Library/Sounds/Glass.aiff"), VideoPlayer("/System/Library/Sounds/Glass.aiff", height=80px))
+  w = Window(gallery, size=(420px, 1800px))
   for theme in (false, true)
     gallery.dark = theme
     frame(w)
