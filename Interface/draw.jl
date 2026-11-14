@@ -1,6 +1,6 @@
 @use "github.com/jkroso/Prospects.jl" Field @def
 @use "github.com/jkroso/MiniFB.jl/skia"... SkiaFont font_metrics text_bounds sk_color
-@use "github.com/jkroso/MiniFB.jl"... int KeyEvent flt onscroll
+@use "github.com/jkroso/MiniFB.jl"... int KeyEvent flt onscroll onfiledrop
 @use "github.com/jkroso/Font.jl" cap_height ["units" px absolute]
 @use GeometryBasics: Vec2
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
@@ -948,6 +948,14 @@ MiniFB calls `onopen(window)` once the window is open. UI.jl passes it on to
 """
 onopen(w::Window) = onopen(w.ui, w)
 onopen(ui, w::Window) = nothing
+
+"""
+MiniFB calls `onfiledrop(window, paths)` when files from the Finder are dropped
+on the window. UI.jl passes it on to `onfiledrop(ui, window, paths)`, so an app
+can take the files. `window.mouse` is where they were dropped.
+"""
+onfiledrop(w::Window, paths) = (sync_mouse!(w); onfiledrop(w.ui, w, paths))
+onfiledrop(ui, w::Window, paths) = nothing
 
 "Walk the from chain to find the SemanticUI that produced this concrete node"
 semantic_source(ui::Union{ConcreteRect,ConcreteText}) = begin

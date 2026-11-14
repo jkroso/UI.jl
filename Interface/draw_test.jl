@@ -285,3 +285,18 @@ let tree = Column(width(100px), height(100px), Alignment.Start, Box(height(20px)
   changed = resolve_layout(tree, Vec2{px}(100px, 100px), id)
   @test changed !== first_layout && changed.children[2].top == 40px
 end
+
+# Files that are dropped on a window go to the app that the window shows
+@use "github.com/jkroso/MiniFB.jl" onfiledrop
+@def mutable struct Tray <: SemanticUI
+  files::Vector{String} = String[]
+end
+describe(t::Tray) = Box(width(100px), height(100px))
+onfiledrop(t::Tray, w::Window, paths) = append!(t.files, paths)
+let tray = Tray(), w = Window(tray, size=(100px, 100px))
+  frame(w)
+  onfiledrop(w, ["/tmp/a.png", "/tmp/b.md"])
+  @test tray.files == ["/tmp/a.png", "/tmp/b.md"]
+  # An app that doesn't take files leaves them
+  @test onfiledrop(Window(Box(width(10px)), size=(100px, 100px)), ["/tmp/a.png"]) === nothing
+end
