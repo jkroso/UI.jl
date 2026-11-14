@@ -1111,13 +1111,15 @@ ishovered(node::SemanticUI) = begin
 end
 
 """
-The mouse cursor to show over a node: `:hand`, `:ibeam`, `:crosshair` or
+The mouse cursor to show over a node: `:hand`, `:ibeam`, `:crosshair`,
+`:resize_x` (arrows that point left and right, for an edge that you drag) or
 `nothing` to leave it to the node's parent.
 """
 cursor(::SemanticUI) = nothing
 
 const cursor_shapes = Dict(:arrow => GLFW.ARROW_CURSOR, :hand => GLFW.HAND_CURSOR,
-                           :ibeam => GLFW.IBEAM_CURSOR, :crosshair => GLFW.CROSSHAIR_CURSOR)
+                           :ibeam => GLFW.IBEAM_CURSOR, :crosshair => GLFW.CROSSHAIR_CURSOR,
+                           :resize_x => GLFW.HRESIZE_CURSOR)
 const _cursor_shape = Dict{UInt, Symbol}()
 
 set_cursor!(w::Window, shape::Symbol) = begin
