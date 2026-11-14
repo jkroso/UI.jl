@@ -30,8 +30,9 @@ let tree = ListTree(ItemGroup("Cars", Tree.Item("Fast"), Tree.Item("Slow"))),
       Inspector(inspect(Dict(:a => 1, :b => [true, "two"]), label="data")), Icon("search"), Link(_ -> Box(Text("Link")), "https://example.com"),
       STLViewer(model, height=120px),
       # A window that isn't open reads no sound, so the players only show. They make no noise.
-      AudioPlayer("/System/Library/Sounds/Glass.aiff"), VideoPlayer("/System/Library/Sounds/Glass.aiff", height=80px))
-  w = Window(gallery, size=(420px, 1800px))
+      AudioPlayer("/System/Library/Sounds/Glass.aiff"), VideoPlayer("/System/Library/Sounds/Glass.aiff", height=80px),
+      Mermaid("flowchart LR\n  A[Start] --> B{Stop?}"))
+  w = Window(gallery, size=(420px, 1900px))
   for theme in (false, true)
     gallery.dark = theme
     frame(w)
