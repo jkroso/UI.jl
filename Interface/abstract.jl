@@ -35,8 +35,8 @@ Base.@kwdef struct Theme
   surface::Colorant = RGB(1.0, 1.0, 1.0)           # behind a component: a text field, a menu, a tree
   text::Colorant = RGB(0.0, 0.0, 0.0)              # labels and values
   dim::Colorant = RGB(0.47, 0.47, 0.47)            # less important text, arrows and icons
-  line::Colorant = RGB(0.78, 0.78, 0.78)           # borders and rules
-  track::Colorant = RGB(0.86, 0.86, 0.86)          # the empty part of a slider, a switch that's off
+  line::Colorant = RGB(0.78, 0.78, 0.78)           # borders and rules, and the empty part of a slider
+  track::Colorant = RGB(0.86, 0.86, 0.86)          # a switch that's off, and the ticks under a slider
   hover::Colorant = RGB(0.95, 0.96, 0.97)          # behind what the mouse is over
   select::Colorant = RGB(0.82, 0.87, 0.94)         # behind the selected row
   accent::Colorant = RGB(0.23, 0.51, 0.96)         # a ticked box, a switch that's on, the full part of a slider
@@ -663,6 +663,28 @@ focus(node::UITree) = begin
   old isa SemanticUI && old !== node && blur!(old)
   node
 end
+
+"""
+When an app makes a node again in place of one it had, like a block of code that runs
+again, `carry!(new, old)` lets the new node carry on what the old one was doing, such
+as sliding to a new value. It does nothing for a kind of node that doesn't say how.
+"""
+carry!(new, old) = nothing
+
+"""
+An animation that has gone `done` of the way, from 0 to 1, and was last stepped at
+`stepped`, from `time()`, taken one more frame along. A frame moves it on by the time
+since the last one, but by no more than `most`, so that a slow frame, like one that
+lays out a whole page again, doesn't use up the animation before it shows.
+Returns how far it has gone now, and the time it was stepped.
+"""
+step_animation(done, stepped, seconds; most=1/30) = begin
+  now = time()
+  min(1.0, done + min(now - stepped, most) / seconds), now
+end
+
+"Ease out: quick at first, then slower as it arrives, but not so quick that the start doesn't show"
+ease(d) = 1 - (1 - d)^2
 
 """
 `onblur(node, from)` runs when `from` loses the keyboard to another node. It runs

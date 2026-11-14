@@ -598,6 +598,7 @@ or the up and down arrows highlight a choice, and a click or Return picks it.
   item_height::px = 32px
   dividers::Bool = false
   lift::Float64 = 1.0
+  families::Vector{String} = String[]   # the font of each item, like each font's own in a font picker. Empty uses the theme's.
   active::Int = 0          # the item that's highlighted, or 0
   by_mouse::Bool = false   # the mouse highlighted it, so it's plain again when the mouse leaves
 end
@@ -629,10 +630,14 @@ describe(row::MenuRow) = begin
   k = scale(t)
   inset = 4px * k   # between the highlight of an item and the edges of the item, the same on every side
   item = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), radius(4px), padding(0px, 0px, 0px, 14px * k - inset),
-             Box(offset_y=-1px * k, Text(list.items[row.index], size=sized(13pt, t), wrap=WrapMode.none)))
+             Box(offset_y=-1px * k, Text(list.items[row.index]; size=sized(13pt, t), wrap=WrapMode.none,
+                                         family_of(list.families, row.index, t)...)))
   row.index == highlighted(list) && mixin!(item, background(t.select))
   Row(width(grow=GrowType.Grow), height(list.item_height), padding(inset), item)
 end
+
+"The font of item `i`, as a keyword for `Text`, when a list of fonts gives it one"
+family_of(families, i, t) = i <= length(families) && !isempty(families[i]) ? (family=families[i],) : ()
 
 "Pick item `i`: close the menu, then tell `onselect`"
 choose!(list::MenuList, i::Int) = begin
@@ -667,7 +672,8 @@ Escape. The up and down arrows move the highlight and Return picks.
 
 Its text is the size the theme asks for, so give it an `item_height` that
 fits: 32px with the usual size. `dividers=true` draws a faint line between
-each item and the next. `lift` is how high the menu seems to float: a bigger
+each item and the next. `families` gives each item a font of its own, like
+the font itself for each name in a font picker. `lift` is how high the menu seems to float: a bigger
 number gives it a darker, wider shadow.
 
 `under` is a node to hang the menu from, `gap` under its bottom edge, in place
@@ -675,8 +681,8 @@ of `(x, y)`. The menu then follows the node when it moves, as it does when the
 page it's on scrolls, and closes when the node goes out of sight.
 """
 show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, theme=theme(), dividers=false, lift=1.0,
-           under=nothing, gap=0px) = begin
-  list = MenuList(items=items, onselect=onselect, item_height=item_height, dividers=dividers, lift=lift)
+           under=nothing, gap=0px, families=String[]) = begin
+  list = MenuList(items=items, onselect=onselect, item_height=item_height, dividers=dividers, lift=lift, families=families)
   popup!(window, list, anchor=under === nothing ? (x, y) : under, gap=under === nothing ? 0px : gap, width=w, key=:menu, theme=theme,
          onclose=() -> onselect === nothing || onselect(0))
 end
