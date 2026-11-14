@@ -5,6 +5,7 @@
 @use GLFW
 @use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys redraw
 @use "./objc" libobjc cls sel msg send get_value nsstring jstring with_pool
+@use "github.com/jkroso/Font.jl/units" px
 
 nswindow(w::AbstractWindow) = ccall((:glfwGetCocoaWindow, GLFW.libglfw), Ptr{Cvoid}, (GLFW.Window,), w.glfw[1])
 
@@ -14,9 +15,10 @@ const title_hidden = 1                   # NSWindowTitleHidden
 """
 Hide the window's title bar, the way Finder does. The app's content then runs
 up to the top edge of the window, and the close, minimise and zoom buttons
-float over its top left corner, so leave about 70px × 40px clear there. Without
-a title bar the window can only be moved by dragging somewhere that calls
-`drag_window!`. Call it once the window is open, e.g. from `onopen`.
+float over its top left corner, so leave about 70px × 40px clear there.
+`place_window_buttons!` moves them. Without a title bar the window can only be
+moved by dragging somewhere that calls `drag_window!`. Call it once the window
+is open, e.g. from `onopen`.
 """
 hide_titlebar!(w::AbstractWindow) = begin
   (Sys.isapple() && !isempty(w.glfw)) || return w
@@ -27,6 +29,148 @@ hide_titlebar!(w::AbstractWindow) = begin
     send(win, "setTitleVisibility:", title_hidden)
   end
   w
+end
+
+# --- where the close, minimise and zoom buttons go ---------------------------------
+#
+# macOS puts the middle of the close button about 16px from the window's top and
+# left edges. An app whose top bar is taller than that can move the buttons down,
+# so they line up with what's in its bar. macOS puts them back each time it lays
+# out the title bar: when the window changes size, gains or loses focus, turns
+# dark or light, or leaves full screen. The window tells a small class after
+# each of those, and the buttons move again before anything is drawn. Electron
+# moves the buttons in the same way for its `trafficLightPosition`.
+
+const full_screen = UInt(1) << 14        # NSWindowStyleMaskFullScreen
+const close_button, minimise_button, zoom_button = 0, 1, 2   # NSWindowButton
+
+struct NSRect
+  x::Float64
+  y::Float64
+  width::Float64
+  height::Float64
+end
+
+# On an Intel Mac, a method that gives back a struct this big has its own objc_msgSend
+@eval frame_of(view) = ccall(($(QuoteNode(Sys.ARCH == :x86_64 ? :objc_msgSend_stret : :objc_msgSend)), libobjc),
+                             NSRect, (Ptr{Cvoid}, Ptr{Cvoid}), view, sel("frame"))
+set_frame!(view, r::NSRect) = ccall((:objc_msgSend, libobjc), Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, NSRect), view, sel("setFrame:"), r)
+window_button(win, kind) = ccall((:objc_msgSend, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Int), win, sel("standardWindowButton:"), kind)
+"The strip along the top of the window that holds the buttons"
+title_bar(close) = msg(msg(close, "superview"), "superview")
+
+const button_places = Dict{Ptr{Cvoid},NTuple{2,Float64}}()   # each NSWindow whose buttons moved, and where its close button's middle goes
+const button_watcher = Ref{Ptr{Cvoid}}(C_NULL)
+const placing = Ref(false)   # true while the buttons move, so that their own moves don't move them again
+# What the window tells the watcher after macOS lays out its title bar
+const window_changes = ("NSWindowDidResizeNotification", "NSWindowDidBecomeKeyNotification", "NSWindowDidResignKeyNotification",
+                        "NSWindowDidBecomeMainNotification", "NSWindowDidResignMainNotification",
+                        "NSWindowDidExitFullScreenNotification", "NSWindowWillCloseNotification")
+
+points(x::Real) = Float64(x)
+points(x) = Float64(convert(px, x).value)
+
+"""
+Move the close, minimise and zoom buttons of a window without a title bar (see
+`hide_titlebar!`) so the middle of the close button is `x` from the window's
+left edge and `y` from its top. The other two keep their gaps to it. To line
+the buttons up with a top bar that's 44px tall, `y` is 22px. They stay there
+when macOS lays out the title bar again. In full screen they go back to where
+macOS puts them.
+
+    onopen(::App, w::Window) = place_window_buttons!(hide_titlebar!(w), 22px, 22px)
+"""
+place_window_buttons!(w::AbstractWindow, x, y) = begin
+  (Sys.isapple() && !isempty(w.glfw)) || return w
+  win = nswindow(w)
+  with_pool() do
+    haskey(button_places, win) || watch_window(win)
+    button_places[win] = (points(x), points(y))
+    # A title bar that macOS still has to lay out would put the buttons back later
+    msg(msg(msg(win, "contentView"), "superview"), "layoutSubtreeIfNeeded")
+    place_buttons(win)
+  end
+  w
+end
+
+"Put the buttons of the NSWindow `win` where `button_places` says"
+place_buttons(win) = begin
+  placing[] && return
+  get_value(UInt, win, "styleMask") & full_screen == 0 || return
+  buttons = map(kind -> window_button(win, kind), (close_button, minimise_button, zoom_button))
+  any(==(C_NULL), buttons) && return
+  placing[] = true
+  try
+    x, y = button_places[win]
+    # The strip is made 2y tall, so the buttons' middles are y from its top and
+    # from its bottom alike. Then it doesn't matter which edge it measures from.
+    strip = title_bar(buttons[1])
+    now = frame_of(strip)
+    wanted = NSRect(now.x, frame_of(win).height - 2y, now.width, 2y)
+    now == wanted || set_frame!(strip, wanted)
+    close = frame_of(buttons[1])
+    gap = frame_of(buttons[2]).x - close.x
+    for (i, button) in enumerate(buttons)
+      now = frame_of(button)
+      wanted = NSRect(x - close.width / 2 + (i - 1) * gap, y - now.height / 2, now.width, now.height)
+      now == wanted || set_frame!(button, wanted)
+    end
+  finally
+    placing[] = false
+  end
+end
+
+"""
+macOS calls this after it lays out the title bar of a window whose buttons
+moved, and when the window closes. It also calls it when the strip that holds
+the buttons changes size, which it does when the window turns dark or light.
+"""
+window_changed(self::Ptr{Cvoid}, cmd::Ptr{Cvoid}, note::Ptr{Cvoid})::Cvoid = begin
+  try
+    name = jstring(msg(note, "name"))
+    thing = msg(note, "object")
+    win = startswith(name, "NSView") ? msg(thing, "window") : thing
+    if name == "NSWindowWillCloseNotification"
+      if haskey(button_places, win)
+        delete!(button_places, win)
+        for watched in (win, title_bar(window_button(win, close_button)))
+          ccall((:objc_msgSend, libobjc), Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+                notifications(), sel("removeObserver:name:object:"), self, C_NULL, watched)
+        end
+      end
+    # In full screen the strip sits in a window of its own, which isn't in `button_places`
+    elseif haskey(button_places, win)
+      place_buttons(win)
+    end
+  catch err
+    # An error mustn't go back into macOS's own code
+    @error "Couldn't move the window's buttons" exception=(err, catch_backtrace())
+  end
+  nothing
+end
+
+notifications() = msg(cls("NSNotificationCenter"), "defaultCenter")
+
+"Have the NSWindow `win` tell the watcher each time macOS lays out its title bar again"
+watch_window(win) = begin
+  if button_watcher[] == C_NULL
+    class = cls("UIWindowWatcher")
+    if class == C_NULL
+      class = ccall((:objc_allocateClassPair, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Cstring, Csize_t), cls("NSObject"), "UIWindowWatcher", 0)
+      ccall((:objc_registerClassPair, libobjc), Cvoid, (Ptr{Cvoid},), class)
+    end
+    # The class outlives this file when the file is loaded again, so give it the function as it is now
+    ccall((:class_replaceMethod, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring), class, sel("windowChanged:"),
+          @cfunction(window_changed, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid})), "v@:@")
+    button_watcher[] = msg(msg(class, "alloc"), "init")
+  end
+  watched = [(name, win) for name in window_changes]
+  close = window_button(win, close_button)
+  close == C_NULL || push!(watched, ("NSViewFrameDidChangeNotification", title_bar(close)))
+  for (name, thing) in watched
+    ccall((:objc_msgSend, libobjc), Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+          notifications(), sel("addObserver:selector:name:object:"), button_watcher[], sel("windowChanged:"), nsstring(name), thing)
+  end
 end
 
 """
@@ -180,4 +324,4 @@ native_menu(items, off, path) = begin
   menu
 end
 
-export hide_titlebar!, drag_window!, dark_mode, set_dark!, system_menu
+export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu
