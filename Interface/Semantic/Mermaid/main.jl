@@ -299,6 +299,23 @@ tip!(ctx, paint, kind::Symbol, at, dx, dy, long, ink, thick, surface) = begin
   Skia.sk_path_delete(path)
 end
 
+"""
+Draw nothing in the boxes `around` from now on, each a left, a top, a width and
+a height. The clip is one shape, the room to draw in with holes where the boxes
+are, so that a canvas that writes SVG can keep it too. An SVG can't keep a clip
+that leaves a box out.
+"""
+clip_out!(ctx, around) = begin
+  room = Ref(Skia.sk_rect_t(0f0, 0f0, 0f0, 0f0))
+  Skia.sk_canvas_get_local_clip_bounds(ctx, room)
+  whole, boxes, kept = Skia.sk_path_new(), Skia.sk_path_new(), Skia.sk_path_new()
+  Skia.sk_path_add_rect(whole, room, Skia.SK_PATH_DIRECTION_CW)
+  foreach(((x, y, w, h),) -> Skia.sk_path_add_rect(boxes, bounds(x, y, w, h), Skia.SK_PATH_DIRECTION_CW), around)
+  Skia.sk_path_op(whole, boxes, Skia.SK_PATH_OP_DIFFERENCE, kept)
+  Skia.sk_canvas_clip_path_with_operation(ctx, kept, Skia.SK_CLIP_OP_INTERSECT, true)
+  foreach(Skia.sk_path_delete, (whole, boxes, kept))
+end
+
 "The way that a line goes from `a` to `b`, one long, or nothing if they're the same point"
 towards(a, b) = begin
   dx, dy = b[1] - a[1], b[2] - a[2]
@@ -338,9 +355,7 @@ show!(ctx, paint, t::Theme, u, s::Stroke) = begin
   end
   Skia.sk_canvas_save(ctx)
   # The line isn't drawn where its label is
-  for (x, y, w, h) in s.around
-    Skia.sk_canvas_clip_rect_with_operation(ctx, bounds(x, y, w, h), Skia.SK_CLIP_OP_DIFFERENCE, true)
-  end
+  isempty(s.around) || clip_out!(ctx, s.around)
   pen!(paint, ink, s.thick, s.dash)
   Skia.sk_canvas_draw_path(ctx, path, paint)
   Skia.sk_canvas_restore(ctx)
