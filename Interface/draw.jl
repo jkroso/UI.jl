@@ -727,7 +727,14 @@ hide_menu!(window) = close_popup!(window, :menu)
 @def mutable struct Bubble <: SemanticUI
   content::Any = nothing
   placement::Symbol = :bottom
-  target::NTuple{4,px} = (0px, 0px, 0px, 0px)
+  target::Any = (0px, 0px, 0px, 0px)   # what it points at: a rectangle, or a node that it follows
+end
+
+"The rectangle that the tooltip `b` points at, where it is in this frame"
+target_box(b::Bubble) = begin
+  b.target isa SemanticUI || return b.target
+  r = rect(b.target)
+  r === nothing ? (0px, 0px, 0px, 0px) : box(r)
 end
 
 const bubble_colour = colorant"rgb(50,50,50)"
@@ -746,7 +753,7 @@ tooltip that's too small for that has it in its middle.
 """
 arrow_point(b::Bubble, ui) = begin
   (;left, top, width, height) = ui
-  x, y, w, h = b.target
+  x, y, w, h = target_box(b)
   mx, my = min(6px + ARROW, width / 2), min(6px + ARROW, height / 2)
   (clamp(x + w/2, left + mx, left + width - mx), clamp(y + h/2, top + my, top + height - my))
 end
@@ -776,6 +783,15 @@ through a tooltip, and the next mouse move takes it away.
 """
 show_tooltip!(window, content, x, y, w, h; placement=:bottom, gap=4px) =
   popup!(window, Bubble(content=content, placement=placement, target=box((x, y, w, h))), anchor=(x, y, w, h),
+         placement=placement, gap=gap, key=:tooltip, input=false)
+
+"""
+Show a tooltip beside `node`. It goes where `node` is in each frame, so it's
+in the right place when the node changes its size, as one can when the mouse
+comes over it. It closes when the node goes out of sight.
+"""
+show_tooltip!(window, content, node::SemanticUI; placement=:bottom, gap=4px) =
+  popup!(window, Bubble(content=content, placement=placement, target=node), anchor=node,
          placement=placement, gap=gap, key=:tooltip, input=false)
 
 hide_tooltip!(window) = close_popup!(window, :tooltip)

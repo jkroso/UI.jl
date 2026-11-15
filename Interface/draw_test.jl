@@ -299,6 +299,25 @@ let picked = Int[], w = Window(Page(Dropdown(options=["a", "b"])), size=(300px, 
   mouse(10, 150)
 end
 
+# A tooltip of a node goes under the node as it is in the frame that shows the tooltip.
+# This one gets wider when the mouse is over it, on the frame after the mouse comes.
+"Something that's wider with the mouse over it, and shows a tooltip"
+@def mutable struct Widens <: SemanticUI end
+describe(g::Widens) = Box(width(ishovered(g) ? 200px : 120px), height(20px))
+onmouse(g::Widens, e::MouseMove) = show_tooltip!(e.window, Box(padding(8px, 5px), Text("Wide")), g, placement=:bottom)
+let w = Window(Page(Widens()), size=(300px, 200px))
+  frame(w)
+  node = w.ui.firstchild
+  @test rect(node).width == 120px
+  pos = Vec2{px}(10px, 10px)
+  onmouse(w, MouseMove(pos, w)); w.mouse = pos; frame(w)
+  @test rect(node).width == 200px
+  tip = only(popups(w))
+  @test tip.scene.left + tip.scene.width / 2 == 100px
+  @test arrow_point(tip.content, tip.scene)[1] == 100px
+  close_popup!(w, :tooltip)
+end
+
 # A `Menu` of `Item`s tells `onselect` which item was clicked
 const chosen = Int[]
 onselect(::Menu, i::Int) = push!(chosen, i)
