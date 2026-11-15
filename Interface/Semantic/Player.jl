@@ -7,7 +7,7 @@
 @use "../Specific"... text_width
 @use "../abstract" SemanticUI WrapMode describe focus theme scale handled sized window_of
 @use "../draw" draw cursor redraw_in! rect
-@use "../media" Playback ready failed duration playing play! pause! seek! picture_size watch! watching picture shown! Levels finished level
+@use "../media" Playback ready failed duration span playing play! pause! seek! place! picture_size watch! watching picture shown! Levels finished level
 @use "./Icon" Icon
 @use "./STLViewer" density smooth
 @use Colors: RGBA, @colorant_str
@@ -22,6 +22,14 @@
 # is a row of bars, a tall bar where the sound is loud. Click the track, or
 # drag along it, to go to that part of the file. A click on the picture of a
 # video plays it and stops it too.
+#
+# A VideoPlayer can play part of a file:
+#
+#     VideoPlayer("walk.mov", from=61, to=86)
+#
+# That one starts 61 seconds into the file and stops at 86. Its track is that
+# part of the file, and its times are the file's own, so it shows 1:01 / 1:26
+# before it plays.
 #
 # Once a click has given a player the keyboard, the space bar plays and stops,
 # and ← and → go back and on by 5 seconds.
@@ -50,6 +58,8 @@ end
 @def mutable struct VideoPlayer <: SemanticUI
   path::String = ""
   height::px = 360px       # the most that the picture has. The player is as wide as a picture of that height, or as the room it's given.
+  from::Float64 = 0.0      # the part of the file that it plays, in seconds from the file's start. `to` is Inf for the file's end.
+  to::Float64 = Inf
   # What it remembers between frames
   media::Any = nothing
   aim::Any = nothing
@@ -65,7 +75,8 @@ VideoPlayer(path::AbstractString; kwargs...) = VideoPlayer(; path=abspath(path),
 const Player = Union{AudioPlayer,VideoPlayer}
 
 "The file as macOS plays it. It's opened the first time that the player is shown."
-media(p::Player) = (p.media === nothing && (p.media = Playback(p.path)); p.media::Playback)
+media(p::AudioPlayer) = (p.media === nothing && (p.media = Playback(p.path)); p.media::Playback)
+media(p::VideoPlayer) = (p.media === nothing && (p.media = Playback(p.path, from=p.from, to=p.to)); p.media::Playback)
 
 """
 How far through the file it is, in seconds. After a click on the track it's the
@@ -92,11 +103,11 @@ toggle!(p::Player) = begin
   nothing
 end
 
-"Go to `s` seconds from the start of the file"
+"Go to `s` seconds from the start of the file, or to the nearest end of the part of the file that plays"
 goto!(p::Player, s) = begin
   m = media(p)
   ready(m) || return
-  s = clamp(s, 0.0, duration(m))
+  s = clamp(s, span(m)...)
   seek!(m, s)
   p.aim = (time(), s)
   nothing
@@ -109,7 +120,7 @@ it shows changes with time: within `wait` seconds while the file plays, and
 sooner while the file loads or goes to a new time.
 """
 tick!(p::Player, wait) = begin
-  m = shown!(media(p))
+  m = place!(shown!(media(p)))
   w = window_of(p)
   # The button can come up while the mouse is somewhere else, and then no move tells the player
   p.drag && w !== nothing && !(Keys.mouse_left in w.keys) && (p.drag = false)
@@ -128,12 +139,12 @@ clock(seconds) = begin
   hours > 0 ? "$hours:$(lpad(minutes, 2, '0')):$(lpad(s, 2, '0'))" : "$minutes:$(lpad(s, 2, '0'))"
 end
 
-"How far through the file it is and how long the file is, like 0:12 / 3:40"
+"How far through the file it is and where it stops, like 0:12 / 3:40. It stops at the end of the file unless it plays part of the file."
 times(p::Player, t) = begin
-  long = clock(duration(media(p)))
-  text = Text("$(clock(at(p))) / $long", size=sized(12pt, t), color=t.dim, wrap=WrapMode.none, align=TextAlign.Right)
+  stop = clock(span(media(p))[2])
+  text = Text("$(clock(at(p))) / $stop", size=sized(12pt, t), color=t.dim, wrap=WrapMode.none, align=TextAlign.Right)
   # Room for its widest time, so that the track keeps its length while the time changes
-  Row(width(text_width(text, replace("$long / $long", r"\d" => "0"))), text)
+  Row(width(text_width(text, replace("$stop / $stop", r"\d" => "0"))), text)
 end
 
 "The round button that plays and stops. It's grey until the file can play."
@@ -214,8 +225,11 @@ pace(a::AudioPlayer) = begin
   found === nothing ? 1 / 30 : clamp(duration(media(a)) / bars(a, found[2].width), 1 / 30, 0.25)
 end
 
-"How much of the file has played: 0 at its start and 1 at its end"
-played(p::Player) = (long = duration(media(p)); long > 0 ? clamp(at(p) / long, 0.0, 1.0) : 0.0)
+"How much of the part that plays has played: 0 at its start and 1 at its end"
+played(p::Player) = begin
+  from, to = span(media(p))
+  to > from ? clamp((at(p) - from) / (to - from), 0.0, 1.0) : 0.0
+end
 
 draw(ctx, size, ui::ConcreteRect, a::AudioPlayer) = begin
   found = parts(a, ui)
@@ -312,8 +326,10 @@ cursor(::Player) = :hand
 within(r, (x, y), slack=0px) = r.left - slack <= x <= r.left + r.width + slack && r.top - slack <= y <= r.top + r.height + slack
 
 "Go to the part of the file that's under `x` on the track"
-scrub!(p::Player, x, track) =
-  goto!(p, duration(media(p)) * clamp(Float64((x - track.left) / track.width), 0.0, 1.0))
+scrub!(p::Player, x, track) = begin
+  from, to = span(media(p))
+  goto!(p, from + (to - from) * clamp(Float64((x - track.left) / track.width), 0.0, 1.0))
+end
 
 onkey(p::Player, e::KeyPress{Keys.mouse_left}) = begin
   focus(p)

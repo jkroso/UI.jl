@@ -9,6 +9,10 @@
 #     seek!(p, 30)
 #     pause!(p)
 #
+# `Playback("walk.mov", from=61, to=86)` plays only that part of the file: from
+# 61 seconds after its start to 86. It starts at 61, and it stops at 86 as it
+# would at the end of the file.
+#
 # macOS reads the file while the app's event loop runs, so a `Playback` is
 # `ready` a moment after it's made, and only in an app with a window open.
 
@@ -49,16 +53,23 @@ mutable struct Playback
   seen::Float64     # when a player last showed it, or 0 if none has
   checked::Float64  # what `seen` was, the last time the timer looked
   missed::Int       # how many times in a row the timer found `seen` as it was
+  from::Float64     # the part of the file that plays, in seconds from its start. `to` is Inf for the end of the file.
+  to::Float64
+  placed::Bool      # has it gone to `from`? It goes there once the file is ready.
 end
 
-Playback(path::AbstractString) = begin
+Playback(path::AbstractString; from::Real=0.0, to::Real=Inf) = begin
   # The classes of AVFoundation only have their names once it's loaded
   Base.Libc.Libdl.dlopen(AVFoundation)
   player = with_pool() do
     url = msg(cls("NSURL"), "fileURLWithPath:", nsstring(abspath(path)))
     msg(msg(cls("AVPlayer"), "alloc"), "initWithURL:", url)
   end
-  finalizer(close!, Playback(abspath(path), player, msg(player, "currentItem"), C_NULL, 0, 0.0, 0.0, 0))
+  item = msg(player, "currentItem")
+  # macOS stops at `to`, as if the file ended there
+  isfinite(to) && ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, CMTime), item, sel("setForwardPlaybackEndTime:"), cmtime(to))
+  from = max(Float64(from), 0.0)
+  finalizer(close!, Playback(abspath(path), player, item, C_NULL, 0, 0.0, 0.0, 0, from, Float64(to), from == 0))
 end
 
 "Stop it and give its memory back to macOS"
@@ -83,6 +94,17 @@ failed(p::Playback) = status(p) == 2
 "How long the file is, in seconds. It's 0 until the file is `ready`."
 duration(p::Playback) = p.item == C_NULL ? 0.0 : seconds(time_of(p.item, "duration"))
 
+"""
+The part of the file that plays: where it starts and where it stops, in seconds
+from the start of the file. It's all of the file unless the Playback was made
+for part of it. Both are 0 until the file is `ready`.
+"""
+span(p::Playback) = begin
+  long = duration(p)
+  from = clamp(p.from, 0.0, long)
+  (from, clamp(p.to, from, long))
+end
+
 "How far through the file it is, in seconds"
 Base.position(p::Playback) = p.player == C_NULL ? 0.0 : clamp(seconds(time_of(p.player, "currentTime")), 0.0, max(duration(p), 0.0))
 
@@ -97,12 +119,16 @@ picture_size(p::Playback) =
 # One file plays at a time, as in a music app. This is the one that plays now.
 const sounding = Ref{Any}(nothing)
 
-"Play it from where it is, or from the start if it's at the end. The file that was playing stops."
+"""
+Play it from where it is. If it's at the end of the part that plays, or outside
+that part, it plays from the start of the part. The file that was playing stops.
+"""
 play!(p::Playback) = begin
   p.player == C_NULL && return p
   other = sounding[]
   other isa Playback && other !== p && pause!(other)
-  duration(p) > 0 && position(p) >= duration(p) - 0.05 && seek!(p, 0)
+  from, to = span(p)
+  to > 0 && !(from - 0.05 <= position(p) < to - 0.05) && seek!(p, from)
   sounding[] = p
   p.missed = 0
   msg(p.player, "play")
@@ -118,11 +144,19 @@ silence!() = (p = sounding[]; p isa Playback && pause!(p); nothing)
 "Go to `s` seconds from the start of the file"
 seek!(p::Playback, s) = begin
   p.player == C_NULL && return p
+  p.placed = true   # `place!` mustn't take it back to `from` now
   # The two zeros ask for that time exactly. Without them macOS goes to a time near it that's quicker to find.
   ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, CMTime, CMTime, CMTime), p.player,
         sel("seekToTime:toleranceBefore:toleranceAfter:"), cmtime(clamp(s, 0.0, max(duration(p), 0.0))), cmtime(0), cmtime(0))
   p
 end
+
+"""
+Go to the start of the part that plays, the first time that it's called after
+the file is `ready`. A player calls it in each frame. macOS can't go to a time
+in a file that it hasn't read, so a Playback can't do this when it's made.
+"""
+place!(p::Playback) = (p.placed || !ready(p) || seek!(p, p.from); p)
 
 "How loud it plays: 1 is the file as it is, and 0 is silent"
 volume!(p::Playback, v) = begin
@@ -496,5 +530,5 @@ loudness(r::Recording) = begin
   clamp((db + 50) / 50, 0.0, 1.0)
 end
 
-export Playback, ready, failed, duration, playing, play!, pause!, seek!, volume!, picture_size, watch!, watching, picture, shown!, close!, silence!,
+export Playback, ready, failed, duration, span, playing, play!, pause!, seek!, place!, volume!, picture_size, watch!, watching, picture, shown!, close!, silence!,
        sounding, Levels, finished, progress, level, Recording, start!, stop!, recording, elapsed, loudness, microphone, ask_microphone!, can_ask

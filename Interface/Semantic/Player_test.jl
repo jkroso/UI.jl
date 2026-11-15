@@ -6,7 +6,7 @@
 @use "../Geometric"...
 @use "../draw" frame rect
 @use "../testing"...
-@use "../media" Playback Levels ready failed duration playing volume! picture_size finished progress level sounding silence!
+@use "../media" Playback Levels ready failed duration span playing volume! picture_size finished progress level sounding silence!
 @use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause!
 
 # A length of time, as a player shows it
@@ -164,6 +164,33 @@ if Sys.which("ffmpeg") !== nothing
     # A click near the end of the track goes there
     click!(w, (track.left + track.width * 0.75, track.top + track.height / 2))
     @test until(() -> shown() && abs(position(v.media) - 1.5) < 0.1)
+  end
+
+  # A player of part of a file: from 0.5 seconds to 1.2
+  let v = VideoPlayer(flat, height=180px, from=0.5, to=1.2), rest = VideoPlayer(flat, height=180px, from=1.5)
+    w = Window(Shelf(v, rest), size=(700px, 600px))
+    shown() = (frame(w); true)
+    # Its first picture is the one at the start of the part
+    @test until(() -> shown() && v.still.image != C_NULL && abs(position(v.media) - 0.5) < 0.05)
+    @test span(v.media) == (0.5, 1.2)
+    # With no `to`, the part goes on to the end of the file
+    @test until(() -> shown() && span(rest.media) == (1.5, 2.0) && abs(position(rest.media) - 1.5) < 0.05)
+    button, track, strip, picture = parts(v)
+    # It stops at the end of the part, as it would at the end of the file
+    click!(w, middle(picture))
+    @test playing(v.media)
+    @test until(() -> shown() && !playing(v.media))
+    @test position(v.media) ≈ 1.2 atol=0.05
+    # And then it plays from the start of the part
+    toggle!(v)
+    @test until(() -> shown() && playing(v.media) && position(v.media) < 1.0)
+    pause!(v)
+    # The track is the part, so a click three quarters of the way along goes three quarters of the way through the part
+    click!(w, (track.left + track.width * 0.75, track.top + track.height / 2))
+    @test until(() -> shown() && abs(position(v.media) - (0.5 + 0.7 * 0.75)) < 0.05)
+    # ← can't go before the part
+    press!(w, Keys.left)
+    @test until(() -> shown() && abs(position(v.media) - 0.5) < 0.05)
   end
 end
 
