@@ -199,7 +199,7 @@ let plain = Text("mmmmmmmm", family="Helvetica"), bold = Text("mmmmmmmm", family
 end
 
 # A menu is an ordinary node in a popup. A click on an item picks it, and a click outside closes it.
-@use "./draw" show_menu! popup! popups hide_menu! show_tooltip! close_popup!
+@use "./draw" show_menu! popup! popups hide_menu! show_tooltip! close_popup! arrow_point
 "Something to click in a popup"
 @def mutable struct Hit <: SemanticUI end
 describe(::Hit) = Box(width(grow=GrowType.Grow), height(30px))
@@ -290,6 +290,12 @@ let picked = Int[], w = Window(Page(Dropdown(options=["a", "b"])), size=(300px, 
   # One at the side of its target moves in from the top of the window
   show_tooltip!(w, words, 100px, 0px, 40px, 10px, placement=:right); frame(w)
   @test only(popups(w)).scene.top == 4px
+  # The arrow of one beside its target is in line with the target's middle, which is the tooltip's middle
+  show_tooltip!(w, Box(padding(8px, 5px), Text("Show transcription", size=12px)), 100px, 100px, 24px, 24px, placement=:right); frame(w)
+  tip = only(popups(w))
+  @test tip.scene.height < 22px   # too short to keep the arrow clear of its corners
+  @test arrow_point(tip.content, tip.scene)[2] == 112px
+  @test tip.scene.top + tip.scene.height / 2 == 112px
   mouse(10, 150)
 end
 

@@ -736,13 +736,25 @@ placed!(b::Bubble, side) = (b.placement = side; nothing)
 
 describe(b::Bubble) = Box(radius(6px), background(bubble_colour), shadow(1px, 1px, 0px, RGBA(0, 0, 0, 0.15)), b.content)
 
-draw(ctx, size, ui::ConcreteRect, b::Bubble) = begin
+const ARROW = 5px   # how far a tooltip's arrow sticks out, and half how wide it is
+
+"""
+Where on the edge of the tooltip `ui` the middle of its arrow is. It's in line
+with the middle of the tooltip's target, even when the tooltip has moved in
+from the edge of the window. It keeps clear of the rounded corners, and a
+tooltip that's too small for that has it in its middle.
+"""
+arrow_point(b::Bubble, ui) = begin
   (;left, top, width, height) = ui
   x, y, w, h = b.target
-  arrow = 5px
-  # The arrow points at the middle of the target, even when the tooltip has moved in from the edge of the window
-  cx = clamp(x + w/2, left + 6px + arrow, max(left + 6px + arrow, left + width - 6px - arrow))
-  cy = clamp(y + h/2, top + 6px + arrow, max(top + 6px + arrow, top + height - 6px - arrow))
+  mx, my = min(6px + ARROW, width / 2), min(6px + ARROW, height / 2)
+  (clamp(x + w/2, left + mx, left + width - mx), clamp(y + h/2, top + my, top + height - my))
+end
+
+draw(ctx, size, ui::ConcreteRect, b::Bubble) = begin
+  (;left, top, width, height) = ui
+  arrow = ARROW
+  cx, cy = arrow_point(b, ui)
   path(ctx, close=true, background=bubble_colour) do p
     if b.placement == :bottom
       move_to(p, (cx - arrow, top)); line_to(p, (cx, top - arrow)); line_to(p, (cx + arrow, top))
