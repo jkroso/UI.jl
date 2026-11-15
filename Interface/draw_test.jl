@@ -360,3 +360,23 @@ let tray = Tray(), w = Window(tray, size=(100px, 100px))
   # An app that doesn't take files leaves them
   @test onfiledrop(Window(Box(width(10px)), size=(100px, 100px)), ["/tmp/a.png"]) === nothing
 end
+
+# A window that closes tells the app that it shows, and what was kept for the window is forgotten.
+# A window that isn't on the screen is closed as soon as it's asked to close.
+@use "github.com/jkroso/MiniFB.jl" onclose
+@use "./draw" scene popups
+@def mutable struct Shop <: SemanticUI
+  closed::Int = 0
+end
+describe(s::Shop) = Box(width(100px), height(100px))
+onclose(s::Shop, w::Window) = (s.closed += 1)
+let shop = Shop(), w = Window(shop, size=(100px, 100px))
+  frame(w)
+  show_tooltip!(w, Box(padding(8px, 5px), Text("Open")), shop, placement=:bottom)
+  frame(w)
+  @test scene(w) !== nothing && !isempty(popups(w))
+  @test !isopen(w)   # it was never on the screen
+  close(w)
+  @test shop.closed == 1
+  @test scene(w) === nothing && isempty(popups(w))
+end

@@ -1011,6 +1011,33 @@ onopen(w::Window) = (watch_pinch!(w); onopen(w.ui, w))
 onopen(ui, w::Window) = nothing
 
 """
+MiniFB calls `onclose(window)` once the window has closed. UI.jl forgets what
+it kept for the window, then passes it on to `onclose(ui, window)`, so an app
+with more than one window knows which of them are still open.
+"""
+onclose(w::Window) = begin
+  # Each of these is kept by the window's id, and a window that's made later can get the same id
+  id = objectid(w)
+  delete!(_popups, id)
+  delete!(_scenes, id)
+  delete!(_rects, id)
+  delete!(_layout_cache, id)
+  delete!(_tools, id)
+  delete!(_soon, id)
+  delete!(_hurried, id)
+  delete!(_stats, id)
+  delete!(_hovered, id)
+  delete!(_cursor_shape, id)
+  delete!(_captured, id)
+  delete!(_scroll_drag, id)
+  delete!(_hovered_scroll, id)
+  delete!(_wheel, id)
+  drop_buffer!(w)
+  onclose(w.ui, w)
+end
+onclose(ui, w::Window) = nothing
+
+"""
 MiniFB calls `onfiledrop(window, paths)` when files from the Finder are dropped
 on the window. UI.jl passes it on to `onfiledrop(ui, window, paths)`, so an app
 can take the files. `window.mouse` is where they were dropped.

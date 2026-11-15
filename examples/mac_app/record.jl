@@ -59,12 +59,24 @@ click_at(window, x, y, button=GLFW.MOUSE_BUTTON_LEFT) = begin
   settle_window(1)
 end
 
-"Hold down `mods`, press and release `key`, then let go of `mods`"
+"The bit that GLFW sets with each key while the modifier key `key` is down"
+mod_bit(key) =
+  key in (GLFW.KEY_LEFT_SHIFT, GLFW.KEY_RIGHT_SHIFT) ? GLFW.MOD_SHIFT :
+  key in (GLFW.KEY_LEFT_CONTROL, GLFW.KEY_RIGHT_CONTROL) ? GLFW.MOD_CONTROL :
+  key in (GLFW.KEY_LEFT_ALT, GLFW.KEY_RIGHT_ALT) ? GLFW.MOD_ALT :
+  key in (GLFW.KEY_LEFT_SUPER, GLFW.KEY_RIGHT_SUPER) ? GLFW.MOD_SUPER : 0
+
+"""
+Hold down `mods`, press and release `key`, then let go of `mods`. GLFW says
+with each key which of Shift, Control, Option and Command are down, and MiniFB
+goes by that, so this says it too.
+"""
 press_keys(window, key, mods...) = begin
-  foreach(m -> GLFW._KeyCallbackWrapper(window, m, Cint(0), GLFW.PRESS, Cint(0)), mods)
-  GLFW._KeyCallbackWrapper(window, key, Cint(0), GLFW.PRESS, Cint(0))
-  GLFW._KeyCallbackWrapper(window, key, Cint(0), GLFW.RELEASE, Cint(0))
-  foreach(m -> GLFW._KeyCallbackWrapper(window, m, Cint(0), GLFW.RELEASE, Cint(0)), reverse(mods))
+  down(n) = Cint(reduce(|, map(mod_bit, mods[1:n]), init=0))
+  foreach(i -> GLFW._KeyCallbackWrapper(window, mods[i], Cint(0), GLFW.PRESS, down(i)), eachindex(mods))
+  GLFW._KeyCallbackWrapper(window, key, Cint(0), GLFW.PRESS, down(length(mods)))
+  GLFW._KeyCallbackWrapper(window, key, Cint(0), GLFW.RELEASE, down(length(mods)))
+  foreach(i -> GLFW._KeyCallbackWrapper(window, mods[i], Cint(0), GLFW.RELEASE, down(i - 1)), reverse(eachindex(mods)))
   settle_window(2)
 end
 

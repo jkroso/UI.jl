@@ -402,8 +402,10 @@ guard_input!(w) =
 
 restart!() = begin
   restart[] = true
-  for w in shown
-    place[] = (GLFW.GetWindowPos(w.glfw[1]), GLFW.GetWindowSize(w.glfw[1]))
+  # The app opens its first window again, so that's the one whose place is kept. A window that
+  # the app opened later, like one for its settings, closes with it.
+  for (i, w) in enumerate(copy(MiniFB.windows))
+    i == 1 && (place[] = (GLFW.GetWindowPos(w.glfw[1]), GLFW.GetWindowSize(w.glfw[1])))
     close(w)
   end
   GLFW.PostEmptyEvent()
