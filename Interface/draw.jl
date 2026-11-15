@@ -10,6 +10,7 @@
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
+@use "./window" onpinch watch_pinch!
 @use "./image" image_source
 
 "Draw the lines a container puts between its children, centred in each gap"
@@ -448,6 +449,7 @@ end
   gap::px = 0px
   width::Union{Nothing,px} = nothing
   input::Bool = true
+  modal::Bool = true
   onclose::Any = nothing
   theme::Theme = theme()
   scene::Union{Nothing,ConcreteRect} = nothing   # where its last layout put it
@@ -483,13 +485,17 @@ the node goes out of sight. `placement` says where:
 
 `width` lays it out that wide. Without it, it's as wide as its content.
 `input=false` makes it something to look at only, like a tooltip: the mouse
-goes through it and it never closes by itself. A window shows one popup for
-each `key`, so a new one takes the place of the last one with its `key`.
+goes through it and it never closes by itself. `modal=false` makes it a list
+that goes with a text field, like the things that a search found: it takes the
+mouse while the mouse is over it, and no more. The keys still go to the node
+that has the keyboard, a click outside it goes to the app, and the app closes
+it with `close_popup!`. A window shows one popup for each `key`, so a new one
+takes the place of the last one with its `key`.
 
     onkey(b::MoreButton, e::KeyPress{Keys.mouse_left}) = popup!(e.window, Settings(), anchor=rect(b), gap=4px)
 """
-popup!(window, content; anchor=window.mouse, placement=:below, gap=0px, width=nothing, key=:popup, input=true, onclose=nothing,
-       theme=theme()) = begin
+popup!(window, content; anchor=window.mouse, placement=:below, gap=0px, width=nothing, key=:popup, input=true, modal=true,
+       onclose=nothing, theme=theme()) = begin
   close_popup!(window, key)
   # A node of its own finds its window through a root, as the app's nodes do
   content isa UITree && content.parent === nothing && Root(content, window=window)
@@ -499,7 +505,7 @@ popup!(window, content; anchor=window.mouse, placement=:below, gap=0px, width=no
     anchor = r === nothing ? (0px, 0px) : r
   end
   popup = Popup(key=key, content=content, anchor=box(anchor), target=target, placement=placement, gap=gap, width=width,
-                input=input, onclose=onclose, theme=theme)
+                input=input, modal=modal, onclose=onclose, theme=theme)
   push!(get!(Vector{Popup}, _popups, objectid(window)), popup)
   popup
 end
@@ -550,22 +556,47 @@ follow!(w, scene::ConcreteRect) = begin
   delete!(_rects, id)
 end
 
-"Lay a popup out and put it beside its anchor, inside a window of `size`"
+const other_side = Dict(:bottom => :top, :top => :bottom, :left => :right, :right => :left)
+
+"""
+Tell a popup's content which side of its anchor it's on: `:bottom`, `:top`,
+`:left`, `:right` or `:below`. A tooltip points its arrow from there. Your own
+popup can do the same with a method for its node: `placed!(list::Suggestions, side) = (list.side = side)`.
+"""
+placed!(content, side) = nothing
+
+"""
+Lay a popup out and put it beside its anchor, inside a window of `size`. One
+that has no room on its side of the anchor goes on the other side, when it has
+room there. Then it moves along the anchor until it's inside the window.
+"""
 place!(popup::Popup, size) = begin
   geo = with_theme(() -> convert(GeometricUI, popup.content), popup.theme)
   ui = describe(geo, (something(popup.width, 9999px), 9999px))
   left, top, w, h = popup.anchor
   gap = popup.gap
-  x, y = popup.placement == :below  ? (left, top + h + gap) :
-         popup.placement == :bottom ? (left + w/2 - ui.width/2, top + h + gap) :
-         popup.placement == :top    ? (left + w/2 - ui.width/2, top - ui.height - gap) :
-         popup.placement == :right  ? (left + w + gap, top + h/2 - ui.height/2) :
-         popup.placement == :left   ? (left - ui.width - gap, top + h/2 - ui.height/2) :
-                                      error("unknown placement: $(popup.placement)")
-  # One that's above or below its anchor moves in from the edge of the window
-  popup.placement in (:below, :bottom, :top) && (x = clamp(x, min(x, 4px), max(4px, size[1] - ui.width - 4px)))
+  side = popup.placement
+  room(side) = side == :bottom ? size[2] - top - h - gap : side == :top ? top - gap :
+               side == :right  ? size[1] - left - w - gap : left - gap
+  if haskey(other_side, side)
+    need = side in (:top, :bottom) ? ui.height : ui.width
+    room(side) < need <= room(other_side[side]) && (side = other_side[side])
+  end
+  x, y = side == :below  ? (left, top + h + gap) :
+         side == :bottom ? (left + w/2 - ui.width/2, top + h + gap) :
+         side == :top    ? (left + w/2 - ui.width/2, top - ui.height - gap) :
+         side == :right  ? (left + w + gap, top + h/2 - ui.height/2) :
+         side == :left   ? (left - ui.width - gap, top + h/2 - ui.height/2) :
+                           error("unknown placement: $(popup.placement)")
+  # One that's above or below its anchor moves in from the sides of the window. One that's too wide starts at the left.
+  if side in (:below, :bottom, :top)
+    x = clamp(x, 4px, max(4px, size[1] - ui.width - 4px))
+  else
+    y = clamp(y, 4px, max(4px, size[2] - ui.height - 4px))
+  end
   # A menu that would run off the bottom of the window moves up
-  popup.placement == :below && (y = clamp(y, min(y, 4px), max(4px, size[2] - ui.height - 4px)))
+  side == :below && (y = clamp(y, min(y, 4px), max(4px, size[2] - ui.height - 4px)))
+  placed!(popup.content, side)
   offset!(ui, x, y)
   popup.scene = ui
 end
@@ -578,10 +609,10 @@ popup_at(w, pos) = begin
   nothing
 end
 
-"The popup that key presses go to first: the last one opened that takes input"
+"The popup that key presses go to first, and that a click outside closes: the last one opened that takes input and is modal"
 key_popup(w) = begin
   for popup in Iterators.reverse(popups(w))
-    popup.input && return popup
+    popup.input && popup.modal && return popup
   end
   nothing
 end
@@ -701,6 +732,8 @@ end
 
 const bubble_colour = colorant"rgb(50,50,50)"
 
+placed!(b::Bubble, side) = (b.placement = side; nothing)
+
 describe(b::Bubble) = Box(radius(6px), background(bubble_colour), shadow(1px, 1px, 0px, RGBA(0, 0, 0, 0.15)), b.content)
 
 draw(ctx, size, ui::ConcreteRect, b::Bubble) = begin
@@ -709,7 +742,7 @@ draw(ctx, size, ui::ConcreteRect, b::Bubble) = begin
   arrow = 5px
   # The arrow points at the middle of the target, even when the tooltip has moved in from the edge of the window
   cx = clamp(x + w/2, left + 6px + arrow, max(left + 6px + arrow, left + width - 6px - arrow))
-  cy = top + height/2
+  cy = clamp(y + h/2, top + 6px + arrow, max(top + 6px + arrow, top + height - 6px - arrow))
   path(ctx, close=true, background=bubble_colour) do p
     if b.placement == :bottom
       move_to(p, (cx - arrow, top)); line_to(p, (cx, top - arrow)); line_to(p, (cx + arrow, top))
@@ -946,7 +979,7 @@ MiniFB calls `onopen(window)` once the window is open. UI.jl passes it on to
 `onopen(ui, window)`, so each app can do what its window needs then, like
 `hide_titlebar!`, without replacing what another app loaded alongside it does.
 """
-onopen(w::Window) = onopen(w.ui, w)
+onopen(w::Window) = (watch_pinch!(w); onopen(w.ui, w))
 onopen(ui, w::Window) = nothing
 
 """
@@ -1011,6 +1044,17 @@ struct MouseScroll
 end
 
 """
+Two fingers moved apart or together on the trackpad while the mouse was over a
+node. `scale` is how much bigger the fingers ask for since the last `Pinch`:
+1.05 is 5% bigger and 0.95 is 5% smaller. A whole pinch is many of them. A node
+that wants it defines `onpinch(node, e::Pinch)` and returns `handled`.
+"""
+struct Pinch
+  scale::Float64
+  window::AbstractWindow
+end
+
+"""
 Give an event to `target`, then to each semantic node above it in turn. A
 handler that returns `handled` keeps the event from the nodes above, and `emit`
 then returns `handled` too.
@@ -1028,6 +1072,14 @@ on(target::SemanticUI, e::KeyEvent) = onkey(target, e)
 on(target::SemanticUI, e::MouseMove) = onmouse(target, e)
 on(target::SemanticUI, e::Typed) = ontype(target, e)
 on(target::SemanticUI, e::MouseScroll) = onscroll(target, e)
+on(target::SemanticUI, e::Pinch) = onpinch(target, e)
+
+"A pinch goes to the node under the mouse, then up through the nodes above it"
+onpinch(w::Window, scale::Real) = begin
+  popup = popup_at(w, w.mouse)
+  target = popup === nothing ? hittest(w) : hittest(popup.scene, w.mouse)
+  target === nothing ? nothing : emit(target, Pinch(Float64(scale), w))
+end
 
 "A typed character goes to the node that has the keyboard, then up through the nodes above it"
 ontype(w::Window, e::Typed) = begin
@@ -1244,7 +1296,7 @@ route_key(w::Window, e) = begin
       return
     elseif key_popup(w) !== nothing
       # A click outside closes every popup that takes input, and the app doesn't see it
-      foreach(p -> dismiss!(w, p), filter(p -> p.input, collect(popups(w))))
+      foreach(p -> dismiss!(w, p), filter(p -> p.input && p.modal, collect(popups(w))))
       return
     end
   elseif e isa KeyPress
@@ -1425,4 +1477,4 @@ end
 
 export draw, ui, hittest, emit, handled, rect, scene, clipboard, clipboard!, popup!, close_popup!, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
        invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, inside, offset!,
-       frame_stats, FrameStats, semantic_source, viewport, redraw_in!, MouseScroll
+       frame_stats, FrameStats, semantic_source, viewport, redraw_in!, MouseScroll, Pinch, onpinch, placed!

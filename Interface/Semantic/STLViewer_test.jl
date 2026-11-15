@@ -3,7 +3,7 @@
 @use "github.com/jkroso/Font.jl/units" px
 @use GeometryBasics: Vec2
 @use "../Geometric"...
-@use "../draw" frame rect
+@use "../draw" frame rect onpinch
 @use "../testing"...
 @use "./STLViewer" STLViewer Mesh read_stl triangles rough Vec
 
@@ -200,6 +200,13 @@ let v = STLViewer(joinpath(dir, "box.stl")),
   @test v.zoom == 1
   holding(() -> onscroll(w, Vec2{px}(0px, 2px)), w, (Keys.cmd,))
   @test v.zoom > 1
+
+  # A pinch on the trackpad makes it bigger or smaller, with no key held
+  big = v.zoom
+  onpinch(w, 1.25)
+  @test v.zoom ≈ big * 1.25
+  onpinch(w, 0.8)
+  @test v.zoom ≈ big
 
   # Two clicks put it back as it was at first
   click!(w, v)

@@ -324,4 +324,48 @@ native_menu(items, off, path) = begin
   menu
 end
 
-export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu
+# --- a pinch on the trackpad -------------------------------------------------------
+#
+# GLFW, which opens the window, tells an app about the keyboard, the mouse and
+# scrolling, but not about a pinch. macOS sends a pinch to the window's view as
+# `magnifyWithEvent:`, which GLFW's view doesn't have. So the view's class gets
+# that method here, and it passes each pinch on to `onpinch`.
+
+const pinched = Dict{Ptr{Cvoid},WeakRef}()   # each NSWindow that passes its pinches on, and the window it's for
+
+"""
+Called while two fingers move apart or together on the trackpad. `scale` is how
+much bigger the fingers ask for since the last call: 1.05 is 5% bigger and 0.95
+is 5% smaller. A whole pinch is many calls with a `scale` near 1.
+"""
+onpinch(window, scale) = nothing
+
+"macOS calls this on the window's view for each step of a pinch"
+magnified(self::Ptr{Cvoid}, cmd::Ptr{Cvoid}, event::Ptr{Cvoid})::Cvoid = begin
+  try
+    ref = get(pinched, msg(event, "window"), nothing)
+    w = ref === nothing ? nothing : ref.value
+    w === nothing || invokelatest(onpinch, w, 1 + get_value(Float64, event, "magnification"))
+  catch err
+    # An error mustn't go back into macOS's own code
+    @error "Couldn't pass on a pinch" exception=(err, catch_backtrace())
+  end
+  nothing
+end
+
+"Have macOS tell `onpinch` about each pinch in the window. Call it once the window is open."
+watch_pinch!(w::AbstractWindow) = begin
+  (Sys.isapple() && !isempty(w.glfw)) || return w
+  win = nswindow(w)
+  with_pool() do
+    class = ccall((:object_getClass, libobjc), Ptr{Cvoid}, (Ptr{Cvoid},), msg(win, "contentView"))
+    # The class outlives this file when the file is loaded again, so give it the function as it is now
+    ccall((:class_replaceMethod, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring), class, sel("magnifyWithEvent:"),
+          @cfunction(magnified, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid})), "v@:@")
+  end
+  filter!(p -> p.second.value !== nothing, pinched)   # windows that have gone
+  pinched[win] = WeakRef(w)
+  w
+end
+
+export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!

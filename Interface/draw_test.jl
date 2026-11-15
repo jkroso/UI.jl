@@ -199,7 +199,12 @@ let plain = Text("mmmmmmmm", family="Helvetica"), bold = Text("mmmmmmmm", family
 end
 
 # A menu is an ordinary node in a popup. A click on an item picks it, and a click outside closes it.
-@use "./draw" show_menu! popup! popups hide_menu! show_tooltip!
+@use "./draw" show_menu! popup! popups hide_menu! show_tooltip! close_popup!
+"Something to click in a popup"
+@def mutable struct Hit <: SemanticUI end
+describe(::Hit) = Box(width(grow=GrowType.Grow), height(30px))
+const hits = Int[]
+onkey(::Hit, ::KeyPress{Keys.mouse_left}) = (push!(hits, 1); handled)
 @use "./Semantic/Menu" Menu Item onselect
 let picked = Int[], w = Window(Page(Dropdown(options=["a", "b"])), size=(300px, 200px))
   mouse(x, y) = (pos = Vec2{px}(px(x), px(y)); onmouse(w, MouseMove(pos, w)); w.mouse = pos; frame(w))
@@ -256,6 +261,36 @@ let picked = Int[], w = Window(Page(Dropdown(options=["a", "b"])), size=(300px, 
   @test hittest(w, Vec2{px}(120px, 130px)) isa Page        # the page behind it, not the tooltip
   mouse(10, 150)
   @test isempty(popups(w))
+
+  # A popup that isn't modal takes the mouse over it and no more: a click outside goes to the app, and it stays open
+  popup!(w, Hit(), anchor=(100px, 100px, 40px, 20px), placement=:bottom, width=80px, key=:found, modal=false); frame(w)
+  found = only(popups(w)).scene
+  click(found.left.value + 5, found.top.value + 5)
+  @test hits == [1] && length(popups(w)) == 1
+  click(50, 18)                                      # on the dropdown behind it, which opens its menu
+  @test dropdown.open && any(p -> p.key == :found, popups(w))
+  press(Keys.escape)                                 # closes the menu, and not the list
+  @test !dropdown.open && only(popups(w)).key == :found
+  close_popup!(w, :found); frame(w)
+
+  # A tooltip beside something at the edge of the window moves in to stay whole, on the left and on the right
+  words = Box(padding(8px, 5px), Text("Count things on the plan"))
+  show_tooltip!(w, words, 2px, 100px, 20px, 20px, placement=:bottom); frame(w)
+  @test only(popups(w)).scene.left == 4px
+  show_tooltip!(w, words, 280px, 100px, 20px, 20px, placement=:bottom); frame(w)
+  tip = only(popups(w)).scene
+  @test tip.left + tip.width == 296px
+  # One with no room under its target goes over it, and comes back under a target at the top
+  show_tooltip!(w, words, 100px, 180px, 40px, 16px, placement=:bottom); frame(w)
+  tip = only(popups(w))
+  @test tip.scene.top + tip.scene.height == 176px && tip.content.placement == :top
+  show_tooltip!(w, words, 100px, 2px, 40px, 16px, placement=:top); frame(w)
+  tip = only(popups(w))
+  @test tip.scene.top == 22px && tip.content.placement == :bottom
+  # One at the side of its target moves in from the top of the window
+  show_tooltip!(w, words, 100px, 0px, 40px, 10px, placement=:right); frame(w)
+  @test only(popups(w)).scene.top == 4px
+  mouse(10, 150)
 end
 
 # A `Menu` of `Item`s tells `onselect` which item was clicked

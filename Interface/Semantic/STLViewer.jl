@@ -5,7 +5,7 @@
 @use "../Geometric"...
 @use "../Specific"...
 @use "../abstract" SemanticUI WrapMode describe focus theme scale handled sized
-@use "../draw" draw cursor redraw_in! MouseScroll
+@use "../draw" draw cursor redraw_in! MouseScroll Pinch onpinch
 @use Colors: Colorant, RGB, @colorant_str
 @use "./ThreeMF" => ThreeMF
 
@@ -401,6 +401,13 @@ end
 onscroll(v::STLViewer, e::MouseScroll) = begin
   Keys.cmd in e.window.keys || return
   v.zoom = clamp(v.zoom * exp(e.delta[2].value / 10), SMALLEST, BIGGEST)
+  moved!(v)
+  handled
+end
+
+# A pinch on the trackpad makes the model bigger or smaller too
+onpinch(v::STLViewer, e::Pinch) = begin
+  v.zoom = clamp(v.zoom * e.scale, SMALLEST, BIGGEST)
   moved!(v)
   handled
 end
