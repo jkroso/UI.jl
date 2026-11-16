@@ -630,6 +630,8 @@ or the up and down arrows highlight a choice, and a click or Return picks it.
   dividers::Bool = false
   lift::Float64 = 1.0
   families::Vector{String} = String[]   # the font of each item, like each font's own in a font picker. Empty uses the theme's.
+  room::px = 0px           # how tall it can be. A menu with more items than fit scrolls. 0 is as tall as its items.
+  scroll::Any = nothing    # the Scroll of a menu that scrolls, from its last frame
   active::Int = 0          # the item that's highlighted, or 0
   by_mouse::Bool = false   # the mouse highlighted it, so it's plain again when the mouse leaves
 end
@@ -648,10 +650,17 @@ describe(list::MenuList) = begin
   # A faint shadow, so that the menu's own border still marks its edge. A bigger `lift` makes it darker, wider and lower.
   column = Column(width(grow=GrowType.Grow), radius(6px), background(t.surface), border(1px, :solid, t.line),
                   shadow(0px, 2px * list.lift, (5 + 5list.lift) * 1px, RGBA(0, 0, 0, clamp(0.05 + 0.05list.lift, 0, 0.5))))
-  list.dividers && mixin!(column, border(1px, :solid, fade(t.line, 0.6), between=true)[:between])
-  for i in eachindex(list.items)
-    mixin!(column, MenuRow(list=list, index=i))
+  rows = [MenuRow(list=list, index=i) for i in eachindex(list.items)]
+  # A menu with more items than it has room for shows some of them, and scrolls to the rest
+  if list.room > 0px && list.item_height * length(rows) + 2px > list.room
+    list.scroll = Scroll(width(grow=GrowType.Grow), height(list.room - 2px), key=:items,
+                         Column(width(grow=GrowType.Grow), rows...))
+    list.dividers && mixin!(list.scroll.firstchild, border(1px, :solid, fade(t.line, 0.6), between=true)[:between])
+    return mixin!(column, list.scroll)
   end
+  list.scroll = nothing
+  list.dividers && mixin!(column, border(1px, :solid, fade(t.line, 0.6), between=true)[:between])
+  foreach(row -> mixin!(column, row), rows)
   column
 end
 
@@ -660,7 +669,8 @@ describe(row::MenuRow) = begin
   t = theme(row)
   k = scale(t)
   inset = 4px * k   # between the highlight of an item and the edges of the item, the same on every side
-  item = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), radius(4px), padding(0px, 0px, 0px, 14px * k - inset),
+  # The words of an item that's too wide for the menu stop at its edge
+  item = Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), radius(4px), padding(0px, 0px, 0px, 14px * k - inset), clip_x=true,
              Box(offset_y=-1px * k, Text(list.items[row.index]; size=sized(13pt, t), wrap=WrapMode.none,
                                          family_of(list.families, row.index, t)...)))
   row.index == highlighted(list) && mixin!(item, background(t.select))
@@ -685,6 +695,8 @@ step!(list::MenuList, by::Int) = begin
   at = highlighted(list)
   list.active = at == 0 ? (by > 0 ? 1 : n) : mod1(at + by, n)
   list.by_mouse = false
+  # In a menu that scrolls, the item stays in sight
+  list.scroll === nothing || scroll_into_view!(list.scroll, list.item_height * (list.active - 1), list.item_height * list.active)
   nothing
 end
 
@@ -710,13 +722,29 @@ number gives it a darker, wider shadow.
 `under` is a node to hang the menu from, `gap` under its bottom edge, in place
 of `(x, y)`. The menu then follows the node when it moves, as it does when the
 page it's on scrolls, and closes when the node goes out of sight.
+
+A menu that's taller than the window shows as many items as fit, and scrolls
+to the rest. It hangs under its node when a few items fit there, and goes
+above it when they don't and there's more room above.
 """
 show_menu!(window, items::Vector{String}, x, y, w; item_height=32px, onselect=nothing, theme=theme(), dividers=false, lift=1.0,
            under=nothing, gap=0px, families=String[]) = begin
   list = MenuList(items=items, onselect=onselect, item_height=item_height, dividers=dividers, lift=lift, families=families)
-  popup!(window, list, anchor=under === nothing ? (x, y) : under, gap=under === nothing ? 0px : gap, width=w, key=:menu, theme=theme,
-         onclose=() -> onselect === nothing || onselect(0))
+  r = under === nothing ? nothing : rect(under)
+  _, top, _, high = r === nothing ? box((x, y, w, 0px)) : box(r)
+  g = under === nothing ? 0px : gap
+  placement = :below
+  if item_height * length(items) + 2px > window.size[2] - 2MENU_EDGE
+    below, above = window.size[2] - top - high - g - MENU_EDGE, top - g - MENU_EDGE
+    # It hangs down when it has room there for a few items, as a menu is expected to
+    placement, list.room = below >= above || below >= MENU_FEW * item_height ? (:below, below) : (:top, above)
+  end
+  popup!(window, list, anchor=under === nothing ? (x, y, w, 0px) : under, gap=g, width=w, key=:menu, theme=theme,
+         placement=placement, onclose=() -> onselect === nothing || onselect(0))
 end
+
+const MENU_EDGE = 4px   # the least room between a menu that scrolls and the top or bottom of its window
+const MENU_FEW = 6      # a menu that scrolls goes under its node when this many of its items fit there
 
 "Hide the floating menu"
 hide_menu!(window) = close_popup!(window, :menu)

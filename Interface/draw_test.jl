@@ -254,6 +254,36 @@ let picked = Int[], w = Window(Page(Dropdown(options=["a", "b"])), size=(300px, 
   @test bottom.top + bottom.height <= 200px
   hide_menu!(w)
 
+  # A menu that's taller than the window stays in it, on the side with more room, and scrolls to the rest
+  many = ["Item $i" for i in 1:30]
+  show_menu!(w, many, 100px, 30px, 120px); frame(w)
+  tall = only(popups(w)).scene
+  @test tall.top == 30px && tall.top + tall.height <= 200px
+  mouse(150, 100)
+  onscroll(w, Vec2{px}(0px, -2px)); frame(w)
+  list = only(popups(w)).content
+  @test list.scroll.offset == 60px
+  frame(w); frame(w)
+  @test list.scroll.offset == 60px   # it stays scrolled
+  hide_menu!(w)
+  show_menu!(w, many, 100px, 170px, 120px); frame(w)
+  above = only(popups(w)).scene
+  @test above.top >= 4px && above.top + above.height <= 170px
+  hide_menu!(w)
+  show_menu!(w, many, 100px, 1px, 120px); frame(w)   # 6 items have room under it, so it goes there though there's none above
+  @test only(popups(w)).scene.top == 1px
+  hide_menu!(w)
+  show_menu!(w, many, 100px, 170px, 120px); frame(w)
+  list = only(popups(w)).content
+  foreach(_ -> press(Keys.down), 1:12)
+  @test list.active == 12 && list.scroll.offset >= 12 * 32px - list.scroll.viewport   # the arrows keep the item in sight
+  hide_menu!(w)
+  # The words of an item that's too long stop at the edge of the menu
+  show_menu!(w, ["A name that is much too long for a menu this narrow"], 100px, 30px, 120px); frame(w)
+  narrow = only(popups(w)).scene
+  @test narrow.width == 120px
+  hide_menu!(w)
+
   # A tooltip is beside its target, the mouse goes through it, and the next mouse move takes it away
   show_tooltip!(w, Box(padding(8px, 5px), Text("Save")), 100px, 100px, 40px, 20px, placement=:bottom); frame(w)
   tip = only(popups(w)).scene
