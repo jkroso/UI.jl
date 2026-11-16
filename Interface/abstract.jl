@@ -538,7 +538,8 @@ end
 lastsibling(d::Nothing) = nothing
 
 mixin!(r::UITree, s::StyleNode) = begin
-  field = propertyname(r, s)
+  # A `Field` rather than a `Symbol`, so the field is known as Julia compiles this, not looked up by name each time
+  field = Field{propertyname(r, s)}()
   old = getproperty(r, field)
   setproperty!(r, field, mixin!(old, s))
   r   # so that `mixin!(node, a, b)` gives `b` to the node too, not to `a`
@@ -546,7 +547,14 @@ end
 mixin!(r::UITree, d::UITree) = add_child!(r, d)
 mixin!(r::GeometricUI, d::SemanticUI) =
   add_child!(r, convert(GeometricUI, d))
-propertyname(s::StyleNode) = Symbol(snake_case(string(nameof(typeof(s)))))
+"""
+The field of a node that a style of type `S` goes in: a `Width` goes in
+`width`. It's the same for each type, so Julia works it out once, as it
+compiles. Worked out from the type's name each time, this and the look-up by
+name were a sixth of the time a frame of a page took.
+"""
+Base.@assume_effects :foldable propertyname(S::Type{<:StyleNode}) = Symbol(snake_case(string(nameof(S))))
+propertyname(s::StyleNode) = propertyname(typeof(s))
 propertyname(_, s) = propertyname(s)
 snake_case(s::AbstractString) = NamingConventions.convert(NamingConventions.PascalCase, NamingConventions.SnakeCase, s)
 add_child!(r::UITree, child::UITree) = begin

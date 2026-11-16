@@ -47,3 +47,14 @@ let row = Row()
   mixin!(row, background("red"), radius(4px))
   @test row.radius.tl == 4px
 end
+
+# A style goes into its field with no work done at run time to find which field
+# that is. Worked out from the style's type name each time, it made about 1 KB
+# of strings for each style, and the styles of a page took a sixth of a frame.
+let row = Row()
+  put(row, style) = mixin!(row, style)
+  for style in (background("red"), radius(3px), width(100px))
+    put(row, style)
+    @test @allocated(put(row, style)) == 0
+  end
+end
