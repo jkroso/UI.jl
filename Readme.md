@@ -69,6 +69,8 @@ A pinch on the trackpad goes to the node under the mouse as a `Pinch`, with how 
 
 Files that are dropped on the window from the Finder go to the app: define `onfiledrop(app, window, paths)` for the node that the window shows. `window.mouse` is where they were dropped.
 
+Tab gives the keyboard to the next node that Tab stops at, in the order that the layout has them, and ⇧Tab to the one before. A `TextInput` is such a node, and a field that Tab comes to has its text selected. Define `tabstop(::MyField) = true` for a node of your own. Tab only moves on when no handler took it, so a node above a field keeps Tab for itself by returning `handled` from `onkey`.
+
 A key press says which key went down. `ontype(node, event)` gets each character the user types as `event.char`, after the keyboard's layout, Shift, Option and dead keys have been applied to it. Use it for text, and `onkey` for shortcuts and arrows.
 
 ## Layout

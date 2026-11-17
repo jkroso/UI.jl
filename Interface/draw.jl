@@ -6,7 +6,7 @@
 @use Colors: @colorant_str, RGBA, Colorant, alpha, red, green, blue
 @use Skia
 @use GLFW
-@use "./abstract" edits epoch ambient timed! theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI WrapMode mixin! window_of scale same semantic_parent handled sized
+@use "./abstract" edits epoch ambient timed! theme with_theme Theme describe Root UITree SemanticUI GeometricUI ConcreteUI WrapMode mixin! window_of scale same semantic_parent handled sized focus tabstop tabbed!
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
@@ -1406,10 +1406,40 @@ route_key(w::Window, e) = begin
       emit(target, e)
     end
   elseif w.focus !== nothing
-    emit(w.focus, e)
+    # A Tab that a field and the nodes above it have no use for goes on to the next field
+    emit(w.focus, e) === handled || (e isa KeyPress{Keys.tab} && tabstop(w.focus) && tab!(w, Keys.shft in w.keys ? -1 : 1))
   elseif e isa KeyPress && scene !== nothing
     scroll_by_key!(w, scene, e)
   end
+end
+
+"Add the nodes that Tab stops at to `found`, in the order that the layout `ui` has them"
+tabstops!(found, ui::ConcreteRect) = begin
+  from = ui.from
+  node = from isa GeometricUI ? from.from : nothing
+  node isa SemanticUI && tabstop(node) && !any(n -> n === node, found) && push!(found, node)
+  foreach(child -> tabstops!(found, child), ui.children)
+  found
+end
+tabstops!(found, _) = found
+
+"""
+Give the keyboard to the tab stop after the one that has it, or with `by` -1 to
+the one before. A popup that takes the keys keeps Tab among its own tab stops.
+It returns `handled` when the keyboard moved. See `tabstop`.
+"""
+tab!(w::Window, by::Int=1) = begin
+  popup = key_popup(w)
+  scene = popup !== nothing && popup.scene !== nothing ? popup.scene : get(_scenes, objectid(w), nothing)
+  scene === nothing && return nothing
+  stops = tabstops!(SemanticUI[], scene)
+  isempty(stops) && return nothing
+  at = findfirst(n -> n === w.focus, stops)
+  next = stops[at === nothing ? (by > 0 ? 1 : length(stops)) : mod1(at + by, length(stops))]
+  next === w.focus && return nothing
+  focus(next)
+  tabbed!(next)
+  handled
 end
 
 "Walk a concrete tree and return the deepest ConcreteRect whose

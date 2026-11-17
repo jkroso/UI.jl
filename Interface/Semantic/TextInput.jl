@@ -5,7 +5,7 @@
 @use "github.com/jkroso/Units.jl" Length
 @use "../Geometric"...
 @use "../Specific"... text_width font
-@use "../abstract" SemanticUI WrapMode describe integrate window_of focus theme scale handled sized
+@use "../abstract" SemanticUI WrapMode describe integrate window_of focus theme scale handled sized tabstop tabbed!
 @use "../draw" draw cursor rect clipboard clipboard! with_clip redraw_in!
 @use "../fonts" skia_font
 @use Colors: @colorant_str, Colorant, RGBA
@@ -30,6 +30,7 @@ sideways to keep the caret in view.
   font_family::Union{String,Nothing} = nothing   # `nothing` uses the theme's family, like the labels around it
   font_size::Length = 14pt   # in points, or in pixels to be the same number of pixels on every screen
   placeholder::String = "Type here..."
+  hidden::Bool = false    # each character shows as a dot, as for a password. Its text can't be copied or cut.
   color::Union{Colorant,Nothing} = nothing               # the typed text and the caret. `nothing` uses the theme's text
   placeholder_color::Union{Colorant,Nothing} = nothing   # `nothing` uses the theme's dim
   # `look(input, text)` returns the geometry around `text`, which shows what's
@@ -52,8 +53,11 @@ family(input::TextInput) = something(input.font_family, theme(input).family)
 "The Skia font that measures and draws its text"
 font(input::TextInput) = skia_font(family(input), text_size(input))
 
+"The text as it shows: a dot for each character when the field is `hidden`"
+shown(input::TextInput) = input.hidden ? "•" ^ length(input.text) : input.text
+
 "How wide the first `n` characters of its text are"
-width_to(input::TextInput, n::Int) = n == 0 ? 0px : text_width(font(input), first(input.text, n))
+width_to(input::TextInput, n::Int) = n == 0 ? 0px : text_width(font(input), first(shown(input), n))
 
 """
 The typed text, or the placeholder in grey when nothing has been typed. It's in
@@ -61,7 +65,7 @@ a box that cuts it off at the left and right, and it moves left by `scroll`.
 """
 content(input::TextInput) = begin
   empty = isempty(input.text)
-  text = Text(empty ? input.placeholder : input.text,
+  text = Text(empty ? input.placeholder : shown(input),
               size=text_size(input), family=family(input), wrap=WrapMode.none,
               color=empty ? something(input.placeholder_color, theme(input).dim) : ink(input))
   Row(width(grow=GrowType.Grow), clip_x=true, Box(offset_x=-follow_caret!(input), text))
@@ -94,6 +98,10 @@ end
 
 "The text that's in the field"
 integrate(input::TextInput) = input.text
+
+# Tab goes from one field to the next. A field that Tab comes to has all its text selected, so that typing replaces it.
+tabstop(::TextInput) = true
+tabbed!(input::TextInput) = (input.anchor = 0; input.cursor = length(input.text); touch!(input))
 
 has_selection(input::TextInput) = input.anchor != input.cursor
 selection_range(input::TextInput) = (min(input.cursor, input.anchor), max(input.cursor, input.anchor))
@@ -187,9 +195,9 @@ handle_key!(input::TextInput, key, window) = begin
     input.anchor = 0
     move!(input, n, true)
   elseif cmd && key == Keys.c
-    has_selection(input) && clipboard!(window, selection(input))
+    has_selection(input) && !input.hidden && clipboard!(window, selection(input))
   elseif cmd && key == Keys.x
-    has_selection(input) && (clipboard!(window, selection(input)); delete_selection!(input))
+    has_selection(input) && !input.hidden && (clipboard!(window, selection(input)); delete_selection!(input))
   elseif cmd && key == Keys.v
     # A field holds one line, so the lines of what's pasted are joined with spaces
     type!(input, replace(clipboard(window), r"\r?\n|\r" => " "))

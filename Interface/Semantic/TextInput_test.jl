@@ -62,3 +62,33 @@ let input = TextInput(), w = Window(Form(input), size=(140px, 40px))
   @test emit(input, KeyPress{Keys.enter}(0, w)) === nothing
   @test emit(input, KeyPress{Keys.up}(0, w)) === nothing
 end
+
+# Tab goes to the next field in the order that the layout has them, and ⇧Tab to the one before
+@def mutable struct Fields <: SemanticUI end
+describe(p::Fields) = Column(width(140px), height(80px), p.children...)
+@def mutable struct Keeper <: SemanticUI end
+describe(k::Keeper) = Box(k.firstchild)
+onkey(::Keeper, ::KeyPress{Keys.tab}) = handled
+
+let first = TextInput(text="one"), second = TextInput(text="two words"), kept = TextInput(), w = Window(Fields(first, second, Keeper(kept)), size=(140px, 80px))
+  frame(w)
+  press(k, mods...) = (foreach(m -> w.keys |= m, mods); onkey(w, KeyPress{k}(0, w)); foreach(m -> w.keys ⊻= m, mods); frame(w))
+  focus(first)
+  press(Keys.tab)
+  @test w.focus === second
+  # The text of the field that Tab came to is selected, so that typing replaces it
+  @test (second.anchor, second.cursor) == (0, 9)
+  ontype(w, Typed('x', w))
+  @test second.text == "x"
+  press(Keys.tab, Keys.shft)
+  @test w.focus === first
+  press(Keys.tab, Keys.shft)
+  @test w.focus === kept          # from the first field, ⇧Tab goes round to the last
+  # A node above a field can keep Tab for itself
+  press(Keys.tab)
+  @test w.focus === kept
+  # Tab does nothing while no field has the keyboard
+  w.focus = nothing
+  press(Keys.tab)
+  @test w.focus === nothing
+end

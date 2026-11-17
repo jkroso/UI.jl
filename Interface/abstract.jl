@@ -695,6 +695,23 @@ end
 ease(d) = 1 - (1 - d)^2
 
 """
+True for a node that the Tab key stops at. Tab gives the keyboard to the next
+such node in the window, in the order that the layout has them, and ⇧Tab to
+the one before. From the last one, Tab goes to the first. A `TextInput` is one.
+Say so for a node of your own that takes the keyboard:
+
+    tabstop(::NameField) = true
+
+Tab only moves on when the node that has the keyboard is a tab stop, and no
+handler took the key. So a node above a field can keep Tab for itself by
+returning `handled`.
+"""
+tabstop(node) = false
+
+"`tabbed!(node)` runs when Tab has just given the keyboard to `node`. A text field selects its text then."
+tabbed!(node) = nothing
+
+"""
 `onblur(node, from)` runs when `from` loses the keyboard to another node. It runs
 on `from` and then on each semantic node above it, until one returns `handled`.
 A field that's edited in place can use it to stop editing:
