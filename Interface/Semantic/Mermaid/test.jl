@@ -226,7 +226,7 @@ end
 @test_throws Problem flowchart("flowchart TD\n  A --> ", pen)
 @test problem("flowchart TD\n  A[Open --> B") == "Line 2: The [ after A is never closed"
 @test problem("flowchart TD\n  A --> B") === nothing
-@test problem("gantt\n  title A plan") == "A `gantt` diagram can't be drawn yet"
+@test problem("journey\n  title A plan") == "A `journey` diagram can't be drawn yet"
 @test problem("") == "A diagram starts with its kind, like `flowchart`"
 @test kind("%% a note\n  stateDiagram-v2\n") == "stateDiagram"
 

@@ -15,6 +15,10 @@
 @use "./state" state state_edits
 @use "./class" class class_edits
 @use "./pie" pie pie_edits
+@use "./mindmap" mindmap
+@use "./er" er
+@use "./gantt" gantt
+@use "./timeline" timeline
 @use Colors: Colorant, RGBA, RGB
 
 # A diagram that's drawn from a few lines of text, in the language of Mermaid
@@ -27,9 +31,10 @@
 #         B -- No --> A
 #       """)
 #
-# The first line of the text says which kind of diagram it is. Five kinds are
+# The first line of the text says which kind of diagram it is. Nine kinds are
 # drawn: `flowchart` (or `graph`), `sequenceDiagram`, `stateDiagram-v2`,
-# `classDiagram` and `pie`. The file of each kind says what its text can have.
+# `classDiagram`, `pie`, `mindmap`, `erDiagram`, `gantt` and `timeline`. The
+# file of each kind says what its text can have.
 #
 # The diagram is drawn in the theme's font and colours, so it suits the page
 # that it's on. It's as big as its text needs. In less room than that, the whole
@@ -53,10 +58,14 @@
 # Each change writes the code again, in `code`, and only the lines that the
 # change is about. A box has no place of its own in the code, so the diagram
 # is laid out again after each change and nothing is dragged.
+#
+# Only the first five kinds can be changed. A mind map, an entity relationship
+# diagram, a Gantt chart and a timeline take no click and no key.
 
 # The kinds of diagram, by the word that the text of one starts with, and what makes the picture of each
 const KINDS = Dict{String,Function}("flowchart" => flowchart, "graph" => flowchart, "sequenceDiagram" => sequence,
-                                    "stateDiagram" => state, "classDiagram" => class, "pie" => pie)
+                                    "stateDiagram" => state, "classDiagram" => class, "pie" => pie,
+                                    "mindmap" => mindmap, "erDiagram" => er, "gantt" => gantt, "timeline" => timeline)
 
 "The word that says which kind of diagram `code` is: the first word of its first line that isn't a comment"
 kind(code::AbstractString) = begin
@@ -172,6 +181,8 @@ are easy to tell apart. A colour is itself.
 """
 colour(t::Theme, role::Colorant) = role
 colour(t::Theme, role::Integer) = TONES[mod1(role, length(TONES))]
+# A role with a number from 0 to 1 is a tint of the role's colour: that much of it shows over what's behind it
+colour(t::Theme, role::Tuple) = RGBA(convert(RGB{Float64}, colour(t, role[1])), Float64(role[2]))
 colour(t::Theme, role::Symbol) =
   role == :text ? t.text :
   role == :dim ? t.dim :
