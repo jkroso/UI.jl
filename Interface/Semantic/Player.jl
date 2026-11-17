@@ -1,13 +1,13 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl/skia" rounded_rectangle sk_color
-@use "github.com/jkroso/MiniFB.jl" Keys KeyPress MouseMove onkey onmouse flt
+@use "github.com/jkroso/MiniFB.jl" Keys KeyPress MouseMove Typed onkey onmouse ontype flt
 @use Skia
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../Geometric"...
 @use "../Specific"... text_width
 @use "../abstract" SemanticUI WrapMode describe focus theme scale handled sized window_of
-@use "../draw" draw cursor redraw_in! rect
-@use "../media" Playback ready failed duration span playing play! pause! seek! place! picture_size watch! watching picture shown! Levels finished level
+@use "../draw" draw cursor redraw_in! rect ishovered
+@use "../media" Playback ready failed duration span playing play! pause! seek! place! speed! picture_size watch! watching picture shown! Levels finished level
 @use "./Icon" Icon
 @use "./STLViewer" density smooth
 @use Colors: RGBA, @colorant_str
@@ -31,8 +31,14 @@
 # part of the file, and its times are the file's own, so it shows 1:01 / 1:26
 # before it plays.
 #
+# A small circle hangs off the bottom edge of each player, at the right, while
+# the mouse is over the player or the file plays. It says how fast the file
+# plays: 1× is as fast as it was made. Click it to play at 1½×, then at 2×, then
+# at ½×, then at 1× again. macOS keeps each voice at its own pitch.
+#
 # Once a click has given a player the keyboard, the space bar plays and stops,
-# and ← and → go back and on by 5 seconds.
+# ← and → go back and on by 5 seconds, and < and > play slower and faster, by a
+# quarter at a time, from ½× to 2×.
 #
 # macOS plays the file, so the players only work on a Mac. One file plays at a
 # time: when a player starts, the one that was playing stops. When an app stops
@@ -113,6 +119,32 @@ goto!(p::Player, s) = begin
   nothing
 end
 
+"How fast the file plays: 1 is as fast as it was made, and 2 is twice as fast"
+speed(p::Player) = media(p).speed
+
+"Play the file at `s` times as fast as it was made. A file that plays changes speed at once."
+speed!(p::Player, s) = (speed!(media(p), s); nothing)
+
+# The speeds that < and > step through, and the ones that a click on the speed button goes round
+const SPEEDS = (0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+const ROUND = (0.5, 1.0, 1.5, 2.0)
+
+"The speed after `s` when the speed button is clicked: the next one up in ROUND, or 0.5 after 2. So 1 goes to 1.5, then 2, then 0.5, and back to 1."
+next_speed(s) = (i = findfirst(>(s + 0.001), ROUND); i === nothing ? ROUND[1] : ROUND[i])
+
+"The speed in SPEEDS that's `by` steps on from `s`: 1 for faster, -1 for slower. It stops at 0.5 and at 2."
+stepped(s, by) = SPEEDS[clamp(argmin([abs(x - s) for x in SPEEDS]) + by, 1, length(SPEEDS))]
+
+const QUARTERS = Dict(0.25 => "¼", 0.5 => "½", 0.75 => "¾")
+
+"A speed as the speed button shows it, with a fraction for a quarter, a half or three quarters: 1×, 1½× or ¾×"
+speed_label(s) = begin
+  n, part = floor(Int, s), s - floor(s)
+  part == 0 && return "$n×"
+  haskey(QUARTERS, part) || return "$(round(s, digits=2))×"
+  (n == 0 ? "" : "$n") * QUARTERS[part] * "×"
+end
+
 """
 What a player does each time it's described. It notes that the app still shows
 it, which keeps the file playing. It asks for the next frame too, because what
@@ -154,6 +186,34 @@ button(p::Player, t, size) = begin
     Icon(playing(m) ? "pause-fill" : "play-fill", size=size * 0.56, color=t.on_accent))
 end
 
+"The words in the speed button, for the speed `s`. They're the accent colour at any speed but 1×."
+speed_text(s, t) = Text(speed_label(s), size=sized(9pt, t), color=s == 1 ? t.dim : t.accent, wrap=WrapMode.none, align=TextAlign.Center)
+
+"How big the speed button is across: room for its widest words, 1¾×"
+speed_size(t) = text_width(speed_text(1.75, t), "1¾×") + 6px * scale(t)
+
+"Does the speed button show? Only while the mouse is over the player, or while its file plays."
+speed_shows(p::Player) = ishovered(p) || playing(media(p))
+
+"""
+`body`, which is what a player shows, with the speed button hanging off its
+bottom edge, `inset` from its right edge. The button is a circle. A third of it
+is over the body, which keeps it clear of the time above it, and the rest is
+under the body. The player takes room for the part under the body too, so that
+the button doesn't cover what's under the player, and a click on any part of the
+button is the player's. The room is there while the button is hidden too, so
+that nothing moves when it shows.
+"""
+hung(body, p::Player, t, inset; wide=width(grow=GrowType.Grow)) = begin
+  d = speed_size(t)
+  circle = speed_shows(p) ?
+    Box(width(d), height(d), radius(d / 2), border(1px, :solid, t.line), background(t.surface), Alignment.Center,
+        offset_y=-d / 3, speed_text(speed(p), t)) :
+    Box(width(d), height(d), offset_y=-d / 3)   # empty, where the button would be
+  Column(wide, body,
+    Row(width(grow=GrowType.Grow), height(d * 2 / 3), padding(0px, inset, 0px, 0px), justify=Alignment.End, align=Alignment.Start, circle))
+end
+
 "The border and the background that each player has"
 card(t) = (width(grow=GrowType.Grow), radius(8px), border(1px, :solid, t.line), background(t.surface))
 
@@ -173,10 +233,11 @@ describe(a::AudioPlayer) = begin
   a.levels === nothing && (a.levels = Levels(a.path))
   # The file is read a little in each frame, and the bars show as it goes
   finished(a.levels) || (read!(a.levels); redraw_in!(a, 0.001))
-  Row(card(t)..., height(56px * k), padding(12px * k, 0px), child_gap=12px * k,
+  body = Row(card(t)..., height(56px * k), padding(12px * k, 0px), child_gap=12px * k,
     button(a, t, 32px * k),
     Box(width(grow=GrowType.Grow), height(32px * k)),   # the bars are drawn here
     times(a, t))
+  hung(body, a, t, 12px * k)
 end
 
 describe(v::VideoPlayer) = begin
@@ -191,26 +252,40 @@ describe(v::VideoPlayer) = begin
     Box(width(grow=GrowType.Grow), height(6px * k), radius(3px * k), background(t.track)),
     times(v, t))
   # A file with sound and no pictures, as an MP4 can be, shows the controls alone
-  ready(m) && (w == 0 || h == 0) && return Column(card(t)..., controls)
+  ready(m) && (w == 0 || h == 0) && return hung(Column(card(t)..., controls), v, t, 10px * k)
   # A tall narrow video still has room under it for the controls
   wide = max(240px * k, v.height * (w > 0 && h > 0 ? w / h : 16 / 9))
-  Column(width(grow=GrowType.Grow, max=wide), radius(8px), border(1px, :solid, t.line), background(t.surface),
+  body = Column(width(grow=GrowType.Grow), radius(8px), border(1px, :solid, t.line), background(t.surface),
     Image(width(grow=GrowType.Grow), aspect=Float64(wide / v.height)),   # the picture is drawn here
     controls)
+  hung(body, v, t, 10px * k, wide=width(grow=GrowType.Grow, max=wide))
 end
 
 """
 Where a frame put the parts of a player: its button, its track, the strip that
-holds them both and its picture, or nothing for the picture if it has none.
-It's nothing when the player shows a sentence in place of its parts.
+holds them, its picture, or nothing for the picture if it has none, and its
+speed button. It's nothing when the player shows a sentence in place of its parts.
 """
-parts(::AudioPlayer, ui) = length(ui.children) == 3 ? (ui.children[1], ui.children[2], ui, nothing) : nothing
+parts(::AudioPlayer, ui) = begin
+  length(ui.children) == 2 || return nothing
+  body, under = ui.children
+  length(body.children) == 3 ? (body.children[1], body.children[2], body, nothing, under.children[1]) : nothing
+end
 parts(::VideoPlayer, ui) = begin
-  strip = isempty(ui.children) ? nothing : ui.children[end]
+  length(ui.children) == 2 || return nothing
+  body, under = ui.children
+  strip = isempty(body.children) ? nothing : body.children[end]
   (strip isa ConcreteRect && length(strip.children) == 3) || return nothing
-  (strip.children[1], strip.children[2], strip, length(ui.children) == 2 ? ui.children[1] : nothing)
+  (strip.children[1], strip.children[2], strip, length(body.children) == 2 ? body.children[1] : nothing, under.children[1])
 end
 parts(p::Player) = (r = rect(p); r === nothing ? nothing : parts(p, r))
+
+"""
+Where the bottom edge of a player's card was in the last frame, or nothing if
+the player wasn't drawn or shows a sentence. The speed button hangs off this
+edge, so the player reaches a little lower. Put a thing under the card here.
+"""
+card_bottom(p::Player) = (found = parts(p); found === nothing ? nothing : found[3].top + found[3].height)
 
 "How many bars fit in the track of an AudioPlayer that's `width` wide"
 bars(a::AudioPlayer, width) = max(1, floor(Int, Float64(width / ((BAR + GAP) * scale(theme(a))))))
@@ -255,7 +330,7 @@ draw(ctx, size, ui::ConcreteRect, v::VideoPlayer) = begin
   _, track, _, area = found
   t, k = theme(v), scale(theme(v))
   m = media(v)
-  area === nothing || screen(ctx, ui, area, v, m)
+  area === nothing || screen(ctx, ui.children[1], area, v, m)   # the body: the speed button hangs under it
   # The part of the track that has played, and a knob at the end of it, as a Slider has
   full = track.width * played(v)
   full > 0px && rounded_rectangle(ctx, track.left, track.top, full, track.height, track.height / 2, background=t.accent)
@@ -335,10 +410,12 @@ onkey(p::Player, e::KeyPress{Keys.mouse_left}) = begin
   focus(p)
   found = parts(p)
   found === nothing && return handled
-  button, track, strip, _ = found
+  button, track, strip, _, speeds = found
   mouse = e.window.mouse
   if within(button, mouse, 4px)
     toggle!(p)
+  elseif speed_shows(p) && within(speeds, mouse, 2px)
+    speed!(p, next_speed(speed(p)))
   elseif within(strip, mouse)
     # A click a little past an end of the track goes to that end. A click on the time does nothing.
     if track.left - 6px <= mouse[1] <= track.left + track.width + 6px
@@ -363,4 +440,11 @@ onkey(p::Player, ::KeyPress{Keys.space}) = (toggle!(p); handled)
 onkey(p::Player, ::KeyPress{Keys.left}) = (goto!(p, at(p) - 5); handled)
 onkey(p::Player, ::KeyPress{Keys.right}) = (goto!(p, at(p) + 5); handled)
 
-export AudioPlayer, VideoPlayer, toggle!, pause!
+# < and > as the keyboard types them, so that they're the keys with < and > on them on any keyboard
+ontype(p::Player, e::Typed) = begin
+  e.char in ('<', '>') || return nothing
+  speed!(p, stepped(speed(p), e.char == '>' ? 1 : -1))
+  handled
+end
+
+export AudioPlayer, VideoPlayer, toggle!, pause!, speed!, card_bottom

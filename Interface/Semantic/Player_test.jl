@@ -7,12 +7,24 @@
 @use "../draw" frame rect
 @use "../testing"...
 @use "../media" Playback Levels ready failed duration span playing volume! picture_size finished progress level sounding silence!
-@use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause!
+@use "../objc" libobjc sel
+@use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause! speed speed! next_speed stepped speed_label
 
 # A length of time, as a player shows it
 @test clock(0) == "0:00"
 @test clock(187.9) == "3:07"
 @test clock(3787) == "1:03:07"
+
+# A click on the speed button goes from 1× to 1.5×, 2×, 0.5× and back to 1×. A speed that < or > gave goes to the next one up.
+@test next_speed(1) == 1.5 && next_speed(1.5) == 2 && next_speed(2) == 0.5 && next_speed(0.5) == 1
+@test next_speed(0.75) == 1 && next_speed(1.25) == 1.5 && next_speed(1.75) == 2
+# < and > go a quarter at a time, and stop at 0.5× and 2×
+@test stepped(1, 1) == 1.25 && stepped(1, -1) == 0.75
+@test stepped(2, 1) == 2 && stepped(0.5, -1) == 0.5
+# The circle shows a part of 1 as a fraction, so that each speed fits in it
+@test speed_label(1.0) == "1×" && speed_label(2.0) == "2×"
+@test speed_label(0.5) == "½×" && speed_label(0.75) == "¾×" && speed_label(1.25) == "1¼×" && speed_label(1.5) == "1½×" && speed_label(1.75) == "1¾×"
+@test speed_label(1.3) == "1.3×"
 
 # The rest needs macOS to read and play the files
 if Sys.isapple()
@@ -43,6 +55,9 @@ end
 
 "The middle of a rectangle that a frame laid out"
 middle(r) = (r.left + r.width / 2, r.top + r.height / 2)
+
+"How fast macOS plays the file now. It's 0 while the file is stopped."
+rate(m::Playback) = ccall((:objc_msgSend, libobjc), Float32, (Ptr{Cvoid}, Ptr{Cvoid}), m.player, sel("rate"))
 
 const dir = mktempdir()
 const sound = joinpath(dir, "tone.wav")
@@ -99,6 +114,60 @@ let a = AudioPlayer(sound), other = AudioPlayer(sound), bad = AudioPlayer(joinpa
   @test !playing(a.media)
   press!(w, Keys.left)
   @test until(() -> shown() && position(a.media) < 0.05)
+
+  # The speed button is a circle that hangs off the bottom edge of the player, inside its right edge
+  _, bars, body, _, speeds = parts(a)
+  long = bars.width
+  @test speeds.width == speeds.height && speeds.top < body.top + body.height < speeds.top + speeds.height
+  @test bars.left + bars.width < speeds.left && speeds.left + speeds.width < body.left + body.width
+  # The player takes room for the part under its edge
+  @test rect(a).top + rect(a).height ≈ speeds.top + speeds.height
+  # The circle shows while the mouse is over the player. It hides when the mouse leaves, and the player keeps its room.
+  shows() = !isempty(parts(a)[5].children)
+  @test shows()
+  tall = rect(a).height
+  move!(w, (495px, 395px))
+  @test !shows() && rect(a).height == tall
+  # While the file plays, the circle shows wherever the mouse is
+  toggle!(a); frame(w)
+  @test shows()
+  pause!(a); frame(w)
+  @test !shows()
+  # A file plays at 1× until the circle is clicked, and then at 1.5×, 2×, 0.5× and 1× again
+  @test speed(a) == 1
+  for s in (1.5, 2.0, 0.5, 1.0)
+    click!(w, middle(speeds))
+    @test speed(a) == s
+  end
+  # A click on the half of the circle that's under the edge works too
+  click!(w, (speeds.left + speeds.width / 2, speeds.top + speeds.height - 3px))
+  @test speed(a) == 1.5
+  speed!(a, 1)
+  # A file that plays changes speed at once
+  press!(w, Keys.space)
+  @test playing(a.media) && rate(a.media) == 1
+  click!(w, middle(speeds))
+  @test speed(a) == 1.5 && rate(a.media) == 1.5
+  # It plays at that speed again after a stop
+  press!(w, Keys.space)
+  @test !playing(a.media)
+  press!(w, Keys.space)
+  @test rate(a.media) == 1.5
+  pause!(a)
+  # < and > go a quarter slower and faster, and stop at 0.5× and 2×. Other characters do nothing.
+  type!(w, ">")
+  @test speed(a) == 1.75
+  type!(w, ">>>")
+  @test speed(a) == 2
+  type!(w, "<<<<<<<<")
+  @test speed(a) == 0.5
+  type!(w, "a.,")
+  @test speed(a) == 0.5
+  # The track is as long at each speed
+  type!(w, ">")
+  @test speed(a) == 0.75 && parts(a)[2].width == long
+  speed!(a, 1)
+  @test speed(a) == 1
 
   # One file plays at a time
   toggle!(a)
@@ -164,6 +233,18 @@ if Sys.which("ffmpeg") !== nothing
     # A click near the end of the track goes there
     click!(w, (track.left + track.width * 0.75, track.top + track.height / 2))
     @test until(() -> shown() && abs(position(v.media) - 1.5) < 0.1)
+    # A video's speed button hangs off the bottom edge of its controls too, and < and > change its speed
+    speeds = parts(v)[5]
+    @test speeds.top < strip.top + strip.height < speeds.top + speeds.height && speeds.left + speeds.width < strip.left + strip.width
+    click!(w, middle(speeds))
+    @test speed(v) == 1.5
+    type!(w, "<")
+    @test speed(v) == 1.25
+    # The other video plays at its own speed
+    @test speed(t) == 1
+    speed!(v, 1)
+    # The turned video is tall and narrow. The speed button hangs under its controls, so its track keeps its length.
+    @test rect(t).width ≈ 240px && parts(t)[2].width > 40px
   end
 
   # A player of part of a file: from 0.5 seconds to 1.2

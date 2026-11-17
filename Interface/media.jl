@@ -7,6 +7,7 @@
 #     play!(p)
 #     position(p), duration(p)   # in seconds
 #     seek!(p, 30)
+#     speed!(p, 1.5)             # half as fast again, with each voice at its own pitch
 #     pause!(p)
 #
 # `Playback("walk.mov", from=61, to=86)` plays only that part of the file: from
@@ -56,6 +57,7 @@ mutable struct Playback
   from::Float64     # the part of the file that plays, in seconds from its start. `to` is Inf for the end of the file.
   to::Float64
   placed::Bool      # has it gone to `from`? It goes there once the file is ready.
+  speed::Float64    # how fast it plays: 1 is as fast as the file was made, and 2 is twice as fast
 end
 
 Playback(path::AbstractString; from::Real=0.0, to::Real=Inf) = begin
@@ -69,7 +71,7 @@ Playback(path::AbstractString; from::Real=0.0, to::Real=Inf) = begin
   # macOS stops at `to`, as if the file ended there
   isfinite(to) && ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, CMTime), item, sel("setForwardPlaybackEndTime:"), cmtime(to))
   from = max(Float64(from), 0.0)
-  finalizer(close!, Playback(abspath(path), player, item, C_NULL, 0, 0.0, 0.0, 0, from, Float64(to), from == 0))
+  finalizer(close!, Playback(abspath(path), player, item, C_NULL, 0, 0.0, 0.0, 0, from, Float64(to), from == 0, 1.0))
 end
 
 "Stop it and give its memory back to macOS"
@@ -131,12 +133,27 @@ play!(p::Playback) = begin
   to > 0 && !(from - 0.05 <= position(p) < to - 0.05) && seek!(p, from)
   sounding[] = p
   p.missed = 0
-  msg(p.player, "play")
+  rate!(p, p.speed)
   guard!()
   p
 end
 
 pause!(p::Playback) = (p.player == C_NULL || msg(p.player, "pause"); p)
+
+"Tell macOS to play at `r` times as fast as the file was made. 0 stops it."
+rate!(p::Playback, r) = ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Float32), p.player, sel("setRate:"), Float32(r))
+
+"""
+Play at `s` times as fast as the file was made: 2 is twice as fast, and 0.5 is
+half as fast. A file that plays changes speed at once. One that's stopped plays
+at that speed when it plays again. macOS keeps each voice at its own pitch.
+"""
+speed!(p::Playback, s::Real) = begin
+  s > 0 || error("A file plays at a speed above 0. $s isn't one.")
+  p.speed = Float64(s)
+  playing(p) && rate!(p, p.speed)
+  p
+end
 
 "Stop the file that plays now, if one does"
 silence!() = (p = sounding[]; p isa Playback && pause!(p); nothing)
@@ -530,5 +547,5 @@ loudness(r::Recording) = begin
   clamp((db + 50) / 50, 0.0, 1.0)
 end
 
-export Playback, ready, failed, duration, span, playing, play!, pause!, seek!, place!, volume!, picture_size, watch!, watching, picture, shown!, close!, silence!,
+export Playback, ready, failed, duration, span, playing, play!, pause!, seek!, place!, volume!, speed!, picture_size, watch!, watching, picture, shown!, close!, silence!,
        sounding, Levels, finished, progress, level, Recording, start!, stop!, recording, elapsed, loudness, microphone, ask_microphone!, can_ask
