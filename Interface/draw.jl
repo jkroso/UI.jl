@@ -1161,6 +1161,27 @@ on(target::SemanticUI, e::Typed) = ontype(target, e)
 on(target::SemanticUI, e::MouseScroll) = onscroll(target, e)
 on(target::SemanticUI, e::Pinch) = onpinch(target, e)
 
+"""
+What a component sends to the nodes above it when what it holds has changed,
+and whatever keeps that should write it down: a page that keeps a block's
+state in its text, or an app that keeps it in a file. With `now`, the change
+can't wait for a quiet moment. `changed!` sends it, and a node that keeps
+state defines `onchanged(node, e::Changed)` and returns `handled`.
+"""
+struct Changed
+  now::Bool
+end
+
+onchanged(target, e::Changed) = nothing
+on(target::SemanticUI, e::Changed) = onchanged(target, e)
+
+"""
+Tell the nodes above `node` that what it holds has changed and should be
+written down. Call it when a click, a drag or a run of typing has made a
+change that's worth keeping. With `now`, it's written before this returns.
+"""
+changed!(node::SemanticUI; now::Bool=false) = emit(node, Changed(now))
+
 "A pinch goes to the node under the mouse, then up through the nodes above it"
 onpinch(w::Window, scale::Real) = begin
   popup = popup_at(w, w.mouse)

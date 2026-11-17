@@ -67,6 +67,8 @@ The scroll wheel goes to the node under the mouse as a `MouseScroll`, with how f
 
 A pinch on the trackpad goes to the node under the mouse as a `Pinch`, with how much bigger the fingers ask for in `event.scale`: 1.05 is 5% bigger. A node that wants it defines `onpinch(node, event)` and returns `handled`. A whole pinch is many of these events, so multiply your zoom by each `scale`. Only macOS sends them.
 
+A component that holds state can ask whatever keeps that state to write it down. `changed!(node)` sends a `Changed` event to the nodes above `node`, and `changed!(node, now=true)` says that it can't wait. A node that keeps state, like a block of a page in Kaydown, defines `onchanged(node, event)` and returns `handled`. Call `changed!` after a change that a person would want to undo: when a click, a drag or a run of typing ends.
+
 Files that are dropped on the window from the Finder go to the app: define `onfiledrop(app, window, paths)` for the node that the window shows. `window.mouse` is where they were dropped.
 
 Tab gives the keyboard to the next node that Tab stops at, in the order that the layout has them, and ⇧Tab to the one before. A `TextInput` is such a node, and a field that Tab comes to has its text selected. Define `tabstop(::MyField) = true` for a node of your own. Tab only moves on when no handler took it, so a node above a field keeps Tab for itself by returning `handled` from `onkey`.
