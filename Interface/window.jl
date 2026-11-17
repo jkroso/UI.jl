@@ -368,4 +368,24 @@ watch_pinch!(w::AbstractWindow) = begin
   w
 end
 
-export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!
+# --- a mouse wheel or a trackpad ---------------------------------------------------
+#
+# macOS says, with each scroll, if it came in small exact steps, as from a
+# trackpad, or in the whole steps of a mouse wheel. GLFW reads that but doesn't
+# pass it on. Its scroll callback runs while macOS handles the scroll, so the
+# event that the app handles now is that scroll.
+
+const scroll_wheel_event = UInt(22)   # NSEventTypeScrollWheel
+
+"""
+True when the scroll that's happening now came from a mouse wheel that turns in
+steps. False when it came from two fingers on a trackpad or on a Magic Mouse,
+which macOS gives in small exact steps. Call it while a scroll is handled, as
+from `onscroll`. On other systems, and with no scroll happening, it's false.
+"""
+scrolled_by_wheel() = Sys.isapple() && with_pool() do
+  event = msg(msg(cls("NSApplication"), "sharedApplication"), "currentEvent")
+  event != C_NULL && get_value(UInt, event, "type") == scroll_wheel_event && !get_value(Bool, event, "hasPreciseScrollingDeltas")
+end
+
+export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, scrolled_by_wheel

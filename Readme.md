@@ -63,7 +63,7 @@ onkey(b::DeleteButton, ::KeyPress{Keys.mouse_left}) = (remove!(b.parent); handle
 
 The built-in components keep the clicks they act on. A `TextInput` keeps the keys it uses, and lets the others, like Return, Escape and the up and down arrows, go on up to your own nodes.
 
-The scroll wheel goes to the node under the mouse as a `MouseScroll`, with how far it turned in `event.delta`. A node that wants it defines `onscroll(node, event)` and returns `handled`, as the `STLViewer` does to make its model bigger while ⌘ is held. If no node takes it, the `Scroll` under the mouse scrolls.
+The scroll wheel goes to the node under the mouse as a `MouseScroll`, with how far it turned in `event.delta`. `event.wheel` is true when a mouse wheel that turns in steps sent it, and false when two fingers on a trackpad did, so a node can zoom with the wheel and move with two fingers, as a map does. A node that wants it defines `onscroll(node, event)` and returns `handled`, as the `STLViewer` does to make its model bigger while ⌘ is held. If no node takes it, the `Scroll` under the mouse scrolls.
 
 A pinch on the trackpad goes to the node under the mouse as a `Pinch`, with how much bigger the fingers ask for in `event.scale`: 1.05 is 5% bigger. A node that wants it defines `onpinch(node, event)` and returns `handled`. A whole pinch is many of these events, so multiply your zoom by each `scale`. Only macOS sends them.
 

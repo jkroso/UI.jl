@@ -10,7 +10,7 @@
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
-@use "./window" onpinch watch_pinch!
+@use "./window" onpinch watch_pinch! scrolled_by_wheel
 @use "./image" image_source
 
 "Draw the lines a container puts between its children, centred in each gap"
@@ -1117,14 +1117,18 @@ end
 
 """
 The scroll wheel turned, or two fingers moved on the trackpad, while the mouse
-was over a node. `delta` is how far, across then up. A node that wants it
-defines `onscroll(node, e::MouseScroll)` and returns `handled`. If no node
-does, the Scroll under the mouse scrolls.
+was over a node. `delta` is how far, across then up. `wheel` is true when a
+mouse wheel that turns in steps sent it, and false when two fingers on a
+trackpad or a Magic Mouse did. A node that wants it defines
+`onscroll(node, e::MouseScroll)` and returns `handled`. If no node does, the
+Scroll under the mouse scrolls.
 """
 struct MouseScroll
   delta::Vec2{px}
   window::AbstractWindow
+  wheel::Bool
 end
+MouseScroll(delta, window) = MouseScroll(delta, window, false)
 
 """
 Two fingers moved apart or together on the trackpad while the mouse was over a
@@ -1480,7 +1484,9 @@ update_scroll_hover!(w, scene::ConcreteRect, pos) = begin
   end
 end
 
-onscroll(w::Window, delta::Vec2{px}) = begin
+# macOS says if a mouse wheel or a trackpad sent the scroll. A test can say it with `wheel`.
+onscroll(w::Window, delta::Vec2{px}) = onscroll(w, delta, scrolled_by_wheel())
+onscroll(w::Window, delta::Vec2{px}, wheel::Bool) = begin
   id = objectid(w)
   t = get(_tools, id, nothing)
   t !== nothing && tool_input(t, w, delta) && return
@@ -1488,7 +1494,7 @@ onscroll(w::Window, delta::Vec2{px}) = begin
   popup = popup_at(w, w.mouse)
   scene = popup === nothing ? get(_scenes, id, nothing) : popup.scene
   target = popup === nothing ? hittest(w) : hittest(scene, w.mouse)
-  target !== nothing && emit(target, MouseScroll(delta, w)) === handled && return
+  target !== nothing && emit(target, MouseScroll(delta, w, wheel)) === handled && return
   scene === nothing && return
   rects = scrolls_at(scene, w.mouse)
   step = -delta[2] * 30

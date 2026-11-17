@@ -166,6 +166,23 @@ let w = Window(Nest(), size=(200px, 100px))
   @test inner().offset == 890px && outer().offset == 30px
 end
 
+# A node hears if a mouse wheel or two fingers on the trackpad sent a scroll
+@use "./draw" MouseScroll
+@def mutable struct Wheel <: SemanticUI
+  heard::Vector{Bool} = Bool[]
+end
+describe(::Wheel) = Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow))
+onscroll(n::Wheel, e::MouseScroll) = (push!(n.heard, e.wheel); handled)
+let node = Wheel(), w = Window(node, size=(100px, 100px))
+  frame(w)
+  w.mouse = Vec2{px}(50px, 50px)
+  onscroll(w, Vec2{px}(0px, 1px), true)
+  onscroll(w, Vec2{px}(0px, 1px), false)
+  # macOS says which sent a scroll. With no scroll from macOS, as here, it's two fingers.
+  onscroll(w, Vec2{px}(0px, 1px))
+  @test node.heard == [true, false, false]
+end
+
 # Each corner of a box has its own radius. Here the two at the top are round and the two at the bottom are square.
 paint(ui, size=(40px, 40px)) = drawing(draw, size, describe(ui, size), scale=(1f0, 1f0))
 inked(pixels, x, y) = reinterpret(UInt32, pixels[y, x]) >> 24 > 0x80
