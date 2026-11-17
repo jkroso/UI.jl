@@ -71,12 +71,86 @@ struct Slice
   fill::Any
 end
 
-"A diagram that's laid out: how wide and how tall it is, and what it's made of, from the back to the front"
+"""
+A part of a diagram that you can select and change: a box, a line, a slice.
+`kind` says what it is and `key` says which one, as the file of its kind of
+diagram names them. `box` is its left, its top, its width and its height. A
+line has a `path` too: the places that it goes through, with a straight piece
+between each two. `shape` is the outline that it glows in while it's selected:
+the name of a shape, or :area for the shape that has its corners at `path`.
+`words` is the middle of the place where its words are typed, and `room` is
+how wide and how tall the words that it shows there are. Two parts can have
+one kind and key, like the two boxes of someone in a sequence diagram. The
+first of them is the one that glows.
+"""
+struct Part
+  kind::Symbol
+  key::Any
+  box::NTuple{4,Float64}
+  path::Vector{Point}
+  shape::Symbol
+  words::Point
+  room::NTuple{2,Float64}
+end
+Part(kind, key, box; path=Point[], shape=:rect, words=(box[1] + box[3] / 2, box[2] + box[4] / 2), room=(0.0, 0.0)) =
+  Part(kind, key, Float64.(box), path, shape, Float64.(words), Float64.(room))
+
+"A part for the label `l`, which has its middle at (x, y): the part's words are the label's"
+labelled(kind, key, box, l, x, y; kwargs...) = Part(kind, key, box; words=(x, y), room=(l.w, l.h), kwargs...)
+
+"""
+The places that a curved line through `points` goes through, near enough that
+straight pieces between them look like the curve. See `Stroke`.
+"""
+flat(points::Vector{Point}; steps=10) = begin
+  length(points) < 4 && return copy(points)
+  out = Point[points[1]]
+  for i in 2:3:length(points)-2
+    a, b, c, d = points[i-1], points[i], points[i+1], points[i+2]
+    for k in 1:steps
+      t = k / steps
+      s = 1 - t
+      push!(out, (s^3 * a[1] + 3s^2 * t * b[1] + 3s * t^2 * c[1] + t^3 * d[1], s^3 * a[2] + 3s^2 * t * b[2] + 3s * t^2 * c[2] + t^3 * d[2]))
+    end
+  end
+  out
+end
+
+"The middle of a line through `path`: the place that's half of its length along it"
+halfway(path::Vector{Point}) = begin
+  isempty(path) && return (0.0, 0.0)
+  lengths = [hypot(path[i+1][1] - path[i][1], path[i+1][2] - path[i][2]) for i in 1:length(path)-1]
+  left = sum(lengths; init=0.0) / 2
+  for (i, l) in enumerate(lengths)
+    left <= l && l > 0 && return (path[i][1] + (path[i+1][1] - path[i][1]) * left / l, path[i][2] + (path[i+1][2] - path[i][2]) * left / l)
+    left -= l
+  end
+  path[end]
+end
+
+"""
+Something that you can do to a diagram, or to the part of it that's selected.
+`icon` is the name of the icon of its button, and `tip` says what it does. A
+tool with `choices` asks which: each is what a choice says and what it gives
+the tool. A tool with `target` needs a second part, which you click next.
+"""
+struct Tool
+  name::Symbol
+  icon::String
+  tip::String
+  choices::Vector{Pair{String,Any}}
+  target::Bool
+end
+Tool(name, icon, tip; choices=Pair{String,Any}[], target=false) = Tool(name, icon, tip, collect(Pair{String,Any}, choices), target)
+
+"A diagram that's laid out: how wide and how tall it is, what it's made of, from the back to the front, and the parts of it that can be selected"
 struct Picture
   w::Float64
   h::Float64
   items::Vector{Any}
+  parts::Vector{Part}
 end
+Picture(w, h, items) = Picture(w, h, items, Part[])
 
 "What went wrong with the code of a diagram, and the line of the code that it's on"
 struct Problem <: Exception
@@ -253,4 +327,74 @@ statements(code::AbstractString) = begin
   out, title
 end
 
-export Point, Shape, Stroke, Words, Slice, Picture, Problem, Pen, Label, font, wide, leading, label, write!, write_from!, plain, statements, paint, styles, on, look
+# --- changing the code -----------------------------------------------------------
+#
+# A change to a diagram changes only the lines of its code that say the part
+# that changed. The rest stays as it was written: its comments, its styles and
+# what isn't drawn here.
+
+"The white space that `line` starts with"
+indent(line::AbstractString) = String(match(r"^[ \t]*", line).match)
+
+"""
+`code` with other lines in place of some of its lines. `new` gives the lines
+that go in place of the line with each number: none takes the line away. Each
+new line starts as far in as the old one did.
+"""
+relined(code::AbstractString, new::AbstractDict) = begin
+  out = String[]
+  for (n, line) in enumerate(split(code, '\n'))
+    haskey(new, n) ? append!(out, (indent(line) * l for l in new[n])) : push!(out, String(line))
+  end
+  join(out, '\n')
+end
+
+"""
+`code` with the lines `more` after its last line that says something, or after
+the line with the number `after`. They start as far in as the line under the
+first one does.
+"""
+added(code::AbstractString, more::AbstractString...; after=nothing) = begin
+  lines = String.(split(code, '\n'))
+  said, _ = statements(code)
+  isempty(said) && return code
+  last = something(after, said[end][1])
+  # As far in as the second line that says something, or two spaces in from the first when it's the only one
+  pad = length(said) > 1 ? indent(lines[said[2][1]]) : indent(lines[said[1][1]]) * "  "
+  join(vcat(lines[1:last], [pad * m for m in more], lines[last+1:end]), '\n')
+end
+
+"`code` with what its lines `a` and `b` say in each other's place. Each stays as far in as the line that was there."
+swapped(code::AbstractString, a::Int, b::Int) = begin
+  lines = split(code, '\n')
+  relined(code, Dict(a => [String(strip(lines[b]))], b => [String(strip(lines[a]))]))
+end
+
+"The code units `at` of `line`, as text"
+cut(line::AbstractString, at::UnitRange{Int}) = String(codeunits(line)[at])
+
+"`line` with `new` in place of its code units `at`"
+spliced(line::AbstractString, at::UnitRange{Int}, new::AbstractString) =
+  String(codeunits(line)[1:at.start-1]) * new * String(codeunits(line)[at.stop+1:end])
+
+"`line` with `new` in place of its code units `at`, and a space each side of it where the line has none"
+spaced(line::AbstractString, at::UnitRange{Int}, new::AbstractString) = begin
+  units = codeunits(line)
+  gap(i) = 1 <= i <= length(units) && !(units[i] in (UInt8(' '), UInt8('\t'))) ? " " : ""
+  spliced(line, at, gap(at.start - 1) * new * gap(at.stop + 1))
+end
+
+"The words of a part as you type them: one line, with <br> where they go on to a new line"
+typed(text::AbstractString) = replace(text, '\n' => "<br>")
+
+"""
+Words that were typed, as the code of a diagram writes them. They're in quotes
+when they have a character that means something else to the code, or with
+`always`. A " in them is written as #quot;.
+"""
+quoted(text::AbstractString; always=false, safe=r"^[\p{L}\p{N} .,!?'%+-]*$") = begin
+  text = replace(strip(replace(text, '\n' => "<br>")), '"' => "#quot;")
+  always || !occursin(safe, text) ? "\"" * text * "\"" : String(text)
+end
+
+export Point, Part, Tool, flat, halfway, indent, relined, added, typed, quoted, cut, spliced, spaced, swapped, labelled, Shape, Stroke, Words, Slice, Picture, Problem, Pen, Label, font, wide, leading, label, write!, write_from!, plain, statements, paint, styles, on, look

@@ -38,28 +38,41 @@ mutable struct Frame
 end
 Frame(f::NamedTuple) = Frame(f.frame, f.text, f.top, f.tint, f.parts, Inf, -Inf)
 
-"The picture of the sequence diagram that `code` describes, with its text measured by `pen`"
-sequence(code::AbstractString, pen::Pen) = begin
+const PERSON = r"^(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$"
+const NOTE = r"^note\s+(left of|right of|over)\s+([^:]+):\s*(.*)$"i
+
+"""
+What the code of a sequence diagram says: who's in it, in `ids`, with the
+name that each shows and whether they're drawn as a person, and its `events`
+in order: each message, note and frame, with the `line` of the code that
+it's on. `seen` is the line that first names each participant, and `said` is
+the line that says `participant` or `actor` for the ones that have one.
+"""
+read_sequence(code::AbstractString) = begin
   lines, title = statements(code)
-  u = pen.size
   ids, names, people = String[], Dict{String,String}(), Set{String}()
   groups = Any[]    # the boxes around some participants: a title, a colour and who's in it
   events = Any[]
+  seen, said = Dict{String,Int}(), Dict{String,Int}()
   numbered = false
   grouping = false
   nesting, deepest = Symbol[], 0
+  at = 0   # the line that's being read
   actor!(id) = begin
     id = String(strip(id))
     if !(id in ids)
       push!(ids, id)
+      seen[id] = at
       grouping && push!(groups[end].members, id)
     end
     id
   end
   for (n, line) in lines[2:end]
+    at = n
     line = replace(line, r"^create\s+" => "")
-    if (m = match(r"^(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$", line)) !== nothing
+    if (m = match(PERSON, line)) !== nothing
       id = actor!(m[2])
+      said[id] = n
       m[3] === nothing || (names[id] = plain(m[3]))
       m[1] == "actor" && push!(people, id)
     elseif (m = match(r"^title:?\s+(.*)$", line)) !== nothing
@@ -68,9 +81,9 @@ sequence(code::AbstractString, pen::Pen) = begin
       numbered = true
     elseif (m = match(r"^(activate|deactivate)\s+(.+)$", line)) !== nothing
       push!(events, (kind=Symbol(m[1]), who=actor!(m[2])))
-    elseif (m = match(r"^note\s+(left of|right of|over)\s+([^:]+):\s*(.*)$"i, line)) !== nothing
+    elseif (m = match(NOTE, line)) !== nothing
       who = actor!.(split(m[2], ','))
-      push!(events, (kind=:note, side=lowercase(m[1]), who=who, text=plain(m[3])))
+      push!(events, (kind=:note, side=lowercase(m[1]), who=who, text=plain(m[3]), line=n))
     elseif (m = match(r"^box\b\s*(.*)$", line)) !== nothing
       first_word = match(r"^(rgba?\([^)]*\)|\S+)\s*(.*)$", m[1])
       tint = first_word === nothing ? nothing : paint(first_word[1])
@@ -97,14 +110,26 @@ sequence(code::AbstractString, pen::Pen) = begin
     elseif (m = match(MESSAGE, line)) !== nothing
       _, dash, head, both = ARROWS[findfirst(a -> a[1] == m[2], ARROWS)]
       from, to = actor!(m[1]), actor!(m[4])
-      push!(events, (kind=:message, from=from, to=to, text=plain(something(m[5], "")), dash=dash, head=head, both=both, mark=something(m[3], "")))
+      push!(events, (kind=:message, from=from, to=to, text=plain(something(m[5], "")), dash=dash, head=head, both=both, mark=something(m[3], ""), line=n))
     else
       throw(Problem(n, "\"$(first(line, 30))\" isn't a message, a note or a frame"))
     end
   end
+  (; ids, names, people, groups, events, numbered, deepest, title, seen, said)
+end
+
+"The events of a sequence diagram that are of the kind `kind`, in order: its messages, or its notes"
+those(events, kind::Symbol) = [ev for ev in events if ev.kind == kind]
+
+"The picture of the sequence diagram that `code` describes, with its text measured by `pen`"
+sequence(code::AbstractString, pen::Pen) = begin
+  (; ids, names, people, groups, events, numbered, deepest, title) = read_sequence(code)
+  u = pen.size
   isempty(ids) && return Picture(0.0, 0.0, Any[])
   k = length(ids)
   index = Dict(id => i for (i, id) in enumerate(ids))
+  parts = Part[]
+  messages, noted = 0, 0   # how many messages and notes have been drawn
 
   # --- across: a column for each participant, far enough apart for what goes between them
   small = 0.92u
@@ -167,19 +192,25 @@ sequence(code::AbstractString, pen::Pen) = begin
       ev.mark == "+" && push!(busy[j], 0.0)   # its place is set once the arrow's is known
       if i == j
         # A message to yourself: a loop at the right of the line, with its text over it
+        words = (x[i] + 0.9u + max(l.w, 3u) / 2, y + max(l.h, 1.35small) / 2)
         isempty(l.lines) || (write!(arrows, l, x[i] + 0.9u + l.w / 2, y + l.h / 2); y += l.h + 0.4u)
         from = x[i] + (isempty(busy[i]) ? 0.0 : barw / 2 + step * (length(busy[i]) - 1))
         push!(arrows, Stroke([(from, y), (from + 3u, y), (from + 3u, y + 1.5u), (from, y + 1.5u)]; curved=true, thick=0.09u, dash=ev.dash, to=ev.head, tip=0.75u))
+        push!(parts, labelled(:message, messages += 1, (x[i] + 0.9u, words[2] - l.h / 2, l.w, l.h), l, words...;
+                              path=flat([(from, y), (from + 3u, y), (from + 3u, y + 1.5u), (from, y + 1.5u)])))
         reach!(x[i], x[i] + max(3.4u, l.w + 1.4u))
         line = y
         y += 1.5u
       else
         way = j > i ? 1 : -1
+        # Its words are over the arrow, and that's where they're typed when it has none yet
+        words = ((x[i] + x[j]) / 2, isempty(l.lines) ? y - 0.9u : y + l.h / 2)
         isempty(l.lines) || (write!(arrows, l, (x[i] + x[j]) / 2, y + l.h / 2); y += l.h + 0.35u)
         # The arrow goes from the edge of a bar to the edge of a bar
         inset(p, towards) = isempty(busy[p]) ? 0.0 : towards > 0 ? barw / 2 + step * (length(busy[p]) - 1) : barw / 2
         from, to = x[i] + way * inset(i, 1), x[j] - way * inset(j, -1)
         push!(arrows, Stroke([(from, y), (to, y)]; thick=0.09u, dash=ev.dash, from=ev.both ? ev.head : :none, to=ev.head, tip=0.75u))
+        push!(parts, labelled(:message, messages += 1, (words[1] - l.w / 2, words[2] - l.h / 2, l.w, l.h), l, words...; path=[(from, y), (to, y)]))
         reach!(min(x[i], x[j]), max(x[i], x[j]))
         line = y
       end
@@ -204,6 +235,7 @@ sequence(code::AbstractString, pen::Pen) = begin
            i == j ? x[i] - w / 2 : (w = max(w, x[j] - x[i] + 2.4u); (x[i] + x[j]) / 2 - w / 2)
       push!(notes, Shape(:rect, at, y, w, h; fill=:note, line=:note_edge, thick=0.07u))
       write!(notes, l, at + w / 2, y + h / 2)
+      push!(parts, labelled(:note, noted += 1, (at, y, w, h), l, at + w / 2, y + h / 2))
       reach!(at, at + w)
       y += h + 1.0u
     elseif ev.kind == :open
@@ -266,15 +298,180 @@ sequence(code::AbstractString, pen::Pen) = begin
         push!(items, Stroke([a, b]; thick=0.09u))
       end
       write!(items, l, cx, figure + person + 0.3u + l.h / 2)
+      push!(parts, labelled(:person, ids[i], (cx - boxw[i] / 2, figure, boxw[i], person + 0.3u + l.h), l, cx, figure + person + 0.3u + l.h / 2))
     else
       h = l.h + 1.4u
       # The box at the top stands on its line, and the one at the bottom hangs from it
       box_top = at == top ? at + headh - h : at
       push!(items, Shape(:rect, x[i] - boxw[i] / 2, box_top, boxw[i], h))
       write!(items, l, x[i], box_top + h / 2)
+      push!(parts, labelled(:person, ids[i], (x[i] - boxw[i] / 2, box_top, boxw[i], h), l, x[i], box_top + h / 2))
     end
   end
-  Picture(max(wide, heading.w + 0.8u), y + headh + 0.4u + (isempty(groups) ? 0.0 : 0.6u), items)
+  # A click chooses someone or a note before a message
+  Picture(max(wide, heading.w + 0.8u), y + headh + 0.4u + (isempty(groups) ? 0.0 : 0.6u), items, sort(parts, by=p -> p.kind == :message ? 2 : 1))
 end
 
-export sequence
+# --- changing a sequence diagram --------------------------------------------------
+#
+# The parts of a sequence diagram that can be selected are who's in it, each a
+# :person with their name in the code, its messages, each a :message with its
+# number among the messages, and its notes, each a :note with its number.
+
+const ARROW_NAMES = ["Arrow" => "->>", "Dotted arrow" => "-->>", "Line with no arrow" => "->", "Dotted line" => "-->",
+                     "Line with a cross" => "-x", "Open arrow" => "-)"]
+const DRAWN_AS = ["A box" => "participant", "A person" => "actor"]
+
+"A name for someone new that nobody in the diagram has: a capital letter, or P with a number once the letters are used"
+fresh_person(ids) = begin
+  for c in 'A':'Z'
+    string(c) in ids || return string(c)
+  end
+  n = 1
+  while "P$n" in ids
+    n += 1
+  end
+  "P$n"
+end
+
+"The line `n` of `code`, as the diagram reads it: without the white space round it"
+said_line(code, n::Int) = String(strip(split(code, '\n')[n]))
+
+"The words that a part of the sequence diagram `code` shows, as you type them"
+sequence_said(code, kind::Symbol, key) = begin
+  r = read_sequence(code)
+  kind == :person ? typed(get(r.names, key, key)) :
+  kind == :message ? typed(those(r.events, :message)[key].text) :
+  kind == :note ? typed(those(r.events, :note)[key].text) : nothing
+end
+
+"""
+`code` with the line that says how `id` is drawn and what name they show. Someone
+that only a message names gets that line before the first line that names
+them, so they keep their place among the others.
+"""
+declared(code, r, id, word, name) = begin
+  line = word * " " * id * (name == id || isempty(name) ? "" : " as " * name)
+  haskey(r.said, id) && return relined(code, Dict(r.said[id] => [line]))
+  n = r.seen[id]
+  relined(code, Dict(n => [line, said_line(code, n)]))
+end
+
+"The sequence diagram `code` with `text` as the words of one of its parts"
+sequence_reword(code, kind::Symbol, key, text) = begin
+  r = read_sequence(code)
+  text = String(strip(replace(text, '\n' => "<br>")))
+  if kind == :person
+    isempty(text) ? code : declared(code, r, key, key in r.people ? "actor" : "participant", text)
+  elseif kind == :message
+    n = those(r.events, :message)[key].line
+    line = said_line(code, n)
+    made = startswith(line, r"create\s+") ? "create " : ""
+    m = match(MESSAGE, replace(line, r"^create\s+" => ""))
+    relined(code, Dict(n => [made * m[1] * m[2] * something(m[3], "") * m[4] * (isempty(text) ? "" : ": " * text)]))
+  elseif kind == :note
+    isempty(text) && return code
+    n = those(r.events, :note)[key].line
+    m = match(NOTE, said_line(code, n))
+    relined(code, Dict(n => ["Note " * lowercase(m[1]) * " " * strip(m[2]) * ": " * text]))
+  else
+    code
+  end
+end
+
+"What you can do to the sequence diagram `code` while the part `key` of the kind `kind` is selected, or with `kind` :none while nothing is"
+sequence_tools(code, kind::Symbol, key) = begin
+  up, down = Tool(:up, "arrow-up", "Move it up, before what comes before it"), Tool(:down, "arrow-down", "Move it down, after what comes after it")
+  kind == :person ? [Tool(:message, "chat-right-text", "Add a message from them: click who it goes to", target=true),
+                     Tool(:note, "sticky", "Add a note beside them"),
+                     Tool(:drawn, "person", "Draw them as a box or as a person", choices=DRAWN_AS),
+                     Tool(:delete, "trash3", "Take them away, with their messages  ⌫")] :
+  kind == :message ? [Tool(:look, "arrow-right", "Change how the arrow looks", choices=ARROW_NAMES),
+                      Tool(:turn, "arrow-left-right", "Turn the message round"), up, down,
+                      Tool(:delete, "trash3", "Take the message away  ⌫")] :
+  kind == :note ? [up, down, Tool(:delete, "trash3", "Take the note away  ⌫")] :
+  [Tool(:add, "person-plus", "Add someone")]
+end
+
+"`code` without `id`: the line that names them, their messages, and the notes that are only theirs"
+without_person(code, r, id) = begin
+  gone = Dict{Int,Vector{String}}()
+  haskey(r.said, id) && (gone[r.said[id]] = String[])
+  for ev in r.events
+    if ev.kind == :message
+      id in (ev.from, ev.to) && (gone[ev.line] = String[])
+    elseif ev.kind == :note && id in ev.who
+      left = filter(!=(id), ev.who)
+      m = match(NOTE, said_line(code, ev.line))
+      gone[ev.line] = isempty(left) ? String[] : ["Note " * lowercase(m[1]) * " " * join(left, ",") * ": " * m[3]]
+    end
+  end
+  for (n, line) in statements(code)[1]
+    m = match(r"^(?:activate|deactivate|destroy)\s+(.+)$", line)
+    m !== nothing && strip(m[1]) == id && (gone[n] = String[])
+  end
+  less = relined(code, gone)
+  # Someone that only a message to or from them named stays
+  left = read_sequence(less).ids
+  lone = [who for who in r.ids if who != id && !(who in left)]
+  isempty(lone) ? less : added(less, ("participant " * who for who in lone)...)
+end
+
+"`code` without the message or the note on line `n`. Someone that only that line named stays, with a line of their own in its place."
+without_event(code, r, n::Int) = begin
+  left = read_sequence(relined(code, Dict(n => String[]))).ids
+  relined(code, Dict(n => String["participant " * who for who in r.ids if !(who in left)]))
+end
+
+"""
+Use a tool on the sequence diagram `code`. `arg` is the choice, or the part
+that was clicked, for a tool that needs one. Returns the new code, the part
+that's selected after it, and whether the words of that part are typed next.
+"""
+sequence_use(code, tool::Symbol, kind::Symbol, key, arg) = begin
+  r = read_sequence(code)
+  same = (code, kind == :none ? nothing : (kind, key), false)
+  messages, notes = those(r.events, :message), those(r.events, :note)
+  if tool == :add
+    id = fresh_person(r.ids)
+    (added(code, "participant $id as Someone"), (:person, id), true)
+  elseif tool == :message && kind == :person
+    (arg isa Tuple && arg[1] == :person) || return same
+    (added(code, "$key->>$(arg[2]): Message"), (:message, length(messages) + 1), true)
+  elseif tool == :note && kind == :person
+    (added(code, "Note right of $key: Note"), (:note, length(notes) + 1), true)
+  elseif tool == :drawn && kind == :person
+    arg in ("participant", "actor") || return same
+    (declared(code, r, key, arg, get(r.names, key, key)), (kind, key), false)
+  elseif tool == :delete && kind == :person
+    (without_person(code, r, key), nothing, false)
+  elseif kind in (:message, :note) && tool in (:up, :down, :delete, :look, :turn)
+    n = (kind == :message ? messages : notes)[key].line
+    tool == :delete && return (without_event(code, r, n), nothing, false)
+    if tool in (:up, :down)
+      # It changes places with the line of code beside it. Past the line that opens or closes a frame, it's in or out of the frame.
+      said = [k for (k, _) in statements(code)[1]]
+      i = findfirst(==(n), said) + (tool == :up ? -1 : 1)
+      (2 <= i <= length(said)) || return same
+      new = swapped(code, n, said[i])
+      events = those(read_sequence(new).events, kind)
+      at = findfirst(ev -> ev.line == said[i], events)
+      return (new, at === nothing ? nothing : (kind, at), false)
+    end
+    kind == :message || return same
+    line = said_line(code, n)
+    made = startswith(line, r"create\s+") ? "create " : ""
+    m = match(MESSAGE, replace(line, r"^create\s+" => ""))
+    words = m[5] === nothing ? "" : ": " * m[5]
+    tool == :turn && return (relined(code, Dict(n => [made * m[4] * m[2] * something(m[3], "") * m[1] * words])), (kind, key), false)
+    arg isa AbstractString || return same
+    (relined(code, Dict(n => [made * m[1] * arg * something(m[3], "") * m[4] * words])), (kind, key), false)
+  else
+    same
+  end
+end
+
+"How the parts of a sequence diagram are changed. See `EDITORS` in main.jl."
+const sequence_edits = (said=sequence_said, reword=sequence_reword, tools=sequence_tools, use=sequence_use)
+
+export sequence, sequence_edits
