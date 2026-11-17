@@ -4,17 +4,17 @@
 @use "../../abstract" light dark with_theme describe SemanticUI
 @use "../../Geometric"...
 @use "../../draw" frame rect
-@use "../../testing" pixels save_png click!
+@use "../../testing" pixels save_png click! move!
 @use "github.com/jkroso/Prospects.jl" @def
-@use "github.com/jkroso/MiniFB.jl" KeyPress Keys Typed onkey ontype
-@use "./picture" Picture Problem Pen Shape Stroke Words Slice Part Tool label plain statements styles paint added relined quoted
+@use "github.com/jkroso/MiniFB.jl" KeyPress KeyRelease Keys Typed onkey ontype
+@use "./picture" Picture Problem Pen Shape Stroke Words Slice Part Tool label plain statements styles paint added relined quoted wide
 @use "./graph" Box Link arrange! spread
 @use "./flowchart" flowchart read_chart read_link flowchart_edits
 @use "./pie" pie_edits
 @use "./state" state_edits
 @use "./sequence" sequence_edits
 @use "./class" class_edits
-@use "." Mermaid diagram problem kind tools use! pick_at! key! retype! settle! cancel! part part_at ToolButton
+@use "." Mermaid diagram problem kind tools use! pick_at! key! retype! settle! cancel! part part_at pictured point_of landing ToolButton
 
 const pen = Pen("Helvetica", 13.0)
 words(p::Picture) = [w.text for w in p.items if w isa Words]
@@ -545,6 +545,12 @@ let code = "flowchart LR\n  A[One] --> B{Two}\n  B -- yes --> C[Three]", seen = 
   frame(w)
   @test m.typing == (:box, "B") && w.focus === m.field && m.field.text == "Two"
   type(" more")
+  # The diamond is too small for the words, so it grows as they're typed, and its glow with it
+  M = parentmodule(Mermaid)
+  diamond = part(m, (:box, "B"))
+  big = Base.invokelatest(getfield(M, :grown), m, diamond)
+  @test big !== nothing && pictured(m).items[first(big)] isa Shape && last(big).kind == :diamond
+  @test last(big).w > diamond.box[3] && last(big).h == diamond.box[4]
   save_png(joinpath(dirname(picture), "typing.png"), w)
   key(Keys.enter)
   @test m.typing === nothing && m.code == replace(code, "B{Two}" => "B{Two more}") && seen == [m.code]
@@ -555,12 +561,23 @@ let code = "flowchart LR\n  A[One] --> B{Two}\n  B -- yes --> C[Three]", seen = 
   type("x")
   key(Keys.escape)
   @test m.typing === nothing && length(seen) == 1
+  # A line's label has no box to grow. What's behind the words covers the line under them.
+  m.picked = (:line, 2)
+  @test retype!(m)
+  type(" and some more")
+  @test Base.invokelatest(getfield(M, :grown), m, part(m, (:line, 2))) === nothing
+  save_png(joinpath(dirname(picture), "label.png"), w)
+  key(Keys.escape)
+  m.picked = (:box, "B")
+  @test m.typing === nothing && length(seen) == 1
 
   # A tool that needs another box waits for a click on one
   @test use!(m, :join) && m.waiting == :join
   click!(w, at((:box, "A")))
   frame(w)
   @test m.waiting === nothing && endswith(m.code, "\n  B --> A") && m.picked == (:line, 3)
+  frame(w)
+  save_png(joinpath(dirname(picture), "line.png"), w)
   # A tool with choices takes one of them
   @test !use!(m, :look) && use!(m, :look, (:dotted, :none, :arrow)) && endswith(m.code, "\n  B -.-> A")
   # ⌫ takes the selected part away, and then nothing is selected
@@ -571,7 +588,19 @@ let code = "flowchart LR\n  A[One] --> B{Two}\n  B -- yes --> C[Three]", seen = 
   @test use!(m, :add)
   frame(w)
   @test m.picked == (:box, "D") && m.typing == (:box, "D") && m.field.anchor == 0 && m.field.cursor == length("New box")
+  # They're typed in the box itself, with no box of their own, in place of the words that the box shows
+  new = part(m, (:box, "D"))
+  pen_wide(s) = wide(Pen(m.made[1][2], m.made[1][3]), s; size=typed.size, bold=typed.bold, italic=typed.italic)
+  own = Base.invokelatest(getfield(M, :own_words), m, new)
+  @test [pictured(m).items[i].text for i in own] == ["New box"]
+  typed = Base.invokelatest(getfield(M, :typed_words), m, new)
+  @test typed.text == "New box" && typed.x ≈ pictured(m).items[own[1]].x - pen_wide("New box") / 2
+  save_png(joinpath(dirname(picture), "new_box.png"), w)
   type("Four")
+  frame(w)
+  typed = Base.invokelatest(getfield(M, :typed_words), m, new)
+  @test typed.text == "Four" && typed.x ≈ new.words[1] - pen_wide("Four") / 2
+  save_png(joinpath(dirname(picture), "new_box_typed.png"), w)
   click!(w, at((:box, "A")))   # a click somewhere else takes the words too
   frame(w)
   @test occursin("D[Four]", m.code) && m.picked == (:box, "A") && m.typing === nothing
@@ -580,4 +609,51 @@ let code = "flowchart LR\n  A[One] --> B{Two}\n  B -- yes --> C[Three]", seen = 
   @test m.picked === nothing
   # A change that would make code that can't be drawn isn't made
   @test !Base.invokelatest(getfield(parentmodule(Mermaid), :change!), m, "flowchart LR\n  A[") && occursin("D[Four]", m.code)
+end
+
+# While the mouse is over a box, a point shows on the box's edge. Drag the point onto another box, and a line goes to it.
+let code = "flowchart LR\n  A[One] --> B[Two]\n  C[Three]", seen = String[]
+  m = Mermaid(code, editing=true, onchange=m -> push!(seen, m.code))
+  w = Window(Page(m), size=(700px, 300px))
+  frame(w)
+  pictures = get(ENV, "MERMAID_PICTURES", mktempdir())
+  # The place in the window of a place in the picture
+  win(p) = (px(m.place[1] + p[1] * m.place[3]), px(m.place[2] + p[2] * m.place[3]))
+  down() = (w.keys |= Keys.mouse_left; onkey(w, KeyPress{Keys.mouse_left}(0, w)); frame(w))
+  up() = (w.keys ⊻= Keys.mouse_left; onkey(w, KeyRelease{Keys.mouse_left}(0, w)); frame(w))
+  b = part(m, (:box, "B"))
+  move!(w, win(b.words))
+  @test m.hovered == b && !m.on_point
+  # The lines of this diagram go right, so the point is in the middle of the box's right side
+  point = point_of(m, b)
+  @test point == (b.box[1] + b.box[3], b.box[2] + b.box[4] / 2)
+  move!(w, win(point))
+  @test m.hovered == b && m.on_point
+  save_png(joinpath(pictures, "point.png"), w)
+  # Away from the boxes, no point shows
+  move!(w, win((1.0, 1.0)))
+  @test m.hovered === nothing
+
+  # A drag from the point onto box C draws a line from B to C, and selects the line
+  move!(w, win(point))
+  down()
+  @test m.joining !== nothing
+  c = part(m, (:box, "C"))
+  move!(w, win(c.words))
+  @test landing(m) == c
+  save_png(joinpath(pictures, "joining.png"), w)
+  up()
+  @test m.joining === nothing && endswith(m.code, "\n  B --> C") && seen == [m.code] && m.picked[1] == :line
+
+  # Let go away from the boxes, and no line is drawn. The box it's from is selected.
+  b = part(m, (:box, "B"))
+  move!(w, win(point_of(m, b)))
+  down()
+  move!(w, win((1.0, 1.0)))
+  up()
+  @test m.joining === nothing && length(seen) == 1 && m.picked == (:box, "B")
+  # A press on a box that isn't on its point selects the box, as a click does
+  a = part(m, (:box, "A"))
+  click!(w, win(a.words))
+  @test m.picked == (:box, "A") && m.joining === nothing
 end

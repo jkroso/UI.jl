@@ -1,6 +1,6 @@
 @use "github.com/jkroso/Prospects.jl" @def
 @use "github.com/jkroso/MiniFB.jl/skia" sk_color font_metrics
-@use "github.com/jkroso/MiniFB.jl" flt Keys KeyPress MouseMove onkey onmouse
+@use "github.com/jkroso/MiniFB.jl" flt Keys KeyPress KeyRelease MouseMove onkey onmouse
 @use Skia
 @use "github.com/jkroso/Font.jl" ["units" px pt]
 @use "../../Geometric"...
@@ -47,6 +47,8 @@
 #     or for the whole diagram while nothing is: add a box, draw a line from
 #     this box to the one that's clicked next, change its shape, take it away.
 #   - ⌫ takes the selected part away.
+#   - A box that a line can be drawn from shows a point on its edge while the
+#     mouse is over it. Drag the point onto another box to draw a line to it.
 #
 # Each change writes the code again, in `code`, and only the lines that the
 # change is about. A box has no place of its own in the code, so the diagram
@@ -115,7 +117,10 @@ const EDITORS = Dict{String,Any}("flowchart" => flowchart_edits, "graph" => flow
   field::Any = nothing       # the text field that holds the words that are typed. It isn't shown: the picture shows its words.
   clicked::NTuple{3,Float64} = (0.0, 0.0, 0.0)             # when and where the last click was, to tell two clicks from one
   place::NTuple{3,Float64} = (0.0, 0.0, 1.0)               # where its picture was last drawn: its left, its top, and how many px of the window a px of it is
-  typed_in::NTuple{4,Float64} = (0.0, 0.0, 0.0, 0.0)       # the box that the words being typed were last drawn in, in the picture
+  typed_in::NTuple{4,Float64} = (0.0, 0.0, 0.0, 0.0)       # where a click puts the caret in the words that are typed, as last drawn, in the picture
+  hovered::Any = nothing     # the Part under the mouse that a line can be drawn from, which shows its point
+  on_point::Bool = false     # the mouse is on the point of the part that's hovered
+  joining::Any = nothing     # while a line is dragged from a part's point: the part's kind and key, the tool that draws it, and where the mouse is in the picture
 end
 
 "`Mermaid(code)` draws the diagram that `code` describes"
@@ -453,11 +458,24 @@ draw(ctx, size, ui::ConcreteRect, m::Mermaid) = begin
   k = flt(ui.width) / flt(made.w)
   m.place = (Float64(ui.left.value), Float64(ui.top.value), Float64(k))
   Skia.sk_canvas_scale(ctx, k, k)
-  foreach(item -> show!(ctx, paint, t, u, item), made.items)
+  # The words of the part that are being typed are drawn as they're typed, in their place.
+  # A box that's too small for them is drawn bigger, in its own place among the rest.
+  typing = m.editing && m.typing !== nothing ? part(m, m.typing) : nothing
+  typed = typing === nothing ? Int[] : own_words(m, typing)
+  big = typing === nothing ? nothing : grown(m, typing)
+  for (i, item) in enumerate(made.items)
+    i in typed && continue
+    show!(ctx, paint, t, u, big !== nothing && first(big) == i ? last(big) : item)
+  end
   if m.editing
     chosen = part(m, m.picked)
+    if chosen !== nothing && big !== nothing && m.picked == m.typing
+      s = last(big)
+      chosen = Part(chosen.kind, chosen.key, (s.x, s.y, s.w, s.h), chosen.path, chosen.shape, chosen.words, chosen.room)
+    end
     chosen === nothing || glow!(ctx, paint, t, u, chosen)
     m.typing === nothing || draw_typing(ctx, paint, t, u, m)
+    draw_point(ctx, paint, t, u, m)
   end
   Skia.sk_canvas_restore(ctx)
   Skia.sk_paint_delete(paint)
@@ -514,13 +532,14 @@ end
 The part of the picture at the place (x, y) of it, or nothing. A line is at
 the place when it's no more than `near` px from it. The parts are asked in
 the order that the picture lists them, so a box is found before a line that
-goes under it.
+goes under it. With `kind`, only parts of that kind are asked.
 """
-part_at(m::Mermaid, x, y; near=nothing) = begin
+part_at(m::Mermaid, x, y; near=nothing, kind=nothing) = begin
   made = pictured(m)
   made isa Picture || return nothing
   near = something(near, 0.5 * m.made[1][3])
   for p in made.parts
+    kind === nothing || p.kind == kind || continue
     bx, by, bw, bh = p.box
     over = bx <= x <= bx + bw && by <= y <= by + bh
     hit = p.shape == :area ? within(p.path, x, y) : isempty(p.path) ? over : (bw > 0 && over) || far(p.path, x, y) <= near
@@ -639,12 +658,74 @@ cancel!(m::Mermaid) = begin
   true
 end
 
+"""
+The places in the list of what the picture of `m` draws of the words that the
+part `p` shows: the lines of text in the room that its words have.
+"""
+own_words(m::Mermaid, p::Part) = begin
+  (cx, cy), (rw, rh) = p.words, p.room
+  slack = 0.3m.made[1][3]
+  findall(m.made[2].items) do item
+    item isa Words && abs(item.y - cy) <= rh / 2 + slack && abs(item.x - cx) <= rw / 2 + slack
+  end
+end
+
+"""
+The words that are being typed into the part `p`, as they're drawn: with the
+look of the part's own words, and with their left where the first character
+goes. They start where the part's words start. Words that are in the middle of
+their room stay in the middle of it as they get longer.
+"""
+typed_words(m::Mermaid, p::Part) = begin
+  own = [m.made[2].items[i] for i in own_words(m, p)]
+  u = m.made[1][3]
+  look = isempty(own) ? Words("", p.words..., :middle, u, false, false, :text) : own[1]
+  text = m.field.text
+  long = wide(Pen(m.made[1][2], u), text; size=look.size, bold=look.bold, italic=look.italic)
+  left = look.align == :left ? look.x : look.align == :right ? look.x - long : p.words[1] - long / 2
+  Words(text, left, p.words[2], :left, look.size, look.bold, look.italic, look.colour)
+end
+
+"How wide the first `n` characters of the words `w` are"
+wide_to(m::Mermaid, w::Words, n) = wide(Pen(m.made[1][2], m.made[1][3]), first(w.text, n); size=w.size, bold=w.bold, italic=w.italic)
+
+"How much wider the words that are typed into the part `p` are than its own words"
+too_wide(m::Mermaid, p::Part) = (w = typed_words(m, p); wide_to(m, w, length(w.text)) - p.room[1])
+
+"""
+The shape that the part `p` is drawn with, made big enough for the words that
+are typed in it, after its place in the list of what the picture draws. It's
+nothing when the words fit, or when the part isn't drawn with a shape of its own.
+"""
+grown(m::Mermaid, p::Part) = begin
+  items = m.made[2].items
+  i = findfirst(s -> s isa Shape && all(isapprox.((s.x, s.y, s.w, s.h), p.box; atol=0.01)), items)
+  i === nothing && return nothing
+  more = too_wide(m, p)
+  more > 0 || return nothing
+  s = items[i]
+  # A diamond is narrower above and below its middle, so it grows more than the words do
+  s.kind == :diamond && (more *= s.h / max(s.h - p.room[2], 1.0))
+  # A circle stays round
+  tall = s.kind in (:circle, :double_circle) ? more : 0.0
+  i => Shape(s.kind, s.x - more / 2, s.y - tall / 2, s.w + more, s.h + tall, s.fill, s.line, s.thick, s.dash)
+end
+
+"The colour of the picture behind the place (x, y): the theme's surface, with the shapes that fill that place over it"
+behind(m::Mermaid, t::Theme, x, y) = begin
+  c = convert(RGBA{Float64}, t.surface)
+  for s in m.made[2].items
+    (s isa Shape && s.fill !== nothing && s.x <= x <= s.x + s.w && s.y <= y <= s.y + s.h) || continue
+    f = convert(RGBA{Float64}, colour(t, s.fill))
+    c = RGBA(c.r + (f.r - c.r) * f.alpha, c.g + (f.g - c.g) * f.alpha, c.b + (f.b - c.b) * f.alpha, 1.0)
+  end
+  c
+end
+
 "The place among the characters that are being typed that's nearest to `x` in the picture"
 typed_index(m::Mermaid, x) = begin
-  f = m.field
-  pen = Pen(m.made[1][2], m.made[1][3])
-  left = m.typed_in[1] + 0.6pen.size
-  argmin(n -> abs(left + wide(pen, first(f.text, n)) - x), 0:length(f.text))
+  w = typed_words(m, part(m, m.typing))
+  argmin(n -> abs(w.x + wide_to(m, w, n) - x), 0:length(w.text))
 end
 
 """
@@ -704,24 +785,186 @@ key!(m::Mermaid, K) = begin
   false
 end
 
+# --- drawing a line by dragging -----------------------------------------------------
+
+"The name of the tool that draws a line from the part `which` to another part, or nothing when it has none"
+joiner(m::Mermaid, which) = begin
+  (changes(m) && which !== nothing) || return nothing
+  tools = editor(m).tools(m.code, which...)::Vector{Tool}
+  i = findfirst(t -> t.target, tools)
+  i === nothing ? nothing : tools[i].name
+end
+
+"The way that the lines of a diagram go, as its code says: :right, :left, :down or :up"
+flow(code::AbstractString) = begin
+  lines, _ = statements(code)
+  isempty(lines) && return :down
+  said = match(r"^(?:flowchart|graph)\s+(LR|RL|TB|TD|BT)\b", lines[1][2])
+  if said === nothing
+    i = findfirst(l -> occursin(r"^direction\s+(LR|RL|TB|TD|BT)\b", l[2]), lines)
+    said = i === nothing ? nothing : match(r"^direction\s+(LR|RL|TB|TD|BT)\b", lines[i][2])
+  end
+  # The people of a sequence diagram are in a row, and their messages go across
+  way = said === nothing ? (kind(code) == "sequenceDiagram" ? "LR" : "TB") : said[1]
+  way == "LR" ? :right : way == "RL" ? :left : way == "BT" ? :up : :down
+end
+
+"Where the point that a line is dragged from is on the part `p`: the middle of the side that the diagram's lines go out of"
+point_of(m::Mermaid, p::Part) = begin
+  x, y, w, h = p.box
+  way = flow(m.code)
+  way == :right ? (x + w, y + h / 2) : way == :left ? (x, y + h / 2) : way == :up ? (x + w / 2, y) : (x + w / 2, y + h)
+end
+
+"How near the point of a part the mouse has to be to be on it, in px of the picture. An app gives `near` for a diagram that's drawn small."
+reach(m::Mermaid, near) = max(0.7m.made[1][3], something(near, 0.0))
+
+"""
+The mouse is at the place (x, y) of the picture. The part under it shows its
+point, if a line can be drawn from it. The point stays while the mouse is on
+it, though half of it is outside the part. Returns true when what shows changed.
+"""
+hover_at!(m::Mermaid, x, y; near=nothing) = begin
+  was, on = m.hovered, m.on_point
+  if changes(m)
+    over = was !== nothing && hypot(x - point_of(m, was)[1], y - point_of(m, was)[2]) <= reach(m, near)
+    p = over ? was : part_at(m, x, y; near)
+    p === was || (m.hovered = p !== nothing && joiner(m, (p.kind, p.key)) !== nothing ? p : nothing)
+    m.on_point = m.hovered !== nothing && hypot(x - point_of(m, m.hovered)[1], y - point_of(m, m.hovered)[2]) <= reach(m, near)
+  else
+    m.hovered, m.on_point = nothing, false
+  end
+  m.hovered !== was || m.on_point != on
+end
+
+"Show no part's point, as when the mouse has left the diagram. Returns true when one showed."
+unhover!(m::Mermaid) = begin
+  had = m.hovered !== nothing
+  m.hovered, m.on_point = nothing, false
+  had
+end
+
+"""
+The mouse button went down at the place (x, y) of the picture. On the point of
+a part, it starts a line from the part, which follows the mouse until the
+button comes up. Returns true when it did.
+"""
+press_at!(m::Mermaid, x, y; near=nothing) = begin
+  hover_at!(m, x, y; near)
+  m.on_point || return false
+  p = m.hovered
+  m.typing === nothing || settle!(m)
+  m.waiting = nothing
+  m.joining = ((p.kind, p.key), joiner(m, (p.kind, p.key)), Float64(x), Float64(y))
+  true
+end
+
+"The mouse moved to the place (x, y) of the picture with its button down. A line that's dragged follows it. Returns true when one is."
+drag_to!(m::Mermaid, x, y) = begin
+  j = m.joining
+  j === nothing && return false
+  m.joining = (j[1], j[2], Float64(x), Float64(y))
+  true
+end
+
+"The part that the line that's dragged would go to: a part of the same kind as the one it's from, under the mouse"
+landing(m::Mermaid) = begin
+  j = m.joining
+  j === nothing && return nothing
+  p = part_at(m, j[3], j[4]; kind=j[1][1])
+  p === nothing || (p.kind, p.key) == j[1] ? nothing : p
+end
+
+"""
+The mouse button came up at the place (x, y) of the picture. A line that was
+dragged from a part onto another one is drawn, and then it's selected. Let go
+of it anywhere else, and the part it's from is selected. Returns true when a
+line was dragged.
+"""
+let_go_at!(m::Mermaid, x, y) = begin
+  drag_to!(m, x, y) || return false
+  to, (from, tool) = landing(m), m.joining
+  m.joining = nothing
+  m.picked = from
+  to === nothing || use!(m, tool, (to.kind, to.key))
+  true
+end
+
+"""
+Draw the point of the part that's hovered, on its edge. While a line is dragged
+from it, draw the line from the point to the mouse, and make the part that it
+would go to glow.
+"""
+draw_point(ctx, paint, t::Theme, u, m::Mermaid) = begin
+  j = m.joining
+  if j !== nothing
+    from = part(m, j[1])
+    from === nothing && return
+    to = landing(m)
+    to === nothing || glow!(ctx, paint, t, u, to)
+    a, b = point_of(m, from), (j[3], j[4])
+    way = towards(a, b)
+    if way !== nothing
+      long = 0.75u
+      pen!(paint, t.accent, 0.12u, :solid)
+      Skia.sk_canvas_draw_line(ctx, flt(a[1]), flt(a[2]), flt(b[1] - way[1] * SHORT[:arrow] * long), flt(b[2] - way[2] * SHORT[:arrow] * long), paint)
+      tip!(ctx, paint, :arrow, b, way..., long, t.accent, 0.12u, t.surface)
+    end
+    dot!(ctx, paint, t, u, a, true)
+  else
+    p = m.hovered
+    (p !== nothing && any(q -> q === p, m.made[2].parts)) || return
+    # A diagram on its own shows the point only while the mouse is over it. An app that takes the mouse says when it leaves.
+    m.keys === nothing && !ishovered(m) && return
+    m.typing == (p.kind, p.key) && return
+    dot!(ctx, paint, t, u, point_of(m, p), m.on_point)
+  end
+end
+
+"Draw the point of a part at `at`: a ring in the accent, which fills while the mouse is on it"
+dot!(ctx, paint, t::Theme, u, at, lit) = begin
+  r = (lit ? 0.38 : 0.3) * u
+  fill!(paint, lit ? t.accent : t.surface)
+  Skia.sk_canvas_draw_circle(ctx, flt(at[1]), flt(at[2]), flt(r), paint)
+  pen!(paint, t.accent, 0.1u, :solid)
+  Skia.sk_canvas_draw_circle(ctx, flt(at[1]), flt(at[2]), flt(r), paint)
+end
+
 "The place in the picture that's at the place `at` in the window"
-spot(m::Mermaid, at) = ((Float64(at[1].value) - m.place[1]) / m.place[3], (Float64(at[2].value) - m.place[2]) / m.place[3])
+spot(m::Mermaid, at) =((Float64(at[1].value) - m.place[1]) / m.place[3], (Float64(at[2].value) - m.place[2]) / m.place[3])
 
 onkey(m::Mermaid, ev::KeyPress{Keys.mouse_left}) = begin
   changes(m) || return nothing
+  # On a part's point, the mouse drags a line from the part
+  press_at!(m, spot(m, ev.window.mouse)...) && (keyboard!(m); return handled)
   pick_at!(m, spot(m, ev.window.mouse)...)
   # The keys are the diagram's from now on, or the field's while words are typed
   m.typing === nothing && keyboard!(m)
   handled
 end
 onkey(m::Mermaid, ::KeyPress{K}) where K = key!(m, K) ? handled : nothing
+onkey(m::Mermaid, ev::KeyRelease{Keys.mouse_left}) = let_go_at!(m, spot(m, ev.window.mouse)...) ? handled : nothing
 
-# While a tool waits for a click on a part, the mouse is a cross
-cursor(m::Mermaid) = changes(m) && m.waiting !== nothing ? :crosshair : nothing
+# The mouse shows the point of the part that it's over, and a line that's dragged from one follows it
+onmouse(m::Mermaid, ev::MouseMove) = begin
+  changes(m) || return nothing
+  at = spot(m, ev.position)
+  m.joining === nothing && return (hover_at!(m, at...); nothing)
+  Keys.mouse_left in ev.window.keys ? drag_to!(m, at...) : let_go_at!(m, at...)
+  handled
+end
 
-"Draw the outline of the part that's selected over it, in the theme's accent, with a wider and fainter line round that"
+# While a tool waits for a click on a part, or a line is dragged from a part's point, the mouse is a cross
+cursor(m::Mermaid) = changes(m) && (m.waiting !== nothing || m.joining !== nothing || m.on_point) ? :crosshair : nothing
+
+"""
+Make the part that's selected glow: a soft light in the theme's accent. A box,
+or another shape, has it outside its edge, which stays as it is. A line has it
+all along it.
+"""
 glow!(ctx, paint, t::Theme, u, p::Part) = begin
   path = Skia.sk_path_new()
+  closed = p.shape == :area || isempty(p.path)
   if p.shape == :area
     polygon!(path, p.path)
   elseif isempty(p.path)
@@ -730,48 +973,55 @@ glow!(ctx, paint, t::Theme, u, p::Part) = begin
     Skia.sk_path_move_to(path, flt(p.path[1][1]), flt(p.path[1][2]))
     foreach(q -> Skia.sk_path_line_to(path, flt(q[1]), flt(q[2])), p.path[2:end])
   end
-  accent = convert(RGB{Float64}, t.accent)
-  pen!(paint, RGBA(accent, 0.25), 0.55u, :solid)
-  Skia.sk_canvas_draw_path(ctx, path, paint)
-  pen!(paint, accent, 0.14u, :solid)
-  Skia.sk_canvas_draw_path(ctx, path, paint)
+  light = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(light, true)
+  ink = RGBA(convert(RGB{Float64}, t.accent), 0.8)
+  closed ? fill!(light, ink) : pen!(light, ink, 0.2u, :solid)
+  blur = Skia.sk_maskfilter_new_blur_with_flags(closed ? Skia.SK_BLUR_STYLE_OUTER : Skia.SK_BLUR_STYLE_NORMAL, flt(0.15u), true)
+  Skia.sk_paint_set_maskfilter(light, blur)
+  Skia.sk_canvas_draw_path(ctx, path, light)
+  Skia.sk_maskfilter_unref(blur)
+  Skia.sk_paint_delete(light)
   Skia.sk_path_delete(path)
 end
 
 """
-Draw the words that are being typed where the part's words are: in a box with
-the caret after the place that the next character goes in, and the colour of
-a selection behind the words that are selected.
+Draw the words that are being typed in the part, in place of its own words and
+with their look: with the caret after the place that the next character goes
+in, and the colour of a selection behind the words that are selected. The
+part's glow is all that's round them.
 """
 draw_typing(ctx, paint, t::Theme, u, m::Mermaid) = begin
   p = part(m, m.typing)
   p === nothing && return
   f = field!(m)
-  pen = Pen(t.family, u)
-  to(n) = wide(pen, first(f.text, n))
-  # The box covers the words that the part shows, so they don't show beside the ones that are typed
-  w, h = max(to(length(f.text)), p.room[1], 3u) + 1.2u, max(1.9u, p.room[2] + 0.6u)
-  x, y = p.words[1] - w / 2, p.words[2] - h / 2
-  m.typed_in = (x, y, w, h)
-  path = Skia.sk_path_new()
-  Skia.sk_path_add_rounded_rect(path, bounds(x, y, w, h), flt(0.3u), flt(0.3u), Skia.SK_PATH_DIRECTION_CW)
-  fill!(paint, t.surface)
-  Skia.sk_canvas_draw_path(ctx, path, paint)
-  pen!(paint, t.accent, 0.1u, :solid)
-  Skia.sk_canvas_draw_path(ctx, path, paint)
-  Skia.sk_path_delete(path)
-  left = x + 0.6u
+  w = typed_words(m, p)
+  to(n) = wide_to(m, w, n)
+  # A click in the words, or in the room that the part's own words had, puts the caret there
+  (cx, cy), (rw, rh) = p.words, p.room
+  left, right = min(w.x, cx - rw / 2, cx - 1.5u), max(w.x + to(length(w.text)), cx + rw / 2, cx + 1.5u)
+  h = max(1.9u, rh + 0.6u)
+  m.typed_in = (left - 0.6u, cy - h / 2, right - left + 1.2u, h)
+  # Words that are wider than the room of a part that has no box to grow, like a line's label,
+  # have the colour that's behind them under them, so that what they cross doesn't show through
+  if too_wide(m, p) > 0 && grown(m, p) === nothing
+    path = Skia.sk_path_new()
+    Skia.sk_path_add_rounded_rect(path, bounds(w.x - 0.3u, cy - 0.75w.size, to(length(w.text)) + 0.6u, 1.5w.size), flt(0.3u), flt(0.3u), Skia.SK_PATH_DIRECTION_CW)
+    fill!(paint, behind(m, t, cx, cy))
+    Skia.sk_canvas_draw_path(ctx, path, paint)
+    Skia.sk_path_delete(path)
+  end
   lo, hi = minmax(f.anchor, f.cursor)
   if lo != hi
     fill!(paint, RGBA(convert(RGB{Float64}, t.accent), 0.3))
-    Skia.sk_canvas_draw_rect(ctx, bounds(left + to(lo), y + 0.3u, to(hi) - to(lo), h - 0.6u), paint)
+    Skia.sk_canvas_draw_rect(ctx, bounds(w.x + to(lo), cy - 0.65w.size, to(hi) - to(lo), 1.3w.size), paint)
   end
-  isempty(f.text) || show!(ctx, paint, t, u, Words(f.text, left, p.words[2], :left, u, false, false, :text))
+  isempty(w.text) || show!(ctx, paint, t, u, w)
   # The caret blinks, and it's lit just after a key
   if mod(time() - f.last_action, 1.0) < 0.5
-    at = left + to(f.cursor)
+    at = w.x + to(f.cursor)
     pen!(paint, t.accent, 0.12u, :solid)
-    Skia.sk_canvas_draw_line(ctx, flt(at), flt(y + 0.35u), flt(at), flt(y + h - 0.35u), paint)
+    Skia.sk_canvas_draw_line(ctx, flt(at), flt(cy - 0.6w.size), flt(at), flt(cy + 0.6w.size), paint)
   end
 end
 
@@ -824,5 +1074,6 @@ onkey(b::ToolButton, ev::KeyPress{Keys.mouse_left}) = begin
   handled
 end
 
-export Mermaid, diagram, problem, kind, tools, use!, pick_at!, key!, retype!, settle!, cancel!, part, part_at, changes, pictured, Tool, Part
+export Mermaid, diagram, problem, kind, tools, use!, pick_at!, key!, retype!, settle!, cancel!, part, part_at, changes, pictured, Tool, Part,
+       hover_at!, unhover!, press_at!, drag_to!, let_go_at!, landing, point_of
 
