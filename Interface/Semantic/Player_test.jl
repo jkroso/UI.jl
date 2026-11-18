@@ -8,6 +8,8 @@
 @use "../testing"...
 @use "../media" Playback Levels ready failed duration span playing volume! picture_size finished progress level sounding silence!
 @use "../objc" libobjc sel
+@use "../media" => Media
+@use Skia
 @use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause! speed speed! next_speed stepped speed_label
 
 # A length of time, as a player shows it
@@ -272,6 +274,28 @@ if Sys.which("ffmpeg") !== nothing
     # ← can't go before the part
     press!(w, Keys.left)
     @test until(() -> shown() && abs(position(v.media) - 0.5) < 0.05)
+  end
+
+  # The pictures come in sRGB, as macOS shows the video itself. An HD video of #F38020 shows as (241,139,33).
+  # Its own numbers, which the pictures had before, are a little darker: about (239,128,30).
+  orange = joinpath(dir, "orange.mp4")
+  run(pipeline(`ffmpeg -loglevel error -y -f lavfi -i color=c=0xF38020:s=64x64:d=1:r=10
+                -vf scale=out_color_matrix=bt709:out_range=tv,format=yuv420p -c:v libx264 -crf 0
+                -x264-params colorprim=bt709:transfer=bt709:colormatrix=bt709:range=tv $orange`, devnull))
+  let m = Playback(orange), image = Ref(Ptr{Skia.sk_image_t}(C_NULL))
+    @test until(() -> ready(m))
+    Media.watch!(m)
+    Media.play!(m)
+    # `picture` gives each picture once, and `until` asks once more after it comes, so keep the first
+    @test until(() -> (image[] == C_NULL && (image[] = Media.picture(m)); image[] != C_NULL))
+    if image[] != C_NULL
+      info = Ref(Skia.sk_image_info_t(C_NULL, Skia.SK_COLOR_TYPE_RGBA_8888, Skia.SK_ALPHA_TYPE_UNPREMUL, 1, 1))
+      rgba = zeros(UInt8, 4)
+      GC.@preserve info rgba Skia.sk_image_read_pixels(image[], pointer_from_objref(info), pointer(rgba), Csize_t(4), Cint(32), Cint(32), Skia.sk_image_caching_hint_t(0))
+      @test all(abs.(Int.(rgba[1:3]) .- [241, 139, 33]) .<= 2)
+      Skia.sk_image_unref(image[])
+    end
+    Media.close!(m)
   end
 end
 

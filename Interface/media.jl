@@ -260,15 +260,24 @@ watch!(p::Playback, width::Integer=0, height::Integer=0) = begin
     p.turn = turned(p)
     # The pictures come as the file has them, before they're turned
     p.turn in (90, 270) && ((width, height) = (height, width))
+    put(dict, key, value) = ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Object, Object), dict, sel("setObject:forKey:"), value, key)
     wants = msg(cls("NSMutableDictionary"), "dictionary")
-    set(key, value) = ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Object, Object), wants, sel("setObject:forKey:"),
-                            value, constant(CoreVideo, key))
+    set(key, value) = put(wants, constant(CoreVideo, key), value)
     set(:kCVPixelBufferPixelFormatTypeKey, number(0x42475241))   # the letters BGRA: the order of the bytes of a pixel, as Skia has them
     if width > 0 && height > 0
       set(:kCVPixelBufferWidthKey, number(width))
       set(:kCVPixelBufferHeightKey, number(height))
     end
-    p.output = msg(msg(cls("AVPlayerItemVideoOutput"), "alloc"), "initWithPixelBufferAttributes:", wants)
+    # macOS converts each picture to sRGB, the colours that the window shows, as it does for a video that it
+    # shows itself. Without this the pictures have the video's own numbers. For an HD video those are a little
+    # darker than in QuickTime or Safari: #F38020 came out as (239,128,30), where macOS shows (241,139,33).
+    av(name) = constant(AVFoundation, name)
+    colours = msg(cls("NSMutableDictionary"), "dictionary")
+    put(colours, av(:AVVideoColorPrimariesKey), av(:AVVideoColorPrimaries_ITU_R_709_2))   # sRGB has the primaries of HD video
+    put(colours, av(:AVVideoTransferFunctionKey), av(:AVVideoTransferFunction_IEC_sRGB))
+    put(colours, av(:AVVideoYCbCrMatrixKey), av(:AVVideoYCbCrMatrix_ITU_R_709_2))
+    put(wants, av(:AVVideoColorPropertiesKey), colours)
+    p.output = msg(msg(cls("AVPlayerItemVideoOutput"), "alloc"), "initWithOutputSettings:", wants)
     msg(p.item, "addOutput:", p.output)
   end
   p
