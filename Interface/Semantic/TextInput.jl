@@ -230,6 +230,10 @@ handle_key!(input::TextInput, key, window) = begin
       delete_selection!(input)
     elseif input.cursor > 0
       cut!(input, cmd ? 0 : word ? word_start(input) : input.cursor - 1, input.cursor)
+    else
+      # At the start of the field it has nothing to take away, so the node above the field can use it,
+      # like a field of addresses that takes away the last address
+      return nothing
     end
   elseif key == Keys.delete
     if has_selection(input)

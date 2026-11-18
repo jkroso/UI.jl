@@ -61,6 +61,11 @@ let input = TextInput(), w = Window(Form(input), size=(140px, 40px))
   @test emit(input, KeyPress{Keys.left}(0, w)) === handled
   @test emit(input, KeyPress{Keys.enter}(0, w)) === nothing
   @test emit(input, KeyPress{Keys.up}(0, w)) === nothing
+  # ⌫ at the start of the field has nothing to take away, so it goes on up too
+  press(Keys.home)
+  @test emit(input, KeyPress{Keys.backspace}(0, w)) === nothing
+  @test emit(input, KeyPress{Keys.right}(0, w)) === handled
+  @test emit(input, KeyPress{Keys.backspace}(0, w)) === handled
 end
 
 # Tab goes to the next field in the order that the layout has them, and ⇧Tab to the one before
