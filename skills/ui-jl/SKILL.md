@@ -1,6 +1,6 @@
 ---
 name: ui-jl
-description: Write, change and test apps made with UI.jl, the Julia UI library at github.com/jkroso/UI.jl (SemanticUI nodes, describe, Row/Column/Box layout, MiniFB windows). Covers how a component is written, the layout rules and their traps, testing a window without opening it, and hot reload. Use when code loads github.com/jkroso/UI.jl, as Kaydown and UI.jl's own examples do, or when the user mentions UI.jl, describe, SemanticUI, a window test or hot reload.
+description: Write, change and test apps made with UI.jl, the Julia UI library at github.com/jkroso/UI.jl (SemanticUI nodes, describe, Row/Column/Box layout, MiniFB windows). Covers how a component is written, the layout rules and their traps, testing a window without opening it, and hot reload. Use when code loads github.com/jkroso/UI.jl, as Ladder and UI.jl's own examples do, or when the user mentions UI.jl, describe, SemanticUI, a window test or hot reload.
 ---
 
 # UI.jl
@@ -45,7 +45,7 @@ onkey(c::Choice, ::KeyPress{Keys.mouse_left}) = (c.chosen = !c.chosen; handled)
 - State lives in the semantic node. Geometry is made new on each frame, so never keep a `Row` to change later.
 - A handler that returns `handled` stops the event. Without it the event goes on to the nodes above.
 - `onkey` gets mouse buttons and keys. `ontype` gets the characters that were typed. Use `ontype` for text.
-- A node that must be the same object on each frame has to be kept: as a child (`add_child!`), in a field, or in a table that the app owns. Kaydown keeps them in `e.nodes` with its own `node!(make, e, key)`.
+- A node that must be the same object on each frame has to be kept: as a child (`add_child!`), in a field, or in a table that the app owns. Ladder keeps them in `e.nodes` with its own `node!(make, e, key)`.
 - Colours come from `theme(node)` in a reusable component, so it suits light and dark pages.
 - Tab and ⇧Tab move the keyboard between the nodes that say `tabstop(::T) = true`, as `TextInput` does. An app whose top node sees every key must leave Tab unhandled for that to work, or return `handled` to keep Tab in one field.
 

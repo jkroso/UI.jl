@@ -78,7 +78,7 @@ end
 
 const MINDMAP = """
 mindmap
-  root((Kaydown))
+  root((Ladder))
     Pages
       Diagrams
       ::icon(fa fa-book)
@@ -98,7 +98,7 @@ mindmap
 @test kind(MINDMAP) == "mindmap"
 
 let (ideas, title) = read_ideas(MINDMAP)
-  @test [i.text for i in ideas] == ["Kaydown", "Pages", "Diagrams", "Flowcharts", "Mind maps", "Tables", "Sharing", "A page of HTML",
+  @test [i.text for i in ideas] == ["Ladder", "Pages", "Diagrams", "Flowcharts", "Mind maps", "Tables", "Sharing", "A page of HTML",
                                     "A printed page", "A link", "Agents", "They write pages", "They read what you change"]
   @test [i.shape for i in ideas] == [:circle, :default, :default, :default, :default, :default, :default, :rect, :round, :hexagon,
                                      :default, :hexagon, :stadium]
@@ -126,8 +126,8 @@ end
 let p = diagram(MINDMAP)
   @test p isa Picture && p.w > 0 && p.h > 0
   @test inside(p)
-  @test issubset(["Kaydown", "Pages", "Flowcharts", "A page of HTML", "They write pages"], words(p))
-  root = around(p, "Kaydown")
+  @test issubset(["Ladder", "Pages", "Flowcharts", "A page of HTML", "They write pages"], words(p))
+  root = around(p, "Ladder")
   @test root.kind == :circle && root.fill == :accent
   # The middle idea is in the middle, with ideas of its own on both sides
   heads = [around(p, t) for t in ("Pages", "Sharing", "Agents")]

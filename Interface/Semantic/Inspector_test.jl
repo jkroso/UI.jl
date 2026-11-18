@@ -85,7 +85,7 @@ let settings = Dict{String,Any}("font" => "Charter"),
 end
 
 # Escape that ends an edit leaves the keyboard with the inspector, so the arrow keys move through it again.
-# The next Escape goes on to the page it's in, which takes the keyboard back, as Kaydown's page does.
+# The next Escape goes on to the page it's in, which takes the keyboard back, as Ladder's page does.
 @def mutable struct Host <: SemanticUI end
 describe(h::Host) = Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), padding(10px), Alignment.Start, h.children...)
 onkey(h::Host, e::KeyPress{Keys.escape}) = (e.window.focus !== h && focus(h); nothing)

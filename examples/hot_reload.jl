@@ -194,7 +194,7 @@ const loaded = Ref(0)
 
 """
 Watch the files Kip loaded since the last look. An example can load a file
-while it runs, as Kaydown does for the code in a `ui` block.
+while it runs, as Ladder does for the code in a `ui` block.
 """
 track_new!() = begin
   n = length(Kip.modules)

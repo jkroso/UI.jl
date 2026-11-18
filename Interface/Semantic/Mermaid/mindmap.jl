@@ -1,7 +1,7 @@
 # A mind map: one idea in the middle, and the ideas that belong to it around it.
 #
 #     mindmap
-#       root((Kaydown))
+#       root((Ladder))
 #         Pages
 #           Diagrams
 #           Tables
@@ -13,7 +13,7 @@
 # is an idea that belongs to the nearest line above it that starts further
 # left. An idea is its words alone, or its words in the signs of a shape:
 # `[a box]`, `(a round box)`, `((a circle))`, `{{a hexagon}}`, `)a cloud(` and
-# `))a bang((`. A name can come before the signs, as in `root((Kaydown))`. The
+# `))a bang((`. A name can come before the signs, as in `root((Ladder))`. The
 # name isn't shown. A cloud is drawn as a pill and a bang as a hexagon.
 #
 # The ideas that belong to the middle one go out to its right and to its left.
