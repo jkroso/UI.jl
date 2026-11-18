@@ -3,7 +3,7 @@
 # it does anything on other systems.
 
 @use GLFW
-@use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys redraw
+@use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys redraw onfiledrop stale!
 @use "./objc" libobjc cls sel msg send get_value nsstring jstring with_pool
 @use "github.com/jkroso/Font.jl/units" px
 
@@ -368,6 +368,103 @@ watch_pinch!(w::AbstractWindow) = begin
   w
 end
 
+# --- a drop that holds no file -----------------------------------------------------
+#
+# GLFW tells an app about the files that are dropped on its window, and about
+# nothing else that's dropped. Some apps hand over data and no file: the
+# Contacts app gives a contact as the text of a vCard. So the window's view
+# takes that data too. It keeps the data in a file of its own, and the app
+# hears about that file through `onfiledrop`, as it hears about a file from
+# the Finder.
+
+"Each kind of data that a drop can hold, and the ending of the file that keeps it"
+const DROPPED_DATA = ["public.vcard" => ".vcf"]
+const dropped = Dict{Ptr{Cvoid},WeakRef}()   # each NSWindow that takes these drops, and the window it's for
+# GLFW's own method for a drop keeps this name once `watch_drops!` has put `dropped_on` in its place
+const GLFW_DROP = "glfwPerformDragOperation:"
+
+"True when the pasteboard `board` holds data of the kind `kind`"
+holds(board, kind) = msg(board, "availableTypeFromArray:", msg(cls("NSArray"), "arrayWithObject:", nsstring(kind))) != C_NULL
+
+"""
+The file that keeps what the pasteboard `board` of a drop holds, or nothing
+when it holds a file, or none of the kinds in `DROPPED_DATA`. The file is in
+a new temporary folder.
+"""
+dropped_file(board) = begin
+  holds(board, "public.file-url") && return nothing   # a file is GLFW's to pass on
+  for (kind, ending) in DROPPED_DATA
+    data = msg(board, "dataForType:", nsstring(kind))
+    data == C_NULL && continue
+    n = get_value(UInt, data, "length")
+    n == 0 && continue
+    path = joinpath(mktempdir(), "dropped" * ending)
+    write(path, unsafe_wrap(Array, Ptr{UInt8}(msg(data, "bytes")), n))
+    return path
+  end
+  nothing
+end
+
+"macOS calls this on the window's view when something is dropped on it"
+dropped_on(self::Ptr{Cvoid}, cmd::Ptr{Cvoid}, sender::Ptr{Cvoid})::Bool = begin
+  try
+    ref = get(dropped, msg(self, "window"), nothing)
+    w = ref === nothing ? nothing : ref.value
+    path = w === nothing ? nothing : with_pool(() -> dropped_file(msg(sender, "draggingPasteboard")))
+    if path !== nothing
+      stale!(w)   # the window draws again, as it does after a file is dropped
+      invokelatest(onfiledrop, w, [path])
+      return true
+    end
+  catch err
+    # An error mustn't go back into macOS's own code
+    @error "Couldn't take what was dropped on the window" exception=(err, catch_backtrace())
+    return false
+  end
+  # A file, or a kind of data that this doesn't take, is GLFW's
+  ccall((:objc_msgSend, libobjc), Bool, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}), self, sel(GLFW_DROP), sender)
+end
+
+"""
+Put `dropped_on` in the place of the method that the views of `class` have for
+a drop. The method that was there keeps the name in `GLFW_DROP`. It's false
+when the class has no such method.
+"""
+swap_drop!(class) = begin
+  drop = sel("performDragOperation:")
+  method = ccall((:class_getInstanceMethod, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}), class, drop)
+  method == C_NULL && return false
+  types = ccall((:method_getTypeEncoding, libobjc), Cstring, (Ptr{Cvoid},), method)
+  # A name is given only once, and the class outlives this file when the file is loaded again. So the
+  # name always means GLFW's method, and never a `dropped_on` that an earlier load put there.
+  ccall((:class_addMethod, libobjc), Bool, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring), class, sel(GLFW_DROP),
+        ccall((:method_getImplementation, libobjc), Ptr{Cvoid}, (Ptr{Cvoid},), method), types)
+  ccall((:class_replaceMethod, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring), class, drop,
+        @cfunction(dropped_on, Bool, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid})), types)
+  true
+end
+
+"""
+Have the window take a drop that holds data and no file, like a contact from
+the Contacts app. `onfiledrop` then gets the path of a file that keeps the
+data. Call it once the window is open.
+"""
+watch_drops!(w::AbstractWindow) = begin
+  (Sys.isapple() && !isempty(w.glfw)) || return w
+  win = nswindow(w)
+  with_pool() do
+    view = msg(win, "contentView")
+    swap_drop!(ccall((:object_getClass, libobjc), Ptr{Cvoid}, (Ptr{Cvoid},), view)) || return
+    # The view takes what it took before, and these kinds of data too
+    kinds = msg(cls("NSMutableArray"), "arrayWithArray:", msg(view, "registeredDraggedTypes"))
+    foreach(((kind, _),) -> msg(kinds, "addObject:", nsstring(kind)), DROPPED_DATA)
+    msg(view, "registerForDraggedTypes:", kinds)
+  end
+  filter!(p -> p.second.value !== nothing, dropped)   # windows that have gone
+  dropped[win] = WeakRef(w)
+  w
+end
+
 # --- a mouse wheel or a trackpad ---------------------------------------------------
 #
 # macOS says, with each scroll, if it came in small exact steps, as from a
@@ -388,4 +485,4 @@ scrolled_by_wheel() = Sys.isapple() && with_pool() do
   event != C_NULL && get_value(UInt, event, "type") == scroll_wheel_event && !get_value(Bool, event, "hasPreciseScrollingDeltas")
 end
 
-export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, scrolled_by_wheel
+export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, watch_drops!, scrolled_by_wheel

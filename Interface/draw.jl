@@ -10,7 +10,7 @@
 @use "./Geometric"...
 @use "./Specific"... position!
 @use "./fonts" skia_font
-@use "./window" onpinch watch_pinch! scrolled_by_wheel
+@use "./window" onpinch watch_pinch! watch_drops! scrolled_by_wheel
 @use "./image" image_source
 
 "Draw the lines a container puts between its children, centred in each gap"
@@ -1035,7 +1035,7 @@ MiniFB calls `onopen(window)` once the window is open. UI.jl passes it on to
 `onopen(ui, window)`, so each app can do what its window needs then, like
 `hide_titlebar!`, without replacing what another app loaded alongside it does.
 """
-onopen(w::Window) = (watch_pinch!(w); onopen(w.ui, w))
+onopen(w::Window) = (watch_pinch!(w); watch_drops!(w); onopen(w.ui, w))
 onopen(ui, w::Window) = nothing
 
 """
