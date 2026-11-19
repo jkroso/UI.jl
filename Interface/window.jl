@@ -93,6 +93,20 @@ place_window_buttons!(w::AbstractWindow, x, y) = begin
   w
 end
 
+"True when the window fills a screen of its own, as the green button of its title bar makes it. A window that isn't on the screen never does."
+fills_screen(w::AbstractWindow) = !isempty(w.glfw) && get_value(UInt, nswindow(w), "styleMask") & full_screen != 0
+
+"""
+Make the window fill a screen of its own, as the green button of its title bar
+does, or with `on` false put it back. macOS takes a moment to do it, and
+`fills_screen` is true only once it's done. A window that isn't on the screen
+stays as it is.
+"""
+fill_screen!(w::AbstractWindow, on::Bool=true) = begin
+  isempty(w.glfw) || fills_screen(w) == on || with_pool(() -> msg(nswindow(w), "toggleFullScreen:", C_NULL))
+  w
+end
+
 "Put the buttons of the NSWindow `win` where `button_places` says"
 place_buttons(win) = begin
   placing[] && return
@@ -485,4 +499,4 @@ scrolled_by_wheel() = Sys.isapple() && with_pool() do
   event != C_NULL && get_value(UInt, event, "type") == scroll_wheel_event && !get_value(Bool, event, "hasPreciseScrollingDeltas")
 end
 
-export hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, watch_drops!, scrolled_by_wheel
+export fills_screen, fill_screen!, hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, watch_drops!, scrolled_by_wheel

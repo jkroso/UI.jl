@@ -10,7 +10,8 @@
 @use "../objc" libobjc sel
 @use "../media" => Media
 @use Skia
-@use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause! speed speed! next_speed stepped speed_label
+@use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause! speed speed! next_speed stepped speed_label controls_show screen_scale caption_lines
+@use "../fonts" skia_font
 
 # A length of time, as a player shows it
 @test clock(0) == "0:00"
@@ -35,6 +36,17 @@
 @test Media.place_of("a.mp4") == abspath("a.mp4")
 let v = VideoPlayer("http://127.0.0.1:8700/a/index.m3u8", length=90)
   @test v.path == "http://127.0.0.1:8700/a/index.m3u8" && v.length == 90
+end
+
+# A player in a page always shows its controls. One that fills a screen is bigger on a taller screen, up to a point.
+@test controls_show(VideoPlayer(path="a.mp4")) && !VideoPlayer(path="a.mp4").screen
+@test screen_scale(VideoPlayer(path="a.mp4", height=600px)) == 1 && screen_scale(VideoPlayer(path="a.mp4", height=1080px)) == 1.5
+@test screen_scale(VideoPlayer(path="a.mp4", height=2000px)) == 1.8
+# A subtitle that's too long for the picture is cut between two words
+let f = skia_font("Helvetica Neue", 20, "Medium")
+  @test caption_lines(f, "one two three", 10000f0) == ["one two three"]
+  @test caption_lines(f, "one two three", 1f0) == ["one", "two", "three"]
+  @test caption_lines(f, "", 100f0) == String[]
 end
 
 # The rest needs macOS to read and play the files

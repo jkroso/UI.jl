@@ -43,6 +43,13 @@
 # in white with a dark edge, as a subtitle shows. The app sets `caption` as
 # the video plays, since the player doesn't read subtitles itself.
 #
+# A VideoPlayer whose `screen` is true is made to be all that a screen shows.
+# Its picture is as big as the room it's given, with black round it and no
+# border. Its button, its track and its times lie over the foot of the
+# picture. They show while the video is stopped, and for a moment after the
+# mouse moves. While the video plays and the mouse is still, only the picture
+# shows.
+#
 # A small circle hangs off the bottom edge of each player, at the right, while
 # the mouse is over the player or the file plays. It says how fast the file
 # plays: 1× is as fast as it was made. Click it to play at 1½×, then at 2×, then
@@ -80,6 +87,8 @@ end
   to::Float64 = Inf
   length::Float64 = 0.0    # how long a stream is in seconds, for a `path` that's a web address. macOS can't say while the stream is being made.
   caption::String = ""     # words that show over the foot of the picture, like a subtitle. Each line of it is a line there.
+  screen::Bool = false     # it's all that a screen shows: black is round its picture, and its controls lie over the foot of the picture
+  stirred::Float64 = 0.0   # when the mouse last moved over it. A player that fills a screen shows its controls for a moment after.
   # What it remembers between frames
   media::Any = nothing
   aim::Any = nothing
@@ -272,6 +281,21 @@ describe(v::VideoPlayer) = begin
     times(v, t))
   # A file with sound and no pictures, as an MP4 can be, shows the controls alone
   ready(m) && (w == 0 || h == 0) && return hung(Column(card(t)..., controls), v, t, 10px * k)
+  if v.screen
+    # The controls are only given their places here. `draw` draws them over the picture, which it draws over all of this.
+    # They're bigger on a big screen
+    g = k * screen_scale(v)
+    f = screen_font(v)
+    strip = Row(width(grow=GrowType.Grow), height(52px * g), padding(18px * g, 0px), child_gap=14px * g,
+      Box(width(30px * g), height(30px * g)),
+      Box(width(grow=GrowType.Grow), height(6px * g)),
+      Box(width(text_width(f, replace("$(clock(span(m)[2])) / $(clock(span(m)[2]))", r"\d" => "0"))), height(30px * g)))
+    return Column(width(grow=GrowType.Grow),
+      Stack(width(grow=GrowType.Grow), height(v.height), background(colorant"black"),
+        Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow)),   # the picture is drawn here
+        Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), justify=Alignment.End, strip)),
+      Row(width(grow=GrowType.Grow), height(0px), Box(width(0px), height(0px))))   # where the speed button would hang
+  end
   # A tall narrow video still has room under it for the controls
   wide = max(240px * k, v.height * (w > 0 && h > 0 ? w / h : 16 / 9))
   body = Column(width(grow=GrowType.Grow), radius(8px), border(1px, :solid, t.line), background(t.surface),
@@ -290,9 +314,16 @@ parts(::AudioPlayer, ui) = begin
   body, under = ui.children
   length(body.children) == 3 ? (body.children[1], body.children[2], body, nothing, under.children[1]) : nothing
 end
-parts(::VideoPlayer, ui) = begin
+parts(v::VideoPlayer, ui) = begin
   length(ui.children) == 2 || return nothing
   body, under = ui.children
+  if v.screen
+    # The picture, and over it a column with the controls at its foot
+    (length(body.children) == 2 && length(body.children[2].children) == 1) || return nothing
+    strip = body.children[2].children[1]
+    (strip isa ConcreteRect && length(strip.children) == 3) || return nothing
+    return (strip.children[1], strip.children[2], strip, body.children[1], under.children[1])
+  end
   strip = isempty(body.children) ? nothing : body.children[end]
   (strip isa ConcreteRect && length(strip.children) == 3) || return nothing
   (strip.children[1], strip.children[2], strip, length(body.children) == 2 ? body.children[1] : nothing, under.children[1])
@@ -350,6 +381,7 @@ draw(ctx, size, ui::ConcreteRect, v::VideoPlayer) = begin
   t, k = theme(v), scale(theme(v))
   m = media(v)
   area === nothing || screen(ctx, ui.children[1], area, v, m)   # the body: the speed button hangs under it
+  v.screen && return controls_show(v) ? controls_over(ctx, v, m, found...) : nothing
   # The part of the track that has played, and a knob at the end of it, as a Slider has
   full = track.width * played(v)
   full > 0px && rounded_rectangle(ctx, track.left, track.top, full, track.height, track.height / 2, background=t.accent)
@@ -371,9 +403,10 @@ screen(ctx, ui, area, v::VideoPlayer, m::Playback) = begin
   end
   left, top, wide, tall = flt(area.left), flt(area.top), flt(area.width), flt(area.height)
   # The picture stops inside the player's border and its round corners
-  edge = Ref(Skia.sk_rect_t(flt(ui.left + 1px), flt(ui.top + 1px), flt(ui.left + ui.width - 1px), flt(ui.top + ui.height - 1px)))
+  inset, round = v.screen ? (0px, 0px) : (1px, 7px)   # a picture that fills a screen has square corners
+  edge = Ref(Skia.sk_rect_t(flt(ui.left + inset), flt(ui.top + inset), flt(ui.left + ui.width - inset), flt(ui.top + ui.height - inset)))
   clip = Skia.sk_path_new()
-  Skia.sk_path_add_rounded_rect(clip, edge, flt(7px), flt(7px), Skia.SK_PATH_DIRECTION_CW)
+  Skia.sk_path_add_rounded_rect(clip, edge, flt(round), flt(round), Skia.SK_PATH_DIRECTION_CW)
   paint = Skia.sk_paint_new()
   Skia.sk_paint_set_antialias(paint, true)
   Skia.sk_canvas_save(ctx)
@@ -394,7 +427,8 @@ screen(ctx, ui, area, v::VideoPlayer, m::Playback) = begin
     Skia.sk_canvas_draw_image_rect(ctx, image, from, to, Ref(smooth), paint, Skia.SRC_RECT_CONSTRAINT_FAST)
     Skia.sk_canvas_restore(ctx)
   end
-  captions(ctx, v.caption, left, top, wide, tall)
+  # Over the controls of a player that fills a screen, while they show
+  captions(ctx, v.caption, left, top, wide, v.screen && controls_show(v) ? tall - flt(40px * scale(theme(v)) * screen_scale(v)) : tall)
   if ready(m) && !playing(m)
     # A dark disc with a white triangle that points right
     cx, cy, r = left + wide / 2, top + tall / 2, flt(26px * scale(theme(v)))
@@ -412,6 +446,73 @@ screen(ctx, ui, area, v::VideoPlayer, m::Playback) = begin
   Skia.sk_canvas_restore(ctx)
   Skia.sk_paint_delete(paint)
   Skia.sk_path_delete(clip)
+end
+
+const CONTROLS_STAY = 2.5   # seconds that the controls of a player that fills a screen show for, after the mouse moves
+
+"How much bigger the controls of a player that fills a screen are than a player's in a page: more on a taller screen"
+screen_scale(v::VideoPlayer) = clamp(Float64(v.height / 720px), 1.0, 1.8)
+
+"The font of the times of a player that fills a screen"
+screen_font(v::VideoPlayer) = skia_font(theme(v).family, sized(12pt, theme(v)) * screen_scale(v))
+
+"""
+True while a VideoPlayer shows its controls. One that fills a screen shows
+them while it's stopped, while its track is dragged, and for a moment after
+the mouse moves. Any other shows them all the time.
+"""
+controls_show(v::VideoPlayer) =
+  !v.screen || v.drag || time() - v.stirred < CONTROLS_STAY || v.media === nothing || !playing(v.media)
+
+"""
+Draw the controls of a player that fills a screen, over the foot of its
+picture: a shade, the sign that plays or stops, the track with the part that
+has played, and the times. They're white, since the picture under them is
+any colour.
+"""
+controls_over(ctx, v::VideoPlayer, m, button, track, strip, _...) = begin
+  k = scale(theme(v)) * screen_scale(v)
+  white = sk_color(colorant"white")
+  paint = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(paint, true)
+  # A shade behind them, a little taller than the strip
+  Skia.sk_paint_set_color(paint, sk_color(RGBA(0.0, 0.0, 0.0, 0.5)))
+  Skia.sk_canvas_draw_rect(ctx, Ref(Skia.sk_rect_t(flt(strip.left), flt(strip.top - 8px * k), flt(strip.left + strip.width), flt(strip.top + strip.height))), paint)
+  Skia.sk_paint_set_color(paint, white)
+  # Two bars while it plays, and a triangle that points right while it's stopped
+  cx, cy, r = flt(button.left + button.width / 2), flt(button.top + button.height / 2), flt(button.width / 2)
+  sign = Skia.sk_path_new()
+  if playing(m)
+    for x in (cx - 0.5f0 * r, cx + 0.12f0 * r)
+      Skia.sk_path_add_rect(sign, Ref(Skia.sk_rect_t(x, cy - 0.6f0 * r, x + 0.38f0 * r, cy + 0.6f0 * r)), Skia.SK_PATH_DIRECTION_CW)
+    end
+  else
+    Skia.sk_path_move_to(sign, cx - 0.42f0 * r, cy - 0.62f0 * r)
+    Skia.sk_path_line_to(sign, cx + 0.62f0 * r, cy)
+    Skia.sk_path_line_to(sign, cx - 0.42f0 * r, cy + 0.62f0 * r)
+    Skia.sk_path_close(sign)
+  end
+  Skia.sk_canvas_draw_path(ctx, sign, paint)
+  Skia.sk_path_delete(sign)
+  Skia.sk_paint_delete(paint)
+  # The track, the part of it that has played, and a knob at the end of that part
+  rounded_rectangle(ctx, track.left, track.top, track.width, track.height, track.height / 2, background=RGBA(1.0, 1.0, 1.0, 0.35))
+  full = track.width * played(v)
+  full > 0px && rounded_rectangle(ctx, track.left, track.top, full, track.height, track.height / 2, background=colorant"white")
+  knob = 6px * k
+  rounded_rectangle(ctx, track.left + full - knob, track.top + track.height / 2 - knob, 2knob, 2knob, knob, background=colorant"white")
+  # The times, at the right
+  words = strip.children[3]
+  f = screen_font(v)
+  size = f.size
+  said = "$(clock(at(v))) / $(clock(span(m)[2]))"
+  ink = Skia.sk_paint_new()
+  Skia.sk_paint_set_antialias(ink, true)
+  Skia.sk_paint_set_color(ink, white)
+  blob = Skia.sk_textblob_make_from_string(said, f.raw, Skia.SK_TEXT_ENCODING_UTF8)
+  Skia.sk_canvas_draw_text_blob(ctx, blob, flt(words.left + words.width) - flt(text_width(f, said)), flt(words.top + words.height / 2) + size * 0.36f0, ink)
+  Skia.sk_textblob_unref(blob)
+  Skia.sk_paint_delete(ink)
 end
 
 "A line of `words` that's too long for `room` as lines that fit, cut between two words"
@@ -468,6 +569,8 @@ end
 # --- the mouse and the keyboard ----------------------------------------------------
 
 cursor(::Player) = :hand
+# A player that fills a screen is under the mouse wherever the mouse is, so it keeps the arrow
+cursor(v::VideoPlayer) = v.screen ? :arrow : :hand
 
 within(r, (x, y), slack=0px) = r.left - slack <= x <= r.left + r.width + slack && r.top - slack <= y <= r.top + r.height + slack
 
@@ -483,6 +586,12 @@ onkey(p::Player, e::KeyPress{Keys.mouse_left}) = begin
   found === nothing && return handled
   button, track, strip, _, speeds = found
   mouse = e.window.mouse
+  if p isa VideoPlayer && p.screen
+    # A click while the controls are away brings them back, and plays or stops as a click on the picture does
+    hidden = !controls_show(p)
+    p.stirred = time()
+    hidden && (toggle!(p); return handled)
+  end
   if within(button, mouse, 4px)
     toggle!(p)
   elseif speed_shows(p) && within(speeds, mouse, 2px)
@@ -501,6 +610,8 @@ end
 
 # A drag is the player's, so the nodes above don't act on it too
 onmouse(p::Player, e::MouseMove) = begin
+  # The controls of a player that fills a screen come back when the mouse moves
+  p isa VideoPlayer && p.screen && (p.stirred = time(); redraw_in!(p, 0))
   (p.drag && Keys.mouse_left in e.window.keys) || (p.drag = false; return nothing)
   found = parts(p)
   found === nothing || scrub!(p, e.position[1], found[2])
@@ -518,4 +629,4 @@ ontype(p::Player, e::Typed) = begin
   handled
 end
 
-export AudioPlayer, VideoPlayer, toggle!, pause!, speed!, card_bottom
+export AudioPlayer, VideoPlayer, toggle!, pause!, speed!, card_bottom, controls_show
