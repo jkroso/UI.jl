@@ -7,7 +7,7 @@
 @use "../Specific"... text_width
 @use "../abstract" SemanticUI WrapMode describe focus theme scale handled sized window_of
 @use "../draw" draw cursor redraw_in! rect ishovered
-@use "../media" Playback ready failed duration span playing play! pause! seek! place! speed! picture_size watch! watching picture shown! Levels finished level
+@use "../media" Playback place_of wanted ready failed duration span playing play! pause! seek! place! speed! picture_size watch! watching picture shown! Levels finished level
 @use "./Icon" Icon
 @use "./STLViewer" density smooth
 @use Colors: RGBA, @colorant_str
@@ -30,6 +30,13 @@
 # That one starts 61 seconds into the file and stops at 86. Its track is that
 # part of the file, and its times are the file's own, so it shows 1:01 / 1:26
 # before it plays.
+#
+# A VideoPlayer can play a stream from a web address, as well as a file:
+#
+#     VideoPlayer("http://127.0.0.1:8123/film/index.m3u8", length=5830)
+#
+# `length` is how long the stream is, in seconds. macOS can't say that while
+# the stream is still being made, and the track needs it.
 #
 # A small circle hangs off the bottom edge of each player, at the right, while
 # the mouse is over the player or the file plays. It says how fast the file
@@ -66,6 +73,7 @@ end
   height::px = 360px       # the most that the picture has. The player is as wide as a picture of that height, or as the room it's given.
   from::Float64 = 0.0      # the part of the file that it plays, in seconds from the file's start. `to` is Inf for the file's end.
   to::Float64 = Inf
+  length::Float64 = 0.0    # how long a stream is in seconds, for a `path` that's a web address. macOS can't say while the stream is being made.
   # What it remembers between frames
   media::Any = nothing
   aim::Any = nothing
@@ -75,14 +83,14 @@ end
 
 "`AudioPlayer(\"song.mp3\")` plays that file. A path that isn't absolute starts from the folder that Julia is in now."
 AudioPlayer(path::AbstractString; kwargs...) = AudioPlayer(; path=abspath(path), kwargs...)
-"`VideoPlayer(\"holiday.mov\")` plays that file. A path that isn't absolute starts from the folder that Julia is in now."
-VideoPlayer(path::AbstractString; kwargs...) = VideoPlayer(; path=abspath(path), kwargs...)
+"`VideoPlayer(\"holiday.mov\")` plays that file. A path that isn't absolute starts from the folder that Julia is in now. A web address stays as it is."
+VideoPlayer(path::AbstractString; kwargs...) = VideoPlayer(; path=place_of(path), kwargs...)
 
 const Player = Union{AudioPlayer,VideoPlayer}
 
 "The file as macOS plays it. It's opened the first time that the player is shown."
 media(p::AudioPlayer) = (p.media === nothing && (p.media = Playback(p.path)); p.media::Playback)
-media(p::VideoPlayer) = (p.media === nothing && (p.media = Playback(p.path, from=p.from, to=p.to)); p.media::Playback)
+media(p::VideoPlayer) = (p.media === nothing && (p.media = Playback(p.path, from=p.from, to=p.to, length=p.length)); p.media::Playback)
 
 """
 How far through the file it is, in seconds. After a click on the track it's the
@@ -90,6 +98,9 @@ time that the click asked for, until the file gets there. The file takes a
 moment, and the track would jump back to the old time meanwhile.
 """
 at(p::Player) = begin
+  # A time in a stream that macOS can't go to yet. The track shows it until the stream gets there.
+  ahead = wanted(media(p))
+  ahead === nothing || return ahead
   now = position(media(p))
   p.aim === nothing && return now
   asked, time_asked = p.aim
@@ -158,6 +169,8 @@ tick!(p::Player, wait) = begin
   p.drag && w !== nothing && !(Keys.mouse_left in w.keys) && (p.drag = false)
   if !(ready(m) || failed(m)) || p.aim !== nothing
     redraw_in!(p, 1 / 30)
+  elseif wanted(m) !== nothing
+    redraw_in!(p, 0.25)   # it waits for more of a stream
   elseif playing(m)
     redraw_in!(p, wait)
   end

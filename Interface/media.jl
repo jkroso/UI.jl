@@ -14,6 +14,11 @@
 # 61 seconds after its start to 86. It starts at 61, and it stops at 86 as it
 # would at the end of the file.
 #
+# `Playback("http://127.0.0.1:8123/film/index.m3u8", length=5830)` plays what
+# that web address gives, which can be a stream that's still being made. macOS
+# can't say how long such a stream is until its last piece is written, so
+# `length` says it, in seconds.
+#
 # macOS reads the file while the app's event loop runs, so a `Playback` is
 # `ready` a moment after it's made, and only in an app with a window open.
 
@@ -58,20 +63,29 @@ mutable struct Playback
   to::Float64
   placed::Bool      # has it gone to `from`? It goes there once the file is ready.
   speed::Float64    # how fast it plays: 1 is as fast as the file was made, and 2 is twice as fast
+  long::Float64     # how long it is in seconds, as the one who made it said, for when macOS can't say. 0 when nobody said.
+  wanted::Float64   # the time that `seek!` asked for and macOS can't go to yet, in a stream that's still being made. NaN when there's none.
 end
 
-Playback(path::AbstractString; from::Real=0.0, to::Real=Inf) = begin
+"True when `path` is a web address and not the path of a file"
+isweb(path) = occursin(r"^https?://"i, path)
+
+"`path` as a Playback keeps it: a web address as it is, and the path of a file from the top of the disk"
+place_of(path) = isweb(path) ? String(path) : abspath(path)
+
+Playback(path::AbstractString; from::Real=0.0, to::Real=Inf, length::Real=0.0) = begin
   # The classes of AVFoundation only have their names once it's loaded
   Base.Libc.Libdl.dlopen(AVFoundation)
   player = with_pool() do
-    url = msg(cls("NSURL"), "fileURLWithPath:", nsstring(abspath(path)))
+    url = isweb(path) ? msg(cls("NSURL"), "URLWithString:", nsstring(String(path))) :
+                        msg(cls("NSURL"), "fileURLWithPath:", nsstring(abspath(path)))
     msg(msg(cls("AVPlayer"), "alloc"), "initWithURL:", url)
   end
   item = msg(player, "currentItem")
   # macOS stops at `to`, as if the file ended there
   isfinite(to) && ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, CMTime), item, sel("setForwardPlaybackEndTime:"), cmtime(to))
   from = max(Float64(from), 0.0)
-  finalizer(close!, Playback(abspath(path), player, item, C_NULL, 0, 0.0, 0.0, 0, from, Float64(to), from == 0, 1.0))
+  finalizer(close!, Playback(place_of(path), player, item, C_NULL, 0, 0.0, 0.0, 0, from, Float64(to), from == 0, 1.0, max(Float64(length), 0.0), NaN))
 end
 
 "Stop it and give its memory back to macOS"
@@ -93,8 +107,16 @@ ready(p::Playback) = status(p) == 1
 "Is it a file that macOS can't play?"
 failed(p::Playback) = status(p) == 2
 
-"How long the file is, in seconds. It's 0 until the file is `ready`."
-duration(p::Playback) = p.item == C_NULL ? 0.0 : seconds(time_of(p.item, "duration"))
+"""
+How long the file is, in seconds. It's 0 until the file is `ready`. macOS
+can't say how long a stream is while the stream is still being made, so such
+a Playback gives the `length` that it was made with.
+"""
+duration(p::Playback) = begin
+  p.item == C_NULL && return 0.0
+  long = seconds(time_of(p.item, "duration"))
+  long > 0 ? long : ready(p) ? p.long : 0.0
+end
 
 """
 The part of the file that plays: where it starts and where it stops, in seconds
@@ -158,22 +180,62 @@ end
 "Stop the file that plays now, if one does"
 silence!() = (p = sounding[]; p isa Playback && pause!(p); nothing)
 
-"Go to `s` seconds from the start of the file"
+"A part of a file, the way macOS counts it: where it starts and how long it is"
+struct CMTimeRange
+  start::CMTime
+  duration::CMTime
+end
+
+"""
+How far into the file macOS can go now, in seconds from its start. For a file
+that's all of it. A stream that's still being made has a list of its pieces,
+which macOS reads again every few seconds, and macOS goes only as far as the
+list went when it last read it.
+"""
+reach(p::Playback) = begin
+  p.item == C_NULL && return 0.0
+  with_pool() do
+    ranges = msg(p.item, "seekableTimeRanges")
+    n = ccall((:objc_msgSend, libobjc), Int, (Object, Object), ranges, sel("count"))
+    n == 0 && return 0.0
+    last = ccall((:objc_msgSend, libobjc), Object, (Object, Object, Int), ranges, sel("objectAtIndex:"), n - 1)
+    r = ccall((:objc_msgSend, libobjc), CMTimeRange, (Object, Object), last, sel("CMTimeRangeValue"))
+    seconds(r.start) + seconds(r.duration)
+  end
+end
+
+"The time that `seek!` asked for and macOS can't go to yet, or nothing. See `seek!`."
+wanted(p::Playback) = isnan(p.wanted) ? nothing : p.wanted
+
+"""
+Go to `s` seconds from the start of the file. macOS can't go to a part of a
+stream that it doesn't know of yet. Such a time is kept as `wanted`, and
+`place!` goes there once macOS knows that far.
+"""
 seek!(p::Playback, s) = begin
   p.player == C_NULL && return p
   p.placed = true   # `place!` mustn't take it back to `from` now
+  s = clamp(s, 0.0, max(duration(p), 0.0))
+  p.wanted = isweb(p.path) && s > max(reach(p), position(p)) + 0.5 ? s : NaN
+  isnan(p.wanted) || return p
   # The two zeros ask for that time exactly. Without them macOS goes to a time near it that's quicker to find.
   ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, CMTime, CMTime, CMTime), p.player,
-        sel("seekToTime:toleranceBefore:toleranceAfter:"), cmtime(clamp(s, 0.0, max(duration(p), 0.0))), cmtime(0), cmtime(0))
+        sel("seekToTime:toleranceBefore:toleranceAfter:"), cmtime(s), cmtime(0), cmtime(0))
   p
 end
 
 """
 Go to the start of the part that plays, the first time that it's called after
 the file is `ready`. A player calls it in each frame. macOS can't go to a time
-in a file that it hasn't read, so a Playback can't do this when it's made.
+in a file that it hasn't read, so a Playback can't do this when it's made. It
+also goes to the time that `seek!` kept as `wanted`, once macOS knows that far.
 """
-place!(p::Playback) = (p.placed || !ready(p) || seek!(p, p.from); p)
+place!(p::Playback) = begin
+  p.placed || !ready(p) || seek!(p, p.from)
+  # A time in a stream that macOS didn't know of when it was asked for
+  isnan(p.wanted) || !ready(p) || reach(p) + 0.5 < p.wanted || seek!(p, p.wanted)
+  p
+end
 
 "How loud it plays: 1 is the file as it is, and 0 is silent"
 volume!(p::Playback, v) = begin

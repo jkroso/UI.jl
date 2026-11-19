@@ -28,6 +28,15 @@
 @test speed_label(0.5) == "½×" && speed_label(0.75) == "¾×" && speed_label(1.25) == "1¼×" && speed_label(1.5) == "1½×" && speed_label(1.75) == "1¾×"
 @test speed_label(1.3) == "1.3×"
 
+# A player takes a web address as well as the path of a file. The address stays as it's written.
+@test Media.isweb("http://127.0.0.1:8700/a/index.m3u8") && Media.isweb("HTTPS://example.com/a.mp4")
+@test !Media.isweb("/tmp/a.mp4") && !Media.isweb("httpd.mp4")
+@test Media.place_of("http://127.0.0.1:8700/a/index.m3u8") == "http://127.0.0.1:8700/a/index.m3u8"
+@test Media.place_of("a.mp4") == abspath("a.mp4")
+let v = VideoPlayer("http://127.0.0.1:8700/a/index.m3u8", length=90)
+  @test v.path == "http://127.0.0.1:8700/a/index.m3u8" && v.length == 90
+end
+
 # The rest needs macOS to read and play the files
 if Sys.isapple()
 
