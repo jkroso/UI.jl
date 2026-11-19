@@ -7,6 +7,7 @@
 @use "../Specific"... text_width
 @use "../abstract" SemanticUI WrapMode describe focus theme scale handled sized window_of
 @use "../draw" draw cursor redraw_in! rect ishovered
+@use "../fonts" skia_font
 @use "../media" Playback place_of wanted ready failed duration span playing play! pause! seek! place! speed! picture_size watch! watching picture shown! Levels finished level
 @use "./Icon" Icon
 @use "./STLViewer" density smooth
@@ -37,6 +38,10 @@
 #
 # `length` is how long the stream is, in seconds. macOS can't say that while
 # the stream is still being made, and the track needs it.
+#
+# A VideoPlayer shows the words of its `caption` over the foot of its picture,
+# in white with a dark edge, as a subtitle shows. The app sets `caption` as
+# the video plays, since the player doesn't read subtitles itself.
 #
 # A small circle hangs off the bottom edge of each player, at the right, while
 # the mouse is over the player or the file plays. It says how fast the file
@@ -74,6 +79,7 @@ end
   from::Float64 = 0.0      # the part of the file that it plays, in seconds from the file's start. `to` is Inf for the file's end.
   to::Float64 = Inf
   length::Float64 = 0.0    # how long a stream is in seconds, for a `path` that's a web address. macOS can't say while the stream is being made.
+  caption::String = ""     # words that show over the foot of the picture, like a subtitle. Each line of it is a line there.
   # What it remembers between frames
   media::Any = nothing
   aim::Any = nothing
@@ -388,6 +394,7 @@ screen(ctx, ui, area, v::VideoPlayer, m::Playback) = begin
     Skia.sk_canvas_draw_image_rect(ctx, image, from, to, Ref(smooth), paint, Skia.SRC_RECT_CONSTRAINT_FAST)
     Skia.sk_canvas_restore(ctx)
   end
+  captions(ctx, v.caption, left, top, wide, tall)
   if ready(m) && !playing(m)
     # A dark disc with a white triangle that points right
     cx, cy, r = left + wide / 2, top + tall / 2, flt(26px * scale(theme(v)))
@@ -405,6 +412,57 @@ screen(ctx, ui, area, v::VideoPlayer, m::Playback) = begin
   Skia.sk_canvas_restore(ctx)
   Skia.sk_paint_delete(paint)
   Skia.sk_path_delete(clip)
+end
+
+"A line of `words` that's too long for `room` as lines that fit, cut between two words"
+caption_lines(f, words, room) = begin
+  lines, line = String[], ""
+  for word in split(words)
+    longer = isempty(line) ? String(word) : line * " " * word
+    if flt(text_width(f, longer)) <= room || isempty(line)
+      line = longer
+    else
+      push!(lines, line)
+      line = String(word)
+    end
+  end
+  isempty(line) || push!(lines, line)
+  lines
+end
+
+"""
+Draw `words` over the foot of the picture, which is at `left` and `top` and is
+`wide` across and `tall` down. Each line is in the middle, in white letters
+with a dark edge, so that it reads over a light picture and over a dark one.
+The letters are as big as suits the picture.
+"""
+captions(ctx, words, left, top, wide, tall) = begin
+  isempty(strip(words)) && return
+  size = Float32(clamp(round(tall * 0.052f0), 11f0, 60f0))
+  f = skia_font("Helvetica Neue", size, "Medium")
+  lines = reduce(vcat, [caption_lines(f, l, wide * 0.9f0) for l in split(words, '\n') if !isempty(strip(l))], init=String[])
+  edge, fill = Skia.sk_paint_new(), Skia.sk_paint_new()
+  for paint in (edge, fill)
+    Skia.sk_paint_set_antialias(paint, true)
+  end
+  Skia.sk_paint_set_style(edge, Skia.SK_PAINT_STYLE_STROKE)
+  Skia.sk_paint_set_stroke_width(edge, size * 0.16f0)
+  Skia.sk_paint_set_stroke_join(edge, Skia.SK_STROKE_JOIN_ROUND)
+  Skia.sk_paint_set_color(edge, sk_color(RGBA(0.0, 0.0, 0.0, 0.85)))
+  Skia.sk_paint_set_color(fill, sk_color(colorant"white"))
+  # The last line sits a little above the foot of the picture, and the lines before it are over it
+  step = size * 1.25f0
+  y = top + tall - tall * 0.06f0 - step * (length(lines) - 1)
+  for line in lines
+    x = left + (wide - flt(text_width(f, line))) / 2
+    blob = Skia.sk_textblob_make_from_string(line, f.raw, Skia.SK_TEXT_ENCODING_UTF8)
+    Skia.sk_canvas_draw_text_blob(ctx, blob, x, y, edge)
+    Skia.sk_canvas_draw_text_blob(ctx, blob, x, y, fill)
+    Skia.sk_textblob_unref(blob)
+    y += step
+  end
+  Skia.sk_paint_delete(edge)
+  Skia.sk_paint_delete(fill)
 end
 
 # --- the mouse and the keyboard ----------------------------------------------------
