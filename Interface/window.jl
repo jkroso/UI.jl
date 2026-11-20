@@ -277,7 +277,8 @@ When an item is chosen, `onselect` is called with its place in `items`. For an
 item of a menu inside the menu, it's called with the place of the item that
 opens that menu, then the item's place in that menu: `onselect(4, 2)` for
 "Table" below. `off` holds the places of the items that are grey and can't be
-chosen: `off=[1, (4, 2)]`.
+chosen: `off=[1, (4, 2)]`. `ticked` holds the places of the items that have a
+tick, like the one way of several that a list is sorted now.
 
 The menu's top left corner is at `at`, which is where the mouse is unless you
 give another place.
@@ -287,14 +288,14 @@ show it in, so that you can show a menu of your own with `show_menu!`.
 
     system_menu(window, ["Copy", "Paste", "-", "Insert" => ["Heading", "Table"]], (place...) -> println("chose ", place))
 """
-system_menu(w::AbstractWindow, items::Vector, onselect; at=w.mouse, off=()) = begin
+system_menu(w::AbstractWindow, items::Vector, onselect; at=w.mouse, off=(), ticked=()) = begin
   (Sys.isapple() && !isempty(w.glfw)) || return false
   on_choice[] = onselect
   empty!(choices)
   # Nothing draws while the menu is open. So draw now what changed just before it, like a mark on the thing the menu is for.
   Base.invokelatest(redraw, w)
   with_pool() do
-    menu = native_menu(items, off, ())
+    menu = native_menu(items, off, (); ticked)
     # The menu goes in the window's own view, so it's dark when the window is.
     # The view measures up from its bottom edge, and the window measures down from its top.
     view = msg(nswindow(w), "contentView")
@@ -310,7 +311,7 @@ system_menu(w::AbstractWindow, items::Vector, onselect; at=w.mouse, off=()) = be
 end
 
 "An NSMenu of `items`. `path` is the place of the item that opens it, or `()` for the menu itself."
-native_menu(items, off, path) = begin
+native_menu(items, off, path; ticked=()) = begin
   menu = msg(msg(msg(cls("NSMenu"), "alloc"), "init"), "autorelease")
   send(menu, "setAutoenablesItems:", false)
   for (i, entry) in enumerate(items)
@@ -324,13 +325,14 @@ native_menu(items, off, path) = begin
       made = ccall((:objc_msgSend, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
                    msg(cls("NSMenuItem"), "alloc"), sel("initWithTitle:action:keyEquivalent:"), nsstring(title), action, nsstring(""))
       if entry isa Pair
-        msg(made, "setSubmenu:", native_menu(last(entry), off, place))
+        msg(made, "setSubmenu:", native_menu(last(entry), off, place; ticked))
       else
         msg(made, "setTarget:", target())
         push!(choices, place)
         send(made, "setTag:", length(choices))
       end
       (place in off || (length(place) == 1 && i in off)) && send(made, "setEnabled:", false)
+      (place in ticked || (length(place) == 1 && i in ticked)) && send(made, "setState:", 1)
       msg(made, "autorelease")
     end
     msg(menu, "addItem:", item)
