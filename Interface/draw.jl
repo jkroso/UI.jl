@@ -1008,7 +1008,9 @@ frame(window::Window) = begin
   _scenes[id] = scene
   delete!(_rects, id)
   follow!(window, scene)
-  shown = popups(window)
+  # A copy, since a popup can open or close while the frame draws, as one from a background task can.
+  # One that opens then has no place yet, so it waits for the next frame.
+  shown = collect(Popup, popups(window))
   for popup in shown
     place!(popup, scene.size)
   end
@@ -1020,6 +1022,8 @@ frame(window::Window) = begin
     end
     t === nothing || draw_tool(ctx, window, t, scene)
   end
+  # A popup that opened while the frame drew shows on the next frame, which comes at once
+  any(p -> p.scene === nothing, popups(window)) && (_soon[id] = min(get(_soon, id, Inf), 0.001))
   stats.describe = (t1 - t0) / 1e6
   stats.layout = (t2 - t1) / 1e6
   stats.draw = (time_ns() - t2) / 1e6

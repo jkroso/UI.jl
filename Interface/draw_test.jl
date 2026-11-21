@@ -427,3 +427,27 @@ let shop = Shop(), w = Window(shop, size=(100px, 100px))
   @test shop.closed == 1
   @test scene(w) === nothing && isempty(popups(w))
 end
+
+# A popup that opens while the window draws, as one from a background task can, shows on the next frame.
+# The frame drew the list of popups as it was then, so the new one had no place yet, and the frame threw.
+"Something that opens a popup the first time it's drawn"
+@def mutable struct Opener <: SemanticUI
+  window::Any = nothing
+  opened::Bool = false
+end
+describe(::Opener) = Box(width(100px), height(100px))
+draw(ctx, size, ui::ConcreteRect, o::Opener) = begin
+  o.opened || popup!(o.window, Box(width(20px), height(20px)), anchor=(10px, 10px), key=:late)
+  o.opened = true
+  nothing
+end
+let opener = Opener(), w = Window(opener, size=(100px, 100px))
+  opener.window = w
+  # The window keeps its list of popups from its first popup on, and the frame drew that list
+  popup!(w, Box(width(20px), height(20px)), key=:first); close_popup!(w, :first)
+  frame(w)
+  @test opener.opened && only(popups(w)).key == :late
+  @test 0 < w.wake <= 0.001                 # the window wakes at once to show it
+  frame(w)
+  @test only(popups(w)).scene !== nothing
+end
