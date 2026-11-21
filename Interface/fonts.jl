@@ -97,13 +97,16 @@ register_font(path::AbstractString) = begin
   Skia.sk_string_delete(name)
   style = Skia.sk_typeface_get_fontstyle(typeface)
   weight = Skia.sk_fontstyle_get_weight(style)
+  italic = Skia.sk_fontstyle_get_slant(style) != Skia.SK_FONT_STYLE_SLANT_UPRIGHT
   Skia.sk_fontstyle_delete(style)
-  # The plain family name keeps the weight closest to Regular
+  # The plain family name keeps the upright weight closest to Regular
   current = get(_typefaces, family, nothing)
-  if current === nothing || abs(weight - 400) < abs(registered_weight(current) - 400)
+  if !italic && (current === nothing || abs(weight - 400) < abs(registered_weight(current) - 400))
     _typefaces[family] = typeface
   end
-  _typefaces["$family:$(weight_name(weight))"] = typeface
+  # A slanted face has its own name, like "Italic" or "Bold Italic", so it doesn't take the place of the upright one
+  name = weight_name(weight)
+  _typefaces["$family:$(italic ? (name == "Regular" ? "Italic" : "$name Italic") : name)"] = typeface
   empty!(_skia_fonts) # a family name may now resolve to a different face
   epoch[] += 1         # and text laid out with the old face may now be another size
   family

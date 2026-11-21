@@ -4,7 +4,7 @@
 # Source Code Pro is checked only on a Mac that has it.
 @use Test: @test, @testset
 @use Skia
-@use "./fonts" skia_font register_font installed_faces weight_of
+@use "./fonts" skia_font register_font installed_faces weight_of _typefaces
 
 weight(f) = Int(f.weight)
 
@@ -41,5 +41,20 @@ const file = joinpath(homedir(), "Library/Fonts/SourceCodePro-ExtraLight.ttf")
     @test weight(skia_font("Source Code Pro", 14, "Medium")) == 500
     @test weight(skia_font("Source Code Pro", 14, "Light")) == 300
     @test weight(skia_font("Source Code Pro", 14, "")) == 400
+  end
+end
+
+"True when the typeface `t` has slanted letters"
+slanted_face(t) = (s = Skia.sk_typeface_get_fontstyle(t); on = Skia.sk_fontstyle_get_slant(s) != Skia.SK_FONT_STYLE_SLANT_UPRIGHT; Skia.sk_fontstyle_delete(s); on)
+
+const upright = "/System/Library/Fonts/Supplemental/Trebuchet MS.ttf"
+const italic = "/System/Library/Fonts/Supplemental/Trebuchet MS Italic.ttf"
+@testset "a loaded italic face doesn't take the place of the upright one" begin
+  if isfile(upright) && isfile(italic)
+    family = register_font(upright)
+    @test register_font(italic) == family
+    # The family's own name and its Regular stay upright, and the italic face has a name of its own
+    @test !slanted_face(_typefaces[family]) && !slanted_face(_typefaces["$family:Regular"])
+    @test slanted_face(_typefaces["$family:Italic"])
   end
 end
