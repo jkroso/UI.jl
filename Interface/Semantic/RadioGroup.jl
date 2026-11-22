@@ -6,7 +6,7 @@
 @use "../Specific"... text_width
 @use "../abstract" SemanticUI WrapMode describe describe! theme scale handled integrate inputs sized carry! step_animation ease
 @use "../draw" draw cursor ishovered redraw_in!
-@use Colors: @colorant_str, RGBA
+@use Colors: @colorant_str, RGBA, red, green, blue
 
 @def mutable struct RadioGroup <: SemanticUI
   selected::Int = 1
@@ -37,15 +37,21 @@ onkey(item::RadioItem, ::KeyPress{Keys.mouse_left}) = begin
   handled
 end
 
-# A RadioGroup is a bar of choices side by side, like a Mac's segmented control. The one
-# that's picked is raised: it has the background that components put text on, and a soft
-# shadow. When a click picks another choice, the raised part slides across to it.
+# A RadioGroup is a bar of choices side by side, like a Mac's segmented control. A thin line
+# goes round the bar, and the page shows through behind the choices. The one that's picked
+# is raised: it has the background that components put text on, and a soft shadow. When a
+# click picks another choice, the raised part slides across to it.
 # These are the sizes when the theme's text has its usual size.
 const CHOICE_H = 26px   # of each choice
-const BAR_PAD = 2px     # between the bar's edge and the choices, and between two choices
+const BAR_PAD = 2px     # between the line round the bar and the choices, and between two choices
+const EDGE = 1px        # how thick the line round the bar is
 const CHOICE_X = 14px   # inside a choice, on each side of its label
 const LIFT = RGBA(0.16, 0.1, 0.03, 0.3)   # the colour of the shadow under the picked choice
+const DARK_LIFT = RGBA(0, 0, 0, 0.6)      # the shadow on a dark page, where a light one wouldn't show
 const SLIDE = 0.24      # seconds the raised part takes to slide to a new choice
+
+"The shadow under the picked choice, for a page with the theme's colours"
+lift(t) = (red(t.surface) + green(t.surface) + blue(t.surface)) / 3 < 0.5 ? DARK_LIFT : LIFT
 
 describe(item::RadioItem) = begin
   t = theme(item)
@@ -67,7 +73,9 @@ describe(rg::RadioGroup) = begin
   lefts = [sum(widths[1:i-1], init=0px) + (i - 1) * BAR_PAD * k for i in 1:n]
   items = [describe!(RadioItem(group=rg, index=i, wide=widths[i])) for i in 1:n]
   bar = Row(height(CHOICE_H * k), child_gap=BAR_PAD * k, items...)
-  frame = (height((CHOICE_H + 2BAR_PAD) * k), Alignment.Start, padding(BAR_PAD * k), radius(8px * k), background(t.line))
+  # A box counts its border as part of the space inside it, as it does its padding
+  frame = (height((CHOICE_H + 2BAR_PAD + 2EDGE) * k), Alignment.Start, padding(BAR_PAD * k), radius(8px * k),
+           border(EDGE * k, :solid, t.line))
   n == 0 && return Stack(frame..., bar)
   to = clamp(rg.selected, 1, n)
   from = rg.was in 1:n ? rg.was : to
@@ -81,7 +89,7 @@ describe(rg::RadioGroup) = begin
   w = widths[from] + (widths[to] - widths[from]) * d
   Stack(frame...,
     Box(width(preferred=w, grow=GrowType.None), height(CHOICE_H * k), offset_x=x, radius(6px * k),
-        background(t.surface), shadow(0px, 1px * k, 3px * k, LIFT)),
+        background(t.surface), shadow(0px, 1px * k, 3px * k, lift(t))),
     bar)
 end
 
