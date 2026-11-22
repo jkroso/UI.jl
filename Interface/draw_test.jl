@@ -79,6 +79,22 @@ let w = Window(Page(Dropdown(options=["a", "b"]), Dropdown(options=["c", "d"])),
   @test !update_hover!(w, scene(), label)
 end
 
+# A tool, like a button that it draws over the app, says the cursor first where it wants one,
+# and leaves the rest of the window to the app
+@use "./draw" set_tool! clear_tool! tool_cursor _cursor_shape
+struct HandTool end
+tool_cursor(::HandTool, w, pos) = pos[1] < 100px ? :hand : nothing
+let w = Window(Page(), size=(300px, 100px))
+  scene() = describe(convert(GeometricUI, w.ui), (300px, 100px))
+  shape(pos) = (update_hover!(w, scene(), pos); get(_cursor_shape, objectid(w), :arrow))
+  @test shape((50px, 50px)) == :arrow
+  set_tool!(w, HandTool())
+  @test shape((50px, 50px)) == :hand
+  @test shape((200px, 50px)) == :arrow
+  clear_tool!(w)
+  @test shape((50px, 50px)) == :arrow
+end
+
 # An event goes up through the semantic nodes until a handler returns `handled`
 @def mutable struct Clickable <: SemanticUI
   clicks::Int = 0

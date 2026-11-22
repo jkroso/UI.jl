@@ -924,6 +924,8 @@ app_size(tool, size) = size
 draw_tool(ctx, window, tool, scene) = nothing
 "Give `tool` first look at an input event. Return true if it used the event."
 tool_input(tool, window, event) = false
+"The mouse cursor that `tool` wants at the point `pos` of the window, as `cursor` gives for a node, or `nothing` to leave it to the app"
+tool_cursor(tool, window, pos) = nothing
 
 """
 The size the app in `node`'s window is laid out at, or `nothing` when `node`
@@ -1299,7 +1301,10 @@ update_hover!(w::Window, scene::ConcreteRect, pos=w.mouse) = begin
   # A node can change its cursor while the mouse stays over it, e.g. when a key goes down.
   # An open menu is over the rest of the window: a hand over its items, and an arrow everywhere else.
   behind_popup = key_popup(w) !== nothing && popup_at(w, pos) === nothing
-  set_cursor!(w, behind_popup ? :arrow : something((cursor(n) for n in chain)..., :arrow))
+  # A tool draws over the app and its popups, and sees the mouse first, so it says the cursor first
+  t = get(_tools, id, nothing)
+  shape = t === nothing ? nothing : tool_cursor(t, w, pos)
+  set_cursor!(w, shape !== nothing ? shape : behind_popup ? :arrow : something((cursor(n) for n in chain)..., :arrow))
   _hovered[id] = chain
   # A node that `describe` makes afresh on each frame is still the node it was
   length(chain) == length(old) && (isempty(chain) || same(chain[1], old[1])) && return false
@@ -1620,5 +1625,5 @@ onmouse(w::Window, e::MouseMove) = begin
 end
 
 export draw, ui, hittest, emit, handled, rect, scene, clipboard, clipboard!, popup!, close_popup!, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
-       invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, inside, offset!,
+       invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, tool_cursor, inside, offset!,
        frame_stats, FrameStats, semantic_source, viewport, redraw_in!, MouseScroll, Pinch, onpinch, placed!
