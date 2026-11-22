@@ -1,10 +1,11 @@
 # Tests for the part of window.jl that needs no window: what a drop that holds
-# no file becomes. Run them with `julia --project=. Interface/window_test.jl`.
+# no file becomes, and which button of the mouse a swipe stands for. Run them with `julia --project=. Interface/window_test.jl`.
 # They use a pasteboard of their own, so the Mac's clipboard stays as it is.
 
 @use Test: @test, @testset
 @use "./objc" libobjc cls sel msg nsstring with_pool
-@use "./window" dropped_file swap_drop! GLFW_DROP
+@use "./window" dropped_file swap_drop! GLFW_DROP swipe_button
+@use "github.com/jkroso/MiniFB.jl" Keys
 @use GLFW
 
 if Sys.isapple()
@@ -57,4 +58,12 @@ if Sys.isapple()
   end
 
   msg(board, "releaseGlobally")
+end
+
+@testset "a swipe to the left is the back button, and to the right the forward button" begin
+  # macOS gives a swipe to the left a deltaX of 1, and to the right -1
+  @test swipe_button(1.0) == Keys.mouse_back
+  @test swipe_button(-1.0) == Keys.mouse_forward
+  # A swipe up or down has no deltaX, and stands for no button
+  @test swipe_button(0.0) === nothing
 end

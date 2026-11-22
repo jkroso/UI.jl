@@ -3,7 +3,7 @@
 # it does anything on other systems.
 
 @use GLFW
-@use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys redraw onfiledrop stale!
+@use "github.com/jkroso/MiniFB.jl" AbstractWindow Keys KeyPress KeyRelease onkey redraw onfiledrop stale!
 @use "./objc" libobjc cls sel msg send get_value nsstring jstring with_pool
 @use "github.com/jkroso/Font.jl/units" px
 
@@ -384,6 +384,64 @@ watch_pinch!(w::AbstractWindow) = begin
   w
 end
 
+# --- a swipe that goes back or forward ---------------------------------------------
+#
+# macOS sends a swipe of three fingers across the trackpad to the window's view
+# as `swipeWithEvent:`. So does a mouse whose own app makes its side buttons go
+# back and forward, like Logi Options+ with an MX Master. GLFW's view doesn't
+# have that method, so the view's class gets it here. A swipe to the left comes
+# to the app as a click of the mouse's back button, `Keys.mouse_back`, and a
+# swipe to the right as a click of its forward button, as from a mouse that
+# sends those buttons as buttons.
+
+const swiped = Dict{Ptr{Cvoid},WeakRef}()   # each NSWindow that passes its swipes on, and the window it's for
+
+"""
+The side button of a mouse that a swipe stands for, or nothing for a swipe up
+or down. macOS gives a swipe to the left a `deltaX` over 0, and a browser goes
+back for it.
+"""
+swipe_button(dx::Real) = dx > 0 ? Keys.mouse_back : dx < 0 ? Keys.mouse_forward : nothing
+
+"Press and let go of the mouse button `key` in the window `w`, as a mouse that has that button does"
+click_button!(w::AbstractWindow, key::Keys) = begin
+  stale!(w)
+  w.keys |= key
+  invokelatest(onkey, w, KeyPress{key}(0, w))
+  key in w.keys && (w.keys ⊻= key)
+  invokelatest(onkey, w, KeyRelease{key}(0, w))
+  nothing
+end
+
+"macOS calls this on the window's view for each swipe"
+swiped_on(self::Ptr{Cvoid}, cmd::Ptr{Cvoid}, event::Ptr{Cvoid})::Cvoid = begin
+  try
+    ref = get(swiped, msg(event, "window"), nothing)
+    w = ref === nothing ? nothing : ref.value
+    key = swipe_button(get_value(Float64, event, "deltaX"))
+    (w === nothing || key === nothing) || click_button!(w, key)
+  catch err
+    # An error mustn't go back into macOS's own code
+    @error "Couldn't pass on a swipe" exception=(err, catch_backtrace())
+  end
+  nothing
+end
+
+"Have each swipe to the left or the right in the window click the mouse's back or forward button. Call it once the window is open."
+watch_swipes!(w::AbstractWindow) = begin
+  (Sys.isapple() && !isempty(w.glfw)) || return w
+  win = nswindow(w)
+  with_pool() do
+    class = ccall((:object_getClass, libobjc), Ptr{Cvoid}, (Ptr{Cvoid},), msg(win, "contentView"))
+    # The class outlives this file when the file is loaded again, so give it the function as it is now
+    ccall((:class_replaceMethod, libobjc), Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cstring), class, sel("swipeWithEvent:"),
+          @cfunction(swiped_on, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid})), "v@:@")
+  end
+  filter!(p -> p.second.value !== nothing, swiped)   # windows that have gone
+  swiped[win] = WeakRef(w)
+  w
+end
+
 # --- a drop that holds no file -----------------------------------------------------
 #
 # GLFW tells an app about the files that are dropped on its window, and about
@@ -501,4 +559,4 @@ scrolled_by_wheel() = Sys.isapple() && with_pool() do
   event != C_NULL && get_value(UInt, event, "type") == scroll_wheel_event && !get_value(Bool, event, "hasPreciseScrollingDeltas")
 end
 
-export fills_screen, fill_screen!, hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, watch_drops!, scrolled_by_wheel
+export fills_screen, fill_screen!, hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, watch_swipes!, swipe_button, click_button!, watch_drops!, scrolled_by_wheel
