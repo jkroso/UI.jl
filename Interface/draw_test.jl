@@ -182,6 +182,36 @@ let w = Window(Nest(), size=(200px, 100px))
   @test inner().offset == 890px && outer().offset == 30px
 end
 
+# A Scroll that's drawn over another one takes the wheel, as it takes a click. The
+# one under it doesn't move, even when the one on top is at its end.
+@def mutable struct Layers <: SemanticUI end
+describe(::Layers) = Stack(width(grow=GrowType.Grow), height(grow=GrowType.Grow), Alignment.Start,
+                           Scroll(width(grow=GrowType.Grow), height(grow=GrowType.Grow), key=:under, tall()),
+                           Row(width(grow=GrowType.Grow), height(grow=GrowType.Grow), Alignment.Start, padding(100px, 0px, 0px, 20px),
+                               Scroll(width(100px), height(80px), key=:over, tall())))
+@use "./draw" find_scroll_at
+let w = Window(Layers(), size=(200px, 200px))
+  frame(w)
+  under() = scene(w).children[1].from
+  over() = scene(w).children[2].children[1].from
+  under().offset = 100px                       # the one under can move both ways
+  w.mouse = Vec2{px}(60px, 140px)              # over the one on top
+  @test find_scroll_at(scene(w), w.mouse).from === over()
+  onscroll(w, Vec2{px}(0px, -1px))
+  frame(w)
+  @test over().offset == 30px && under().offset == 100px
+  sleep(0.25)
+  onscroll(w, Vec2{px}(0px, 2px))             # a new run, up past the top of the one on top
+  frame(w)
+  @test over().offset == 0px && under().offset == 100px
+  # Beside the one on top, the wheel moves the one under
+  sleep(0.25)
+  w.mouse = Vec2{px}(160px, 140px)
+  onscroll(w, Vec2{px}(0px, -1px))
+  frame(w)
+  @test over().offset == 0px && under().offset == 130px
+end
+
 # A node hears if a mouse wheel or two fingers on the trackpad sent a scroll
 @use "./draw" MouseScroll
 @def mutable struct Wheel <: SemanticUI

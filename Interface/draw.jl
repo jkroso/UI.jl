@@ -1333,7 +1333,8 @@ const _scroll_drag = Dict{UInt, NamedTuple}()
 "The Scroll whose scrollbar thumb is under `pos`, along with its geometry"
 thumb_at(rect::ConcreteRect, pos) = begin
   inside(rect, pos) || return nothing
-  for child in rect.children
+  # Later children draw on top, so their thumbs come first
+  for child in Iterators.reverse(rect.children)
     child isa ConcreteRect || continue
     found = thumb_at(child, pos)
     found === nothing || return found
@@ -1473,14 +1474,16 @@ tab!(w::Window, by::Int=1) = begin
 end
 
 "Walk a concrete tree and return the deepest ConcreteRect whose
-geometric source is a Scroll and that contains `pos`. Returns nothing
+geometric source is a Scroll and that contains `pos`. A Scroll that's
+drawn over another one is found first. Returns nothing
 if the cursor isn't inside any scroll viewport. Bails on each
 out-of-bounds rect immediately, so cost is O(depth + matching siblings)
 not O(tree size)."
 find_scroll_at(::Any, _) = nothing
 find_scroll_at(rect::ConcreteRect, pos) = begin
   inside(rect, pos) || return nothing
-  for child in rect.children
+  # Later children draw on top
+  for child in Iterators.reverse(rect.children)
     found = find_scroll_at(child, pos)
     found === nothing || return found
   end
@@ -1579,11 +1582,19 @@ end
 const _wheel = Dict{UInt,Tuple{Any,Float64}}()
 const WHEEL_RUN = 0.2   # seconds. Wheel events closer together than this are one run.
 
-"Each Scroll under `pos`, the innermost first"
+"""
+Each Scroll under `pos`, the innermost first. Later children draw on top, so
+when two children that overlap both have a Scroll under `pos`, only the one on
+top's count: a list over a page takes the wheel, and the page under it doesn't.
+"""
 scrolls_at(::Any, pos, out=ConcreteRect[]) = out
 scrolls_at(rect::ConcreteRect, pos, out=ConcreteRect[]) = begin
   inside(rect, pos) || return out
-  foreach(child -> scrolls_at(child, pos, out), rect.children)
+  for child in Iterators.reverse(rect.children)
+    found = length(out)
+    scrolls_at(child, pos, out)
+    length(out) > found && break
+  end
   rect.from isa Scroll && push!(out, rect)
   out
 end
