@@ -915,13 +915,17 @@ end
 
 # Tools like the layout inspector that share the window with the app. Each
 # window can have one. The tool decides how much room the app gets, draws
-# itself after the app, and sees input before the app does.
+# itself after the app, and sees input before the app does. What it draws
+# with `draw_tool_under` goes under the window's popups, and what it draws
+# with `draw_tool` goes over them.
 const _tools = Dict{UInt, Any}()
 
 "How much of the window `tool` leaves for the app"
 app_size(tool, size) = size
-"Draw `tool` over the app's `scene`"
+"Draw `tool` over the app's `scene`, and over the window's popups"
 draw_tool(ctx, window, tool, scene) = nothing
+"Draw what `tool` shows on the app's `scene` that the window's popups should cover, like a mark on a part of the app"
+draw_tool_under(ctx, window, tool, scene) = nothing
 "Give `tool` first look at an input event. Return true if it used the event."
 tool_input(tool, window, event) = false
 "The mouse cursor that `tool` wants at the point `pos` of the window, as `cursor` gives for a node, or `nothing` to leave it to the app"
@@ -1019,6 +1023,7 @@ frame(window::Window) = begin
   update_hover!(window, scene)
   pixels = drawing(window, scene) do ctx, size, scene
     draw(ctx, size, scene)
+    t === nothing || draw_tool_under(ctx, window, t, scene)
     for popup in shown
       draw(ctx, popup.scene.size, popup.scene)
     end
@@ -1636,5 +1641,5 @@ onmouse(w::Window, e::MouseMove) = begin
 end
 
 export draw, ui, hittest, emit, handled, rect, scene, clipboard, clipboard!, popup!, close_popup!, show_menu!, hide_menu!, show_tooltip!, hide_tooltip!, ishovered, cursor, open_url,
-       invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, tool_input, tool_cursor, inside, offset!,
+       invalidate_layout!, set_tool!, clear_tool!, window_tool, app_size, draw_tool, draw_tool_under, tool_input, tool_cursor, inside, offset!,
        frame_stats, FrameStats, semantic_source, viewport, redraw_in!, MouseScroll, Pinch, onpinch, placed!
