@@ -1,5 +1,5 @@
 @use "github.com/jkroso/Prospects.jl" @def @property
-@use "github.com/jkroso/MiniFB.jl/skia" SkiaFont rectangle line font_metrics
+@use "github.com/jkroso/MiniFB.jl/skia" SkiaFont rectangle line font_metrics text
 @use "github.com/jkroso/MiniFB.jl" Window Keys KeyPress MouseMove Typed onkey onmouse ontype int
 @use "github.com/jkroso/Font.jl" Font ["units" pt px]
 @use "github.com/jkroso/Units.jl" Length
@@ -19,6 +19,11 @@ of the line. Cmd-A selects everything, and Cmd-C, Cmd-X and Cmd-V copy, cut and
 paste. A double click selects a word. Text that's longer than the field moves
 sideways to keep the caret in view.
 
+Its text can have more than one colour, as code has: `colours(text)` gives
+the colour of each piece of the text, from the first character, as pairs of
+how many characters the piece has and its colour. A colour of `nothing` is the
+field's own. For example `t -> [3 => colorant"red", length(t) - 3 => nothing]`.
+
 `integrate(input)` is the text that's in it.
 """
 @def mutable struct TextInput <: SemanticUI
@@ -36,6 +41,7 @@ sideways to keep the caret in view.
   # `look(input, text)` returns the geometry around `text`, which shows what's
   # typed. Leave it as `nothing` for the standard bordered box.
   look::Any = nothing
+  colours::Any = nothing      # gives the colour of each piece of the text, or `nothing` for text of one colour
   scroll::px = 0px            # how far the text has moved left, to keep the caret in view
   last_click::Float64 = 0.0   # when it was last clicked, to tell a double click
   picked_word::Bool = false   # the last click was a double click, which selected a word
@@ -56,6 +62,9 @@ font(input::TextInput) = skia_font(family(input), text_size(input))
 "The text as it shows: a dot for each character when the field is `hidden`"
 shown(input::TextInput) = input.hidden ? "•" ^ length(input.text) : input.text
 
+"True when its text has the colours that `colours` gives, which `draw` paints over its layout"
+coloured(input::TextInput) = input.colours !== nothing && !input.hidden && !isempty(input.text)
+
 "How wide the first `n` characters of its text are"
 width_to(input::TextInput, n::Int) = n == 0 ? 0px : text_width(font(input), first(shown(input), n))
 
@@ -65,9 +74,10 @@ a box that cuts it off at the left and right, and it moves left by `scroll`.
 """
 content(input::TextInput) = begin
   empty = isempty(input.text)
+  # Text of many colours is laid out with none, and `draw` paints each piece in its own
   text = Text(empty ? input.placeholder : shown(input),
               size=text_size(input), family=family(input), wrap=WrapMode.none,
-              color=empty ? something(input.placeholder_color, theme(input).dim) : ink(input))
+              color=empty ? something(input.placeholder_color, theme(input).dim) : coloured(input) ? RGBA(0, 0, 0, 0) : ink(input))
   Row(width(grow=GrowType.Grow), clip_x=true, Box(offset_x=-follow_caret!(input), text))
 end
 
@@ -326,6 +336,7 @@ draw(ctx, size, ui::ConcreteRect, input::TextInput) = begin
   view = ct.parent.parent
   # The selection and the caret are cut off where the text is
   with_clip(ctx, view.left - 1px, top, view.width + 2px, bottom - top) do
+    coloured(input) && paint_pieces(ctx, input, ct.left, baseline)
     if has_selection(input)
       lo, hi = selection_range(input)
       x = ct.left + width_to(input, lo)
@@ -336,6 +347,22 @@ draw(ctx, size, ui::ConcreteRect, input::TextInput) = begin
       line(ctx, Vec2{px}(x, top), Vec2{px}(x, bottom), 1.5px, ink(input))
     end
   end
+end
+
+"Paint each piece of the text in the colour that `colours` gives it, from `left` along the line `baseline`"
+paint_pieces(ctx, input::TextInput, left, baseline) = begin
+  chars = collect(input.text)
+  f = font(input)
+  at = 0
+  for (n, colour) in input.colours(input.text)
+    n = min(n, length(chars) - at)
+    n > 0 || continue
+    text(ctx, (left + width_to(input, at), baseline), f, something(colour, ink(input)), String(chars[at+1:at+n]))
+    at += n
+  end
+  # What `colours` leaves out has the field's own colour
+  at < length(chars) && text(ctx, (left + width_to(input, at), baseline), f, ink(input), String(chars[at+1:end]))
+  nothing
 end
 
 export TextInput, describe

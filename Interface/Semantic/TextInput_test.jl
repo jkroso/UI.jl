@@ -6,6 +6,7 @@
 @use "../Geometric"...
 @use "../draw" frame clipboard clipboard! emit
 @use "./TextInput" TextInput text_view width_to
+@use "./TextInput" => TextInputs
 @use GeometryBasics: Vec2
 
 # A layout is made once. A semantic node around the field has it described again on each frame.
@@ -96,4 +97,32 @@ let first = TextInput(text="one"), second = TextInput(text="two words"), kept = 
   w.focus = nothing
   press(Keys.tab)
   @test w.focus === nothing
+end
+
+# Text can have a colour for each piece of it, as code has, and the caret and the selection work as they do in text of one colour
+@use "../testing" save_png pixels
+@use Colors: @colorant_str
+let pieces = t -> [3 => colorant"rgb(220,0,0)", 1 => nothing, length(t) - 4 => colorant"rgb(0,0,220)"]
+  input = TextInput(text="RED BLUE", font_size=20px, colours=pieces)
+  w = Window(Form(input), size=(140px, 40px))
+  frame(w)
+  focus(input)
+  picture = joinpath(mktempdir(), "pieces.png")
+  save_png(picture, w)
+  shot = pixels(picture)
+  red(p) = (p >> 16) & 0xff > 150 && (p >> 8) & 0xff < 90 && p & 0xff < 90
+  blue(p) = p & 0xff > 150 && (p >> 16) & 0xff < 90 && (p >> 8) & 0xff < 90
+  # Where each piece is, in pixels: two to the point
+  view = text_view(input)
+  left(n) = round(Int, 2 * (view.left.value + width_to(input, n).value))
+  @test count(red, shot[:, left(0):left(3)]) > 20
+  @test count(blue, shot[:, left(0):left(3)]) == 0
+  @test count(blue, shot[:, left(4):left(8)]) > 20
+  @test count(red, shot[:, left(4):left(8)]) == 0
+  # The field lays its text out as before, so a click finds the same place in it
+  w.mouse = Vec2{px}(view.left + width_to(input, 5) + 1px, 20px); onkey(w, KeyPress{Keys.mouse_left}(0, w)); frame(w)
+  @test input.cursor == 5
+  # A field with no text shows its placeholder, and one with hidden text shows dots, in one colour
+  input.text = ""
+  @test !TextInputs.coloured(input)
 end
