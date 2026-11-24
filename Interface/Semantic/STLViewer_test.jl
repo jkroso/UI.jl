@@ -5,7 +5,7 @@
 @use "../Geometric"...
 @use "../draw" frame rect onpinch
 @use "../testing"...
-@use "./STLViewer" STLViewer Mesh read_stl read_gltf triangles rough Vec
+@use "./STLViewer" STLViewer Mesh read_stl read_gltf triangles rough Vec show!
 @use "./GLTF" => GLTF
 @use "./STLViewer" => stl
 @use Base64: base64encode
@@ -514,4 +514,39 @@ let v = STLViewer(joinpath(dir, "sky.glb"), tilt=0.0), w = Window(Box(width(400p
   v.moved = 0.0
   frame(w)
   @test v.zoom > 1 && picture(v)[2, 2] == top
+end
+
+# A model that code makes has no file. The viewer takes the bytes of a .glb file, and a newer model the same way.
+let sky = read(joinpath(dir, "sky.glb")), box = read(joinpath(dir, "box.glb"))
+  @test GLTF.model(box).points == GLTF.model(joinpath(dir, "box.glb")).points
+  v = STLViewer(path="made.jl", turn=10.0)
+  w = Window(Box(width(400px), v), size=(440px, 440px))
+  @test show!(v, sky) === v && v.model isa Mesh
+  frame(w)
+  first = v.model
+  v.turn, v.zoom = 75.0, 2.0
+  # A newer model takes its place, and stays turned as it was. A picture that both have is read once, and so is the sky.
+  show!(v, sky)
+  @test v.model !== first && v.model.look.textures[1] === first.look.textures[1] && v.model.look.sky === first.look.sky
+  @test (v.turn, v.zoom) == (75.0, 2.0)
+  frame(w)
+  # A model with no sky stands in the studio again
+  show!(v, box)
+  @test v.model isa Mesh && v.model.look.sky === nothing && triangles(v.model) == 24
+  frame(w)
+  # Bytes that hold no model give a sentence, which the viewer shows
+  show!(v, UInt8[1, 2, 3])
+  @test v.model isa String
+  frame(w)
+end
+
+# With no line under it, the model is all that the viewer shows
+let v = STLViewer(joinpath(dir, "box.glb")), w = Window(v, size=(440px, 440px))
+  frame(w)
+  with_foot = rect(v).height
+  @test length(rect(v).children) == 2
+  v.foot = false
+  frame(w)
+  # Its line is 1px wide, above the model and below it
+  @test length(rect(v).children) == 1 && rect(v).height == v.height + 2px < with_foot
 end

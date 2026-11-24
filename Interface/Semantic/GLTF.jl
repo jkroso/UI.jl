@@ -3,6 +3,7 @@
 # it's a metal, how rough it is, and the pictures that are wrapped round it.
 #
 #     model("satellite.glb")    # a Model: triangles, and what each one is made of
+#     model(bytes)              # the same, from the bytes of a .glb file that code made
 #
 # The file comes in two forms. A .glb file is one file: a text in JSON, then the
 # bytes that the text describes. A .gltf file is only the text, and it names
@@ -141,8 +142,10 @@ u32(b, i) = UInt32(b[i+1]) | UInt32(b[i+2]) << 8 | UInt32(b[i+3]) << 16 | UInt32
 
 const PACKINGS = Dict("KHR_draco_mesh_compression" => "Draco", "EXT_meshopt_compression" => "Meshopt")
 
-File(path::AbstractString) = begin
-  bytes = read(path)
+File(path::AbstractString) = File(read(path), dirname(abspath(path)), basename(path))
+
+"The file that `bytes` holds, as a .glb file has them. `folder` is where its other files are, and `name` is what a sentence calls it."
+File(bytes::Vector{UInt8}, folder::AbstractString="", name::AbstractString="The model") = begin
   text, rest = bytes, UInt8[]
   if length(bytes) >= 12 && u32(bytes, 0) == 0x46546c67   # "glTF"
     # A .glb file is a row of chunks. Each says how long it is and what it is.
@@ -154,9 +157,9 @@ File(path::AbstractString) = begin
       at += 8 + n
     end
   end
-  f = File(json(text), rest, dirname(abspath(path)), Dict{String,Vector{UInt8}}())
-  for name in get(f.json, "extensionsRequired", [])
-    haskey(PACKINGS, name) && throw(Unreadable("$(basename(path)) is packed with $(PACKINGS[name]), which this viewer doesn't unpack"))
+  f = File(json(text), rest, String(folder), Dict{String,Vector{UInt8}}())
+  for packing in get(f.json, "extensionsRequired", [])
+    haskey(PACKINGS, packing) && throw(Unreadable("$name is packed with $(PACKINGS[packing]), which this viewer doesn't unpack"))
   end
   f
 end
@@ -472,8 +475,12 @@ walk!(out::Model, f::File, n, above::Matrix{Float64}, deep=1) = begin
 end
 
 "The model in the .glb or .gltf file at `path`"
-model(path::AbstractString) = begin
-  f = File(path)
+model(path::AbstractString) = model(File(path))
+
+"The model that `bytes` holds, as a .glb file has them. Code that makes a model gives it this way, with no file."
+model(bytes::Vector{UInt8}) = model(File(bytes))
+
+model(f::File) = begin
   g = f.json
   out = Model()
   append!(out.materials, [Material(f, m) for m in get(g, "materials", [])])

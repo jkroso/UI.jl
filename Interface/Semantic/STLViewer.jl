@@ -26,6 +26,13 @@
 # grows towards the mouse, so you can go close to one part of it, and a drag
 # then turns it round that part. Click it twice to see it as it was at first.
 #
+# Code can make a model too, as the bytes of a .glb file, and give it to a
+# viewer with `show!(viewer, bytes)`. Give it a newer model the same way, and
+# the viewer keeps how the model is turned.
+#
+# `STLViewer("bracket.stl", foot=false)` leaves out the line under the model,
+# so the model is all that shows.
+#
 # `STLViewer("bracket.stl", fill=true)` takes all the room that it's given and
 # has no frame. That's for a window that shows nothing but the model.
 
@@ -198,6 +205,7 @@ struct Look
   made_of::Vector{Int32}             # which of `materials` each triangle is made of
   materials::Vector{GLTF.Material}
   textures::Vector{Texture}          # the file's pictures
+  pictures::Vector{Vector{UInt8}}    # the bytes that each of `textures` was read from, to tell when a newer model has the same picture
   sky::Union{Nothing,Sky}            # what's round the model, when the file says. If not, the model stands in a studio.
 end
 
@@ -212,7 +220,7 @@ end
 "`look` for only the triangles `kept` of its model"
 chosen(l::Look, kept::Vector{Int}) = begin
   corners(list) = isempty(list) ? list : [list[3t+k] for t in kept for k in -2:0]
-  Look(corners(l.normals), corners(l.places), corners(l.tints), l.made_of[kept], l.materials, l.textures, l.sky)
+  Look(corners(l.normals), corners(l.places), corners(l.tints), l.made_of[kept], l.materials, l.textures, l.pictures, l.sky)
 end
 
 """
@@ -263,12 +271,28 @@ Mesh(points::Vector{Vec}) = begin
   Mesh(corners, normals, size)
 end
 
-Mesh(g::GLTF.Model) = begin
+"""
+The mesh of the glTF model `g`. `before` is the mesh that showed until now, or
+nothing. Reading a picture takes far longer than the triangles do, so a
+picture that `before` has too is taken from it, and so is its sky. Then a
+model that code makes again, as a number changes, is ready at once.
+"""
+Mesh(g::GLTF.Model, before=nothing) = begin
   fit, size = fitted(g.points)
   corners, normals, kept = faces(fit)
-  textures = Texture.(g.pictures)
-  sky = 1 <= g.sky <= length(textures) && !isempty(textures[g.sky].levels) ? Sky(textures[g.sky], g.sun, g.sunlight) : nothing
-  look = Look(g.normals, g.places, g.tints, g.made_of, [readable(m, textures) for m in g.materials], textures, sky)
+  old = before isa Mesh ? before.look : nothing
+  textures = map(g.pictures) do bytes
+    i = old === nothing || isempty(bytes) ? nothing : findfirst(==(bytes), old.pictures)
+    i === nothing ? Texture(bytes) : old.textures[i]
+  end
+  sky = if !(1 <= g.sky <= length(textures)) || isempty(textures[g.sky].levels)
+    nothing
+  elseif old !== nothing && old.sky !== nothing && old.sky.picture === textures[g.sky] && old.sky.sun == g.sun && old.sky.sunlight == g.sunlight
+    old.sky
+  else
+    Sky(textures[g.sky], g.sun, g.sunlight)
+  end
+  look = Look(g.normals, g.places, g.tints, g.made_of, [readable(m, textures) for m in g.materials], textures, g.pictures, sky)
   Mesh(corners, normals, size, length(kept) == length(g.made_of) ? look : chosen(look, kept))
 end
 
@@ -366,6 +390,16 @@ read_gltf(path) = begin
   catch e
     e isa GLTF.Unreadable ? e.why : "$(basename(path)) isn't a glTF file that can be read"
   end
+end
+
+"""
+The model that `bytes` holds, as a .glb file has them, or a sentence that says
+why there isn't one. `before` is the mesh that showed until now: see `Mesh`.
+"""
+read_gltf(bytes::Vector{UInt8}, before=nothing) = try
+  Mesh(GLTF.model(bytes), before)
+catch e
+  e isa GLTF.Unreadable ? e.why : "The model isn't one that can be read"
 end
 
 "The model in the file at `path`: a 3MF file if its name ends in .3mf, a glTF file if it ends in .glb or .gltf, and an STL file if not"
@@ -828,6 +862,8 @@ const SMALLEST, BIGGEST = 0.4, 60.0
   height::px = 340px                  # of the view. The viewer is as wide as it's given room for.
   color::Colorant = colorant"rgb(132,160,196)"
   fill::Bool = false                  # it takes all the room that it's given and has no frame, for when it's all that a window shows
+  given::Bool = false                 # its model was given with `show!`, and isn't read from the file at `path`
+  foot::Bool = true                   # the line under the model shows, with the file's name, the count of triangles and the size
   # What it remembers between frames
   model::Any = nothing                # the Mesh of the file, or a sentence that says why there isn't one
   rough::Any = nothing                # a Mesh with fewer triangles to draw while a big model turns, or nothing for a small one
@@ -845,12 +881,29 @@ STLViewer(path::AbstractString; kwargs...) = STLViewer(; path=abspath(path), kwa
 
 "Read the file, if it hasn't been read or has changed since"
 load!(v::STLViewer) = begin
+  v.given && return v.model
   changed = mtime(v.path)
   v.model !== nothing && changed == v.read && return v.model
   v.read = changed
   v.model = read_model(v.path)
   v.rough = v.model isa Mesh && triangles(v.model) > MOST ? rough(v.model) : nothing
   v.model
+end
+
+"""
+Show the model that `bytes` holds, as a .glb file has them, in place of the
+model that `v` shows. This is for a model that code makes: the viewer reads no
+file, and `v.path` is only the name under the view. The model stays turned as
+it was, and as big. Call it again when the code makes the model again, as a
+number that it's made from changes. The pictures that the last model had too
+aren't read again, so that takes little time.
+"""
+show!(v::STLViewer, bytes::Vector{UInt8}) = begin
+  v.given = true
+  v.model = read_gltf(bytes, v.model)
+  v.rough = v.model isa Mesh && triangles(v.model) > MOST ? rough(v.model) : nothing
+  # A model with materials is drawn with fewer pixels for a moment, so one that changes with each step of a drag keeps up
+  moved!(v)
 end
 
 const SETTLE = 0.2   # seconds after a model last moved until it's drawn in full
@@ -888,10 +941,10 @@ describe(v::STLViewer) = begin
   Column(width(grow=grow), frame..., background(t.surface), clip=true,
     Box(width(grow=grow), v.fill ? height(grow=grow) : height(v.height), padding(16px),
       (model isa Mesh ? () : (Text(String(model), size=sized(12pt, t), color=t.dim),))...),
-    Row(width(grow=grow), padding(12px, 7px), child_gap=12px, background(t.hover), (v.fill ? () : (radius(0px, 7px),))...,
+    (v.foot ? (Row(width(grow=grow), padding(12px, 7px), child_gap=12px, background(t.hover), (v.fill ? () : (radius(0px, 7px),))...,
       Text(basename(v.path), size=sized(12pt, t), color=t.text, wrap=WrapMode.none),
       Box(width(grow=grow)),
-      Text(about(model), size=sized(12pt, t), color=t.dim, wrap=WrapMode.none)))
+      Text(about(model), size=sized(12pt, t), color=t.dim, wrap=WrapMode.none)),) : ())...)
 end
 
 draw(ctx, size, ui::ConcreteRect, v::STLViewer) = begin
@@ -1063,4 +1116,4 @@ onkey(v::STLViewer, ::KeyPress{Keys.right}) = (turn!(v, 10, 0); handled)
 onkey(v::STLViewer, ::KeyPress{Keys.up}) = (turn!(v, 0, 10); handled)
 onkey(v::STLViewer, ::KeyPress{Keys.down}) = (turn!(v, 0, -10); handled)
 
-export STLViewer, Mesh, read_stl, read_3mf, read_gltf, read_model
+export STLViewer, Mesh, read_stl, read_3mf, read_gltf, read_model, show!
