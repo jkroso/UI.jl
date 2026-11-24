@@ -627,3 +627,24 @@ let v = STLViewer(joinpath(dir, "box.glb")), w = Window(v, size=(440px, 440px))
   # Its line is 1px wide, above the model and below it
   @test length(rect(v).children) == 1 && rect(v).height == v.height + 2px < with_foot
 end
+
+# A sheet 70 wide, and 24 strips that cover it, 0.002 nearer the eye. Seen close, each of the sheet's two triangles
+# is far wider than the view. Only the strips show: the sums that say which surface is nearer are exact enough.
+let strips = 24, wide = 70f0 / 24
+  quad(x0, x1, y) = Vec[(x0, y, -3.8f0), (x1, y, -3.8f0), (x1, y, 3.8f0), (x0, y, -3.8f0), (x1, y, 3.8f0), (x0, y, 3.8f0)]
+  m = Mesh(vcat(quad(-35f0, 35f0, 0f0), (quad(-35f0 + (k - 1) * wide, -35f0 + k * wide, -0.002f0) for k in 1:strips)...))
+  @test triangles(m) == 2 + 2strips
+  w, h = 2200, 1200
+  which, depth, pixels = zeros(Int32, w * h), zeros(Float32, w * h), zeros(UInt32, w * h)
+  for (turn, zoom) in ((35.0, 16.0), (35.0, 60.0))
+    focal = Float32(stl.FIT * h * zoom) * sqrt(stl.EYE^2 - 1)
+    stl.see!(which, depth, w, h, m, stl.sight(turn, 22.0), focal, w / 2f0, h / 2f0)
+    @test count(>(2), which) > w * h ÷ 4 && count(t -> t == 1 || t == 2, which) == 0
+    # A model with no materials is drawn by `render!`. Its picture is the same with the sheet as without it.
+    colour = Vec((0.5f0, 0.6f0, 0.8f0))
+    stl.render!(pixels, depth, w, h, Mesh(m.corners[7:end], m.normals[3:end], m.size), stl.sight(turn, 22.0), focal, w / 2f0, h / 2f0, colour)
+    alone = copy(depth)
+    stl.render!(pixels, depth, w, h, m, stl.sight(turn, 22.0), focal, w / 2f0, h / 2f0, colour)
+    @test count(>(0f0), depth) > w * h ÷ 4 && depth == alone
+  end
+end

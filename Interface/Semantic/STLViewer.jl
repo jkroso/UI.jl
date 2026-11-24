@@ -250,7 +250,9 @@ faces(points::Vector{Vec}) = begin
     n = cross(b .- a, c .- a)
     len = sqrt(dot(n, n))
     len > 0 || continue
-    push!(corners, a, b, c)
+    # One at a time: without optimisation, as a test runs, three in one call take a time that grows with the
+    # square of the count. That was 47 s for a model of 94,000 triangles.
+    push!(corners, a); push!(corners, b); push!(corners, c)
     push!(normals, n ./ len)
     push!(kept, (i + 2) ÷ 3)
   end
@@ -329,7 +331,7 @@ snapped(m::Mesh, cells::Float32) = begin
   for t in eachindex(m.normals)
     a, b, c = snap(m.corners[3t-2]), snap(m.corners[3t-1]), snap(m.corners[3t])
     (a == b || b == c || a == c) && continue
-    push!(corners, a, b, c)
+    push!(corners, a); push!(corners, b); push!(corners, c)
     push!(normals, m.normals[t])
     push!(kept, t)
   end
@@ -470,8 +472,10 @@ function render!(pixels::Vector{UInt32}, depth::Vector{Float32}, w::Int, h::Int,
   key, soft = towards(KEY_LIGHT), towards(FILL_LIGHT)
   @inbounds for t in eachindex(normals)
     a, b, c = corners[3t-2], corners[3t-1], corners[3t]
-    # 1 ÷ how far each corner is from the eye, then where it is in the picture
-    ia, ib, ic = 1 / (EYE - dot(near, a)), 1 / (EYE - dot(near, b)), 1 / (EYE - dot(near, c))
+    # 1 ÷ how far each corner is from the eye, then where it is in the picture. The sums from here on are in 64
+    # bits. A triangle far wider than the view takes thousands of steps across a row, and in 32 bits those add
+    # up to an error that puts a sheet in front of another one 2 mm nearer the eye, on a model 70 m wide.
+    ia, ib, ic = 1 / Float64(EYE - dot(near, a)), 1 / Float64(EYE - dot(near, b)), 1 / Float64(EYE - dot(near, c))
     ax, ay = cx + focal * dot(right, a) * ia, cy - focal * dot(up, a) * ia
     bx, by = cx + focal * dot(right, b) * ib, cy - focal * dot(up, b) * ib
     qx, qy = cx + focal * dot(right, c) * ic, cy - focal * dot(up, c) * ic
@@ -540,7 +544,8 @@ function see!(which::Vector{Int32}, depth::Vector{Float32}, w::Int, h::Int, mesh
   corners = mesh.corners
   @inbounds for t in eachindex(mesh.normals)
     a, b, c = corners[3t-2], corners[3t-1], corners[3t]
-    ia, ib, ic = 1 / (EYE - dot(near, a)), 1 / (EYE - dot(near, b)), 1 / (EYE - dot(near, c))
+    # In 64 bits, as in `render!`
+    ia, ib, ic = 1 / Float64(EYE - dot(near, a)), 1 / Float64(EYE - dot(near, b)), 1 / Float64(EYE - dot(near, c))
     ax, ay = cx + focal * dot(right, a) * ia, cy - focal * dot(up, a) * ia
     bx, by = cx + focal * dot(right, b) * ib, cy - focal * dot(up, b) * ib
     qx, qy = cx + focal * dot(right, c) * ic, cy - focal * dot(up, c) * ic
