@@ -5,7 +5,11 @@
 @use "../Geometric"...
 @use "../draw" frame rect onpinch
 @use "../testing"...
-@use "./STLViewer" STLViewer Mesh read_stl triangles rough Vec
+@use "./STLViewer" STLViewer Mesh read_stl read_gltf triangles rough Vec
+@use "./GLTF" => GLTF
+@use "./STLViewer" => stl
+@use Base64: base64encode
+@use Skia
 
 # A box 20 wide, 30 deep and 40 tall, as 12 triangles
 const corners = [(x, y, z) for z in (0f0, 40f0), y in (0f0, 30f0), x in (0f0, 20f0)]   # corners[z, y, x]
@@ -223,4 +227,220 @@ let v = STLViewer(joinpath(dir, "missing.stl")), w = Window(Box(width(400px), v)
   frame(w)
   @test v.model isa String
   @test rect(v) !== nothing
+end
+
+# --- glTF files ------------------------------------------------------------------
+#
+# A .glb file is a text in JSON, then the bytes that the text describes. This
+# one has the box as a mesh of 8 corners, with a list that says which three
+# make each triangle. It's made of a red plastic. Two nodes show it: one where
+# it is, and one that's 100 higher. In a glTF file y is up.
+
+"Write the JSON `text` and the bytes `bin` as a .glb file"
+glb(path, text, bin) = open(path, "w") do io
+  pad(n) = (4 - n % 4) % 4
+  a, b = sizeof(text) + pad(sizeof(text)), length(bin) + pad(length(bin))
+  write(io, 0x46546c67, UInt32(2), UInt32(12 + 8 + a + 8 + b))
+  write(io, UInt32(a), 0x4e4f534a, text, fill(UInt8(' '), pad(sizeof(text))))
+  write(io, UInt32(b), 0x004e4942, bin, zeros(UInt8, pad(length(bin))))
+end
+
+"The bytes of numbers, one after another"
+bytes(numbers...) = (io = IOBuffer(); foreach(n -> write(io, n), numbers); take!(io))
+
+const box_bytes = bytes((x for p in vec(corners) for x in p)..., (UInt16(i - 1) for (a, b, c, d) in sides for i in (a, b, c, a, c, d))...)
+
+"The text of the box's file. `buffer` is what it says of its bytes, after how many there are."
+box_text(buffer="") = """
+{"asset": {"version": "2.0", "generator": "a \\"test\\" caf\\u00e9\\n"},
+ "scene": 0, "scenes": [{"nodes": [0, 1]}],
+ "nodes": [{"mesh": 0}, {"mesh": 0, "translation": [0, 100, 0]}],
+ "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+ "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [1, 0, 0, 1], "metallicFactor": 0, "roughnessFactor": 0.5}}],
+ "accessors": [{"bufferView": 0, "componentType": 5126, "count": 8, "type": "VEC3"},
+               {"bufferView": 1, "componentType": 5123, "count": 36, "type": "SCALAR"}],
+ "bufferViews": [{"buffer": 0, "byteLength": 96}, {"buffer": 0, "byteOffset": 96, "byteLength": 72}],
+ "buffers": [{"byteLength": 168$buffer}]}
+"""
+
+glb(joinpath(dir, "box.glb"), box_text(), box_bytes)
+
+let m = read_gltf(joinpath(dir, "box.glb"))
+  @test m isa Mesh
+  @test triangles(m) == 24
+  # The box is 20 wide, 30 tall and 40 deep in its file. The viewer has z up, so its height comes last.
+  @test m.size == (20f0, 40f0, 130f0)
+  @test maximum(p -> sqrt(sum(abs2, p)), m.corners) ≈ 1
+  # It says what the box is made of
+  @test m.look !== nothing
+  @test all(==(2), m.look.made_of) && length(m.look.made_of) == 24
+  let red = m.look.materials[2]
+    @test red.colour == (1f0, 0f0, 0f0) && red.metal == 0 && red.rough == 0.5f0
+  end
+  @test read_model(joinpath(dir, "box.glb")).corners == m.corners
+  # An STL file says nothing of that
+  @test read_stl(joinpath(dir, "box.stl")).look === nothing
+end
+
+# A .gltf file is only the text. Its bytes are in a file that it names, or in the text itself in base64.
+write(joinpath(dir, "box bytes.bin"), box_bytes)
+write(joinpath(dir, "beside.gltf"), box_text(""", "uri": "box%20bytes.bin" """))
+write(joinpath(dir, "inside.gltf"), box_text(""", "uri": "data:application/octet-stream;base64,$(base64encode(box_bytes))" """))
+let m = read_gltf(joinpath(dir, "box.glb"))
+  @test read_model(joinpath(dir, "beside.gltf")).corners == m.corners
+  @test read_model(joinpath(dir, "inside.gltf")).corners == m.corners
+end
+
+# A file that's packed in a way the viewer doesn't unpack says which way
+glb(joinpath(dir, "packed.glb"), replace(box_text(), "\"scene\"" => "\"extensionsRequired\": [\"KHR_draco_mesh_compression\"], \"scene\""), box_bytes)
+@test occursin("Draco", read_gltf(joinpath(dir, "packed.glb")))
+# A file that isn't a model, one that's cut short and one that's missing give a sentence too
+@test read_gltf(joinpath(dir, "notes.stl")) isa String
+glb(joinpath(dir, "short.glb"), box_text(), box_bytes[1:100])
+@test read_gltf(joinpath(dir, "short.glb")) isa String
+@test read_gltf(joinpath(dir, "missing.glb")) isa String
+
+"The picture of the viewer `v` as a matrix of 0xAARRGGBB, a row for each row of pixels"
+picture(v) = begin
+  p, area = v.picture, rect(v).children[1]
+  pw = round(Int, sqrt(length(p.pixels) * area.width / area.height))
+  permutedims(reshape(p.pixels, pw, :))
+end
+red(p) = Int(p >> 16 & 0xff); green(p) = Int(p >> 8 & 0xff); blue(p) = Int(p & 0xff)
+
+# A viewer shows the box in its own colour, not in the viewer's
+let v = STLViewer(joinpath(dir, "box.glb")), w = Window(Box(width(400px), v), size=(440px, 440px))
+  frame(w)
+  @test v.model isa Mesh && triangles(v.model) == 24
+  p = picture(v)
+  drawn = p[permutedims(reshape(v.picture.which, size(p, 2), :)) .!= 0]
+  @test length(drawn) > length(p) ÷ 50
+  @test all(x -> red(x) > 2green(x) && red(x) > 2blue(x), drawn)
+  @test maximum(red, drawn) > 150
+  # Behind the model is a grey wall, darker at the top, so that a white part and a dark part both show on any page
+  wall = p[permutedims(reshape(v.picture.which, size(p, 2), :)) .== 0]
+  @test all(x -> x >> 24 == 0xff && red(x) == green(x) == blue(x), wall)
+  @test 60 < red(p[1, 1]) < red(p[end, end]) < 200
+end
+
+# A model with no materials has nothing behind it but the page
+let v = STLViewer(joinpath(dir, "box.stl")), w = Window(Box(width(400px), v), size=(440px, 440px))
+  frame(w)
+  @test picture(v)[1, 1] == picture(v)[end, end] == 0
+end
+
+# A model with materials is drawn with fewer pixels while it turns, and in full again when it stops
+let v = STLViewer(joinpath(dir, "box.glb"), height=1100px), w = Window(Box(width(1200px), v), size=(1300px, 1300px))
+  frame(w)
+  still = length(v.picture.pixels)
+  click!(w, v)
+  press!(w, Keys.right)
+  @test length(v.picture.pixels) < still
+  v.moved = 0.0
+  frame(w)
+  @test length(v.picture.pixels) == still
+end
+
+# The model grows towards the mouse, so the part under the mouse stays under it. A drag then turns the model
+# round the part that was pressed. As the model gets small again, it goes back to the middle of the view.
+let v = STLViewer(joinpath(dir, "box.glb")), w = Window(Box(width(400px), v), size=(440px, 440px))
+  frame(w)
+  area = rect(v).children[1]
+  # A place on the lower box, left of the middle of the view and below it
+  at = (area.left + area.width / 2 - 20px, area.top + area.height / 2 + 100px)
+  from = stl.from_middle(area, at)
+  part = stl.point(v, area, from)
+  @test all(isapprox.(stl.place(v, area, part), from, atol=0.01))
+  move!(w, at)
+  holding(() -> onscroll(w, Vec2{px}(0px, 5px)), w, (Keys.cmd,))
+  @test v.zoom > 1.5 && v.shift != (0.0, 0.0)
+  @test all(isapprox.(stl.place(v, area, part), from, atol=0.01))
+  # The part is on the box's surface, so a press there finds the same part
+  frame(w)
+  let p = picture(v), x = p[round(Int, end / 2 + from[2] * size(p, 1) / area.height.value), round(Int, end / 2 + from[1] * size(p, 2) / area.width.value)]
+    @test red(x) > 2green(x)
+  end
+  w.keys |= Keys.mouse_left
+  onkey(w, KeyPress{Keys.mouse_left}(0, w))
+  @test all(isapprox.(v.pivot, part, atol=0.02))
+  move!(w, (at[1] + 60px, at[2] - 30px))
+  w.keys ⊻= Keys.mouse_left
+  onkey(w, KeyRelease{Keys.mouse_left}(0, w))
+  @test v.turn ≈ 35 + 30 && v.tilt ≈ 22 - 15
+  @test all(isapprox.(stl.place(v, area, v.pivot), from, atol=0.01))
+  holding(() -> onscroll(w, Vec2{px}(0px, -30px)), w, (Keys.cmd,))
+  @test v.zoom < 1 && v.shift == (0.0, 0.0)
+end
+
+# A material can have a picture that's wrapped round the model. This square
+# faces the front. Its picture is green on the left and blue on the right, and
+# each corner of the square says where in the picture it is.
+
+"A PNG `w` pixels wide and `h` tall, with the colour that `colour(x, y)` gives each pixel as 0xAARRGGBB"
+png(colour, w, h) = begin
+  pixels = UInt32[colour(x, y) for y in 0:h-1 for x in 0:w-1]
+  info = Ref(Skia.sk_image_info_t(C_NULL, Skia.SK_COLOR_TYPE_BGRA_8888, Skia.SK_ALPHA_TYPE_PREMUL, w, h))
+  GC.@preserve info pixels begin
+    data = Skia.sk_data_new_with_copy(pointer(pixels), UInt64(4w * h))
+    image = Skia.sk_image_new_raster_data(info, data, Csize_t(4w))
+    encoded = Skia.sk_encode_png(C_NULL, image, Int32(6))
+    out = copy(unsafe_wrap(Array, Ptr{UInt8}(Skia.sk_data_get_data(encoded)), Skia.sk_data_get_size(encoded)))
+    Skia.sk_data_unref(encoded)
+    Skia.sk_image_unref(image)
+    Skia.sk_data_unref(data)
+    out
+  end
+end
+
+const halves = png((x, y) -> x < 8 ? 0xff00ff00 : 0xff0000ff, 16, 16)
+const square_bytes = vcat(bytes(-1f0, -1f0, 0f0, 1f0, -1f0, 0f0, 1f0, 1f0, 0f0, -1f0, 1f0, 0f0,   # the corners, from the bottom left round to the top left
+                                0f0, 1f0, 1f0, 1f0, 1f0, 0f0, 0f0, 0f0,                           # where each is in the picture, whose top is 0
+                                0x00, 0x01, 0x02, 0x00, 0x02, 0x03, 0x00, 0x00), halves)
+
+glb(joinpath(dir, "square.glb"), """
+{"asset": {"version": "2.0"},
+ "nodes": [{"mesh": 0}],
+ "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "TEXCOORD_0": 1}, "indices": 2, "material": 0}]}],
+ "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 0}}],
+ "textures": [{"source": 0, "sampler": 0}],
+ "samplers": [{"wrapS": 33071, "wrapT": 33071}],
+ "images": [{"bufferView": 3, "mimeType": "image/png"}],
+ "accessors": [{"bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3"},
+               {"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC2"},
+               {"bufferView": 2, "componentType": 5121, "count": 6, "type": "SCALAR"}],
+ "bufferViews": [{"buffer": 0, "byteLength": 48}, {"buffer": 0, "byteOffset": 48, "byteLength": 32},
+                 {"buffer": 0, "byteOffset": 80, "byteLength": 6}, {"buffer": 0, "byteOffset": 88, "byteLength": $(length(halves))}],
+ "buffers": [{"byteLength": $(length(square_bytes))}]}
+""", square_bytes)
+
+let v = STLViewer(joinpath(dir, "square.glb"), turn=0.0, tilt=0.0), w = Window(Box(width(400px), v), size=(440px, 440px))
+  frame(w)
+  @test v.model isa Mesh && triangles(v.model) == 2
+  look = v.model.look
+  @test look.materials[2].base.image == 1 && length(look.textures) == 1
+  # The picture is kept at its own size and at each half of it, down to one pixel
+  @test [(l.w, l.h) for l in look.textures[1].levels] == [(16, 16), (8, 8), (4, 4), (2, 2), (1, 1)]
+  p = picture(v)
+  left, right = p[end÷2, end÷2-size(p, 1)÷6], p[end÷2, end÷2+size(p, 1)÷6]
+  @test green(left) > 100 && green(left) > 3blue(left) && green(left) > 3red(left)
+  @test blue(right) > 100 && blue(right) > 3green(right) && blue(right) > 3red(right)
+end
+
+# A big model with materials has a rougher copy too, which keeps what each triangle is made of
+let around = 300, up = 150
+  at(i, j) = (θ = π * j / up; φ = 2π * i / around; Vec((sin(θ) * cos(φ), sin(θ) * sin(φ), cos(θ))))
+  ball = Vec[]
+  for i in 0:around-1, j in 0:up-1
+    push!(ball, at(i, j), at(i, j + 1), at(i + 1, j + 1), at(i, j), at(i + 1, j + 1), at(i + 1, j))
+  end
+  half = length(ball) ÷ 6
+  gold = GLTF.Material((1f0, 0.8f0, 0.3f0), 1f0, 0.3f0, (0f0, 0f0, 0f0), GLTF.BARE, GLTF.BARE, GLTF.BARE, GLTF.BARE, 1f0, GLTF.BARE, 1f0, 0)
+  m = Mesh(GLTF.Model(ball, copy(ball), NTuple{2,Float32}[], Vec[], vcat(fill(Int32(1), half), fill(Int32(2), half)), [GLTF.PLAIN, gold], Vector{UInt8}[]))
+  @test triangles(m) > 80_000
+  # The triangles with no area at the ball's top and bottom are gone, and so is what they were made of
+  @test length(m.look.made_of) == triangles(m) && length(m.look.normals) == 3triangles(m)
+  r = rough(m, 20_000)
+  @test 2000 < triangles(r) <= 20_000
+  @test length(r.look.made_of) == triangles(r) && length(r.look.normals) == 3triangles(r)
+  @test Set(r.look.made_of) == Set(Int32[1, 2])
 end
