@@ -98,6 +98,95 @@ Texture(bytes::Vector{UInt8}) = begin
 end
 
 """
+What's round a model, when its file has a picture of the whole sky: the Earth
+under a satellite, say. The picture shows behind the model, and the model is
+lit by it and reflects it. A surface that's rough reflects a wide patch of the
+sky at once, so the sky is kept at smaller and smaller sizes, each a blur of
+the one before.
+
+These smaller skies are square. Each way that you can look has a place in the
+square: the upper half of the sky is a diamond in its middle, and the lower
+half is folded out into its four corners. Finding the place takes no sines.
+"""
+struct Sky
+  picture::Texture              # the whole sky, twice as wide as tall. Its top row is straight up.
+  seen::Vector{Matrix{Vec}}     # the sky as amounts of light, 256 across, then 128, and so on down to one colour
+  falls::Matrix{Vec}            # the light that falls on a surface from all of the sky, for each way that the surface can face
+  sun::Vec                      # the way to the Sun, or to whatever light the file has that shines one way
+  sunlight::Vec                 # how much red, green and blue light it gives
+end
+
+"The model stands in a studio when its file says nothing of what's round it"
+struct Studio end
+
+"The place in a square sky of the way `d`: two numbers from 0 to 1"
+@inline square(d::Vec) = begin
+  k = 1 / (abs(d[1]) + abs(d[2]) + abs(d[3]))
+  x, y = d[1] * k, d[2] * k
+  d[3] < 0 && ((x, y) = ((1 - abs(y)) * (x < 0 ? -1f0 : 1f0), (1 - abs(x)) * (y < 0 ? -1f0 : 1f0)))
+  (x / 2 + 0.5f0, y / 2 + 0.5f0)
+end
+
+"The way that the place `(u, v)` of a square sky stands for"
+way(u, v) = begin
+  x, y = 2u - 1, 2v - 1
+  z = 1 - abs(x) - abs(y)
+  z < 0 && ((x, y) = ((1 - abs(y)) * (x < 0 ? -1 : 1), (1 - abs(x)) * (y < 0 ? -1 : 1)))
+  unit(Vec((x, y, z)))
+end
+
+"The light that a square sky has in the way `d`, from the four places round it"
+@inline function glimpse(m::Matrix{Vec}, d::Vec)
+  n = size(m, 1)
+  n == 1 && return @inbounds m[1]
+  u, v = square(d)
+  x, y = clamp(u * n - 0.5f0, 0f0, n - 1.001f0), clamp(v * n - 0.5f0, 0f0, n - 1.001f0)
+  i, j = floor(Int, x), floor(Int, y)
+  fx, fy = x - i, y - j
+  @inbounds (m[i+1, j+1] .* ((1 - fx) * (1 - fy)) .+ m[i+2, j+1] .* (fx * (1 - fy)) .+ m[i+1, j+2] .* ((1 - fx) * fy) .+ m[i+2, j+2] .* (fx * fy))
+end
+
+const ALL_ROUND = GLTF.Paint(1, 0, 1)   # a sky's picture meets itself at its left and right edges, and not at its top and bottom
+
+"""
+The colour of the sky's picture in the way `d`. The model has z up, and the
+picture has y up, as its file does. `spread` chooses the size of picture to
+read, as it does in `sample`.
+"""
+@inline function sky_colour(t::Texture, d::Vec, spread::Float32)
+  u = 0.5f0 + atan(d[1], d[2]) / Float32(2π)
+  v = acos(clamp(d[3], -1f0, 1f0)) / Float32(π)
+  light(sample(t, ALL_ROUND, u, v, spread))
+end
+
+Sky(picture::Texture, sun::Vec, sunlight::Vec) = begin
+  n = 256
+  # Each place of the square sky reads the size of picture whose pixels are as big as it is
+  spread = log2(Float32(first(picture.levels).w) / 4n) - picture.bits
+  seen = [[sky_colour(picture, way((i - 0.5f0) / n, (j - 0.5f0) / n), spread) for i in 1:n, j in 1:n]]
+  while size(last(seen), 1) > 1
+    big = last(seen)
+    small = size(big, 1) ÷ 2
+    push!(seen, [(big[2i-1, 2j-1] .+ big[2i, 2j-1] .+ big[2i-1, 2j] .+ big[2i, 2j]) ./ 4 for i in 1:small, j in 1:small])
+  end
+  # A surface is lit by all of the sky that it faces, most by the part that it faces squarely
+  from = seen[4]   # 32 across
+  ways = [way((i - 0.5f0) / 32, (j - 0.5f0) / 32) for i in 1:32, j in 1:32]
+  falls = [begin
+    facing, total, weight = way((i - 0.5f0) / 16, (j - 0.5f0) / 16), (0f0, 0f0, 0f0), 0f0
+    for k in eachindex(ways)
+      # Places of one size in the square don't stand for parts of one size in the sky
+      w = ways[k]
+      part = (abs(w[1]) + abs(w[2]) + abs(w[3]))^3
+      total = total .+ from[k] .* (part * max(0f0, dot(facing, w)))
+      weight += part
+    end
+    total .* (4 / weight)
+  end for i in 1:16, j in 1:16]
+  Sky(picture, seen, falls, sun, sunlight)
+end
+
+"""
 How the surface of a model looks, when its file says. A list has something for
 each corner or each triangle of the model. `normals`, `places` and `tints` are
 empty when the file doesn't give them.
@@ -109,6 +198,7 @@ struct Look
   made_of::Vector{Int32}             # which of `materials` each triangle is made of
   materials::Vector{GLTF.Material}
   textures::Vector{Texture}          # the file's pictures
+  sky::Union{Nothing,Sky}            # what's round the model, when the file says. If not, the model stands in a studio.
 end
 
 "`paint`, or no picture if `textures` doesn't have the one that it names"
@@ -122,7 +212,7 @@ end
 "`look` for only the triangles `kept` of its model"
 chosen(l::Look, kept::Vector{Int}) = begin
   corners(list) = isempty(list) ? list : [list[3t+k] for t in kept for k in -2:0]
-  Look(corners(l.normals), corners(l.places), corners(l.tints), l.made_of[kept], l.materials, l.textures)
+  Look(corners(l.normals), corners(l.places), corners(l.tints), l.made_of[kept], l.materials, l.textures, l.sky)
 end
 
 """
@@ -177,7 +267,8 @@ Mesh(g::GLTF.Model) = begin
   fit, size = fitted(g.points)
   corners, normals, kept = faces(fit)
   textures = Texture.(g.pictures)
-  look = Look(g.normals, g.places, g.tints, g.made_of, [readable(m, textures) for m in g.materials], textures)
+  sky = 1 <= g.sky <= length(textures) && !isempty(textures[g.sky].levels) ? Sky(textures[g.sky], g.sun, g.sunlight) : nothing
+  look = Look(g.normals, g.places, g.tints, g.made_of, [readable(m, textures) for m in g.materials], textures, sky)
   Mesh(corners, normals, size, length(kept) == length(g.made_of) ? look : chosen(look, kept))
 end
 
@@ -399,6 +490,10 @@ end
 #
 # Behind the model is the studio's grey wall. On a white page a white part
 # wouldn't show, and on a dark page a dark part wouldn't.
+#
+# A file can give the model a sky of its own, and a light like the Sun. Then
+# the sky shows behind the model, and it takes the studio's place: the model is
+# lit by the sky and the Sun, and reflects them.
 
 "Find the triangle of `mesh` that shows at each pixel. It's as `render!`, but `which` gets the triangle's number where `render!` gives a colour, and a triangle reaches half a pixel past its edges."
 function see!(which::Vector{Int32}, depth::Vector{Float32}, w::Int, h::Int, mesh::Mesh,
@@ -526,6 +621,73 @@ along it. It's a fit to measured surfaces that games use.
   (-1.04f0 * a + r3, 1.04f0 * a + r4)
 end
 
+# What's round the model gives the light that falls on a surface, and what the surface reflects. Each is an
+# amount of red, green and blue light. `n` is the way the surface faces, and `ray` the way that light comes
+# from to reach the eye off it. `shade` is how much of the light from all round reaches the point.
+
+@inline falls_on(::Studio, n::Vec, shade::Float32, up::Vec, lamp::Vec, weak::Vec) = begin
+  x = shade * (FLOOR + (CEILING - FLOOR) * (0.5f0 + 0.5f0 * dot(up, n))) + LAMP * max(0f0, dot(n, lamp)) + FILL * max(0f0, dot(n, weak))
+  (x, x, x)
+end
+@inline seen_in(::Studio, ray::Vec, rough::Float32, shade::Float32, up::Vec, lamp::Vec) = (x = shade * studio(dot(up, ray), dot(lamp, ray), rough); (x, x, x))
+
+@inline falls_on(s::Sky, n::Vec, shade::Float32, up::Vec, lamp::Vec, weak::Vec) =
+  glimpse(s.falls, n) .* shade .+ s.sunlight .* (SUNLIGHT * max(0f0, dot(n, s.sun)))
+@inline seen_in(s::Sky, ray::Vec, rough::Float32, shade::Float32, up::Vec, lamp::Vec) = begin
+  # A rough surface reads a smaller, more blurred sky. The Sun spreads and dims in it, as the studio's lamp does.
+  blurred = @inbounds s.seen[clamp(round(Int, 8 * sqrt(rough)), 0, length(s.seen) - 1)+1]
+  wide = LAMP_SIZE + 0.5f0 * rough * rough
+  glimpse(blurred, ray) .* shade .+ s.sunlight .* (SUNLIGHT * GLARE / LAMP * (LAMP_SIZE / wide) * exp((dot(ray, s.sun) - 1) / wide))
+end
+
+const SUNLIGHT = 0.3f0   # how bright a surface that faces the file's light is, for each unit of that light
+const SKY_VIEW = 40.0    # degrees of the sky that show behind the model, from the top of the view to the bottom
+
+"Paint the pixels that show no triangle with the studio's grey wall, which is darker at the top"
+function behind!(pixels::Vector{UInt32}, which::Vector{Int32}, w::Int, h::Int, ::Studio, sight)
+  @inbounds for row in 0:h-1
+    wall = BACK_TOP + (BACK_BOTTOM - BACK_TOP) * (row + 0.5f0) / h
+    grey = shown((wall, wall, wall))
+    for i in row*w+1:row*w+w
+      which[i] == 0 && (pixels[i] = grey)
+    end
+  end
+  pixels
+end
+
+"""
+Paint the pixels that show no triangle with the sky. The sky is far away, so
+it doesn't grow with the model: it only turns as the model turns. Its colour is
+worked out at every fourth pixel each way, and the pixels between get a mix,
+since a sky has no fine detail and there are many pixels.
+"""
+function behind!(pixels::Vector{UInt32}, which::Vector{Int32}, w::Int, h::Int, sky::Sky, (right, up, near)::NTuple{3,Vec})
+  step = 4
+  across, down = cld(w, step) + 1, cld(h, step) + 1
+  slope = Float32(tand(SKY_VIEW / 2) / (h / 2))   # how far a ray leans for each pixel from the middle of the view
+  # The size of picture whose pixels are about as big as the view's
+  spread = log2(max(1f0, slope * first(sky.picture.levels).w / Float32(2π))) - sky.picture.bits
+  grid = Matrix{Vec}(undef, across, down)
+  @inbounds for j in 1:down, i in 1:across
+    x, y = ((i - 1) * step - w / 2f0) * slope, (h / 2f0 - (j - 1) * step) * slope
+    grid[i, j] = sky_colour(sky.picture, unit(right .* x .+ up .* y .- near), spread)
+  end
+  @inbounds for row in 0:h-1
+    y = (row + 0.5f0) / step
+    j = floor(Int, y)
+    fy = y - j
+    for col in 0:w-1
+      which[row*w+col+1] == 0 || continue
+      x = (col + 0.5f0) / step
+      i = floor(Int, x)
+      fx = x - i
+      c = grid[i+1, j+1] .* ((1 - fx) * (1 - fy)) .+ grid[i+2, j+1] .* (fx * (1 - fy)) .+ grid[i+1, j+2] .* ((1 - fx) * fy) .+ grid[i+2, j+2] .* (fx * fy)
+      pixels[row*w+col+1] = shown(c)
+    end
+  end
+  pixels
+end
+
 "The way a corner faces, turned to the side `flat` that its triangle shows. A corner that the file says nothing of faces as the triangle does."
 @inline side(n::Vec, flat::Vec) = n == (0f0, 0f0, 0f0) ? flat : dot(n, flat) < 0 ? .-n : n
 
@@ -534,9 +696,9 @@ end
 
 """
 Work out the light at each pixel in `rows` that `see!` found a triangle for.
-The other pixels show the wall behind the model. The picture is `h` pixels tall.
+`around` is what's round the model: a studio, or the sky of its file.
 """
-function shade!(pixels::Vector{UInt32}, which::Vector{Int32}, w::Int, h::Int, rows::UnitRange{Int}, mesh::Mesh, look::Look,
+function shade!(pixels::Vector{UInt32}, which::Vector{Int32}, w::Int, rows::UnitRange{Int}, mesh::Mesh, look::Look, around,
                 (right, up, near)::NTuple{3,Vec}, focal::Float32, cx::Float32, cy::Float32)
   corners = mesh.corners
   eye = near .* EYE
@@ -553,11 +715,7 @@ function shade!(pixels::Vector{UInt32}, which::Vector{Int32}, w::Int, h::Int, ro
   @inbounds for row in rows, col in 0:w-1
     i = row * w + col + 1
     t = which[i]
-    if t == 0
-      wall = BACK_TOP + (BACK_BOTTOM - BACK_TOP) * (row + 0.5f0) / h
-      pixels[i] = shown((wall, wall, wall))
-      continue
-    end
+    t == 0 && continue
     if t != before
       before = t
       a, b, c = corners[3t-2], corners[3t-1], corners[3t]
@@ -625,11 +783,11 @@ function shade!(pixels::Vector{UInt32}, which::Vector{Int32}, w::Int, h::Int, ro
     to_eye = unit(eye .- at, near)
     facing = max(dot(n, to_eye), 1f-3)
     ray = n .* 2facing .- to_eye   # the way that light comes from to reach the eye off the surface
-    fallen = shade * (FLOOR + (CEILING - FLOOR) * (0.5f0 + 0.5f0 * dot(up, n))) + LAMP * max(0f0, dot(n, lamp)) + FILL * max(0f0, dot(n, weak))
-    seen = shade * studio(dot(up, ray), dot(lamp, ray), rough)
+    fallen = falls_on(around, n, shade, up, lamp, weak)
+    seen = seen_in(around, ray, rough, shade, up, lamp)
     own, extra = reflected(rough, facing)
     mirror = colour .* metal .+ 0.04f0 * (1 - metal)   # the colour that the surface reflects in
-    pixels[i] = shown(colour .* ((1 - metal) * fallen) .+ (mirror .* own .+ extra) .* seen .+ glow)
+    pixels[i] = shown(colour .* (1 - metal) .* fallen .+ (mirror .* own .+ extra) .* seen .+ glow)
   end
   pixels
 end
@@ -638,7 +796,13 @@ end
 render!(p::Picture, w::Int, h::Int, mesh::Mesh, look::Look, sight, focal::Float32, cx::Float32, cy::Float32) = begin
   length(p.which) == w * h || (p.which = Vector{Int32}(undef, w * h))
   see!(p.which, p.depth, w, h, mesh, sight, focal, cx, cy)
-  shade!(p.pixels, p.which, w, h, 0:h-1, mesh, look, sight, focal, cx, cy)
+  light!(p.pixels, p.which, w, h, mesh, look, something(look.sky, Studio()), sight, focal, cx, cy)
+end
+
+"Give each pixel its colour: the model's where `see!` found a triangle, and what's behind the model where it found none"
+light!(pixels, which, w, h, mesh, look, around, sight, focal, cx, cy) = begin
+  shade!(pixels, which, w, 0:h-1, mesh, look, around, sight, focal, cx, cy)
+  behind!(pixels, which, w, h, around, sight)
 end
 
 "How many of the screen's pixels a px is wide on the canvas `ctx`"
@@ -699,7 +863,7 @@ turning(v::STLViewer) = v.rough !== nothing && moving(v)
 sketched(v::STLViewer) = v.model isa Mesh && v.model.look !== nothing && moving(v)
 
 # The most pixels that a model with materials is drawn with: when it's still, and while it moves
-const FINE, QUICK = 6_000_000, 900_000
+const FINE, QUICK = 4_000_000, 600_000
 "Note that the model moved just now"
 moved!(v::STLViewer) = (v.moved = time(); v)
 

@@ -457,3 +457,61 @@ let v = STLViewer(joinpath(dir, "box.glb"), fill=true), w = Window(v, size=(500p
   onscroll(w, Vec2{px}(0px, 2px))
   @test v.zoom > 1
 end
+
+# A file can give its model a sky, and a light that shines one way, like the Sun. This sky is blue above
+# the level of the eye and green below it. The sky shows behind the model, in place of the studio's wall.
+const sky_picture = png((x, y) -> y < 16 ? 0xff2040ff : 0xff20c040, 64, 32)
+const sky_bytes = vcat(box_bytes, sky_picture)
+glb(joinpath(dir, "sky.glb"), """
+{"asset": {"version": "2.0"}, "extensionsUsed": ["KHR_lights_punctual"],
+ "extensions": {"KHR_lights_punctual": {"lights": [{"type": "directional", "color": [1, 0.5, 0.25], "intensity": 4}]}},
+ "scene": 0, "scenes": [{"nodes": [0, 1], "extras": {"sky": {"image": 0}}}],
+ "nodes": [{"mesh": 0}, {"rotation": [-0.7071068, 0, 0, 0.7071068], "extensions": {"KHR_lights_punctual": {"light": 0}}}],
+ "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+ "images": [{"bufferView": 2, "mimeType": "image/png"}],
+ "accessors": [{"bufferView": 0, "componentType": 5126, "count": 8, "type": "VEC3"},
+               {"bufferView": 1, "componentType": 5123, "count": 36, "type": "SCALAR"}],
+ "bufferViews": [{"buffer": 0, "byteLength": 96}, {"buffer": 0, "byteOffset": 96, "byteLength": 72},
+                 {"buffer": 0, "byteOffset": 168, "byteLength": $(length(sky_picture))}],
+ "buffers": [{"byteLength": $(length(sky_bytes))}]}
+""", sky_bytes)
+
+let g = GLTF.model(joinpath(dir, "sky.glb"))
+  @test g.sky == 1 && !isempty(g.pictures[1])
+  # The light's node is turned to shine straight down, so the way to it is up, which is z in the viewer
+  @test all(isapprox.(g.sun, (0f0, 0f0, 1f0), atol=1f-5))
+  @test g.sunlight == (4f0, 2f0, 1f0)
+  # A file with no sky and no light has neither
+  plain = GLTF.model(joinpath(dir, "box.glb"))
+  @test plain.sky == 0 && plain.sunlight == (0f0, 0f0, 0f0)
+end
+
+let v = STLViewer(joinpath(dir, "sky.glb"), tilt=0.0), w = Window(Box(width(400px), v), size=(440px, 440px))
+  frame(w)
+  sky = v.model.look.sky
+  @test sky !== nothing && read_gltf(joinpath(dir, "box.glb")).look.sky === nothing
+  # The sky is kept at smaller and smaller sizes, down to one colour, for surfaces that are rougher and rougher
+  @test size.(sky.seen, 1) == [256, 128, 64, 32, 16, 8, 4, 2, 1]
+  # Light falls from the blue half on a surface that faces up, and from the green half on one that faces down
+  let above = stl.glimpse(sky.falls, (0f0, 0f0, 1f0)), below = stl.glimpse(sky.falls, (0f0, 0f0, -1f0))
+    @test above[3] > 2above[2] && below[2] > 2below[3]
+  end
+  # The eye is level, so the sky behind the model is blue in the top of the view and green in the bottom
+  p = picture(v)
+  top, bottom = p[2, 2], p[end-1, 2]
+  @test blue(top) > 200 && blue(top) > 2green(top)
+  @test green(bottom) > 150 && green(bottom) > 2blue(bottom)
+  # The sky turns as the model turns: from high above, all of it that shows is below the level of the eye
+  v.tilt = 60.0
+  frame(w)
+  @test green(picture(v)[2, 2]) > 2blue(picture(v)[2, 2])
+  v.tilt = 0.0
+  frame(w)
+  @test picture(v)[2, 2] == top
+  # The sky is far away, so it doesn't grow as the model grows
+  move!(w, v)
+  holding(() -> onscroll(w, Vec2{px}(0px, 2px)), w, (Keys.cmd,))
+  v.moved = 0.0
+  frame(w)
+  @test v.zoom > 1 && picture(v)[2, 2] == top
+end

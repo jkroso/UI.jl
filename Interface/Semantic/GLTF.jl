@@ -12,6 +12,16 @@
 # scales all that's under it. A mesh has parts, each with one material. A part's
 # numbers come from "accessors", which say where in the bytes they are.
 #
+# A file can also say what's round the model. A node can be a light that shines
+# one way, like the Sun (the format's KHR_lights_punctual). And a scene can name
+# a picture of the whole sky, which is this reader's own addition:
+#
+#     "scenes": [{"nodes": [0], "extras": {"sky": {"image": 3}}}]
+#
+# The picture is twice as wide as it's tall. Its top row is straight up (y), its
+# bottom row straight down, and its middle column is the way that -z points.
+# Going right in the picture turns towards x.
+#
 # JSON is read here, with no library, so that an app needs nothing more to read
 # a model.
 
@@ -352,16 +362,21 @@ end
 The triangles of a glTF file, with z up, and what each is made of. A list that
 no part of the file gives is empty: `normals`, `places` and `tints`.
 """
-struct Model
+mutable struct Model
   points::Vector{Vec}             # three corners for each triangle
   normals::Vector{Vec}            # the way the surface faces at each corner, for a curve that looks smooth. (0, 0, 0) where the file doesn't say.
   places::Vector{UV}              # where each corner is in the material's pictures: (0, 0) is a picture's top left, (1, 1) its bottom right
   tints::Vector{Vec}              # a colour for each corner, which the material's colour is multiplied by
   made_of::Vector{Int32}          # for each triangle, which of `materials`
   materials::Vector{Material}     # the first is for a part that names none
-  pictures::Vector{Vector{UInt8}} # the file's pictures as PNG or JPEG bytes. One that no material uses is empty.
+  pictures::Vector{Vector{UInt8}} # the file's pictures as PNG or JPEG bytes. One that nothing uses is empty.
+  sky::Int                        # which of `pictures` shows the whole sky round the model, or 0 for none
+  sun::Vec                        # the way to the light that shines on the model, or (0, 0, 0) for none
+  sunlight::Vec                   # how much red, green and blue light it gives
 end
 
+Model(points, normals, places, tints, made_of, materials, pictures) =
+  Model(points, normals, places, tints, made_of, materials, pictures, 0, (0f0, 0f0, 0f0), (0f0, 0f0, 0f0))
 Model() = Model(Vec[], Vec[], UV[], Vec[], Int32[], Material[PLAIN], Vector{UInt8}[])
 
 "Make `list` as long as `points`, with `blank` for the corners it has nothing for"
@@ -427,6 +442,21 @@ add!(out::Model, f::File, part, m::Matrix{Float64}) = begin
   out
 end
 
+"Note the light that node `n` holds, if it shines one way and is the first that does. It shines along the node's -z."
+shine!(out::Model, f::File, n, m::Matrix{Float64}) = begin
+  out.sunlight == (0f0, 0f0, 0f0) || return out
+  lights = get(under(under(f.json, "extensions"), "KHR_lights_punctual"), "lights", [])
+  0 <= n < length(lights) || return out
+  light = lights[Int(n)+1]
+  get(light, "type", "") == "directional" || return out
+  to = (m[1, 3], m[2, 3], m[3, 3])
+  len = sqrt(to[1]^2 + to[2]^2 + to[3]^2)
+  len > 0 || return out
+  out.sun = Float32.(to ./ len)
+  out.sunlight = vec3(get(light, "color", [1, 1, 1])) .* Float32(get(light, "intensity", 1))
+  out
+end
+
 "Add the mesh of node `n`, and of each node under it"
 walk!(out::Model, f::File, n, above::Matrix{Float64}, deep=1) = begin
   deep > 200 && error("The nodes go round in a ring")
@@ -435,6 +465,8 @@ walk!(out::Model, f::File, n, above::Matrix{Float64}, deep=1) = begin
   if haskey(node, "mesh")
     for part in get(f.json["meshes"][Int(node["mesh"])+1], "primitives", []); add!(out, f, part, m) end
   end
+  light = get(under(under(node, "extensions"), "KHR_lights_punctual"), "light", nothing)
+  light isa Real && shine!(out, f, Int(light), m)
   for child in get(node, "children", []); walk!(out, f, child, m, deep + 1) end
   out
 end
@@ -448,12 +480,15 @@ model(path::AbstractString) = begin
   nodes = get(g, "nodes", [])
   # A file can hold several scenes and says which one to show. One with no scene shows every node that isn't under another.
   scenes = get(g, "scenes", [])
+  scene = isempty(scenes) ? NONE : scenes[clamp(Int(get(g, "scene", 0)) + 1, 1, length(scenes))]
   roots = if isempty(scenes)
     under_another = Set(Int(c) for node in nodes for c in get(node, "children", []))
     [i for i in 0:length(nodes)-1 if !(i in under_another)]
   else
-    get(scenes[clamp(Int(get(g, "scene", 0)) + 1, 1, length(scenes))], "nodes", [])
+    get(scene, "nodes", [])
   end
+  sky = get(under(under(scene, "extras"), "sky"), "image", nothing)
+  sky isa Real && 0 <= sky < length(get(g, "images", [])) && (out.sky = Int(sky) + 1)
   for n in roots; walk!(out, f, n, UPRIGHT) end
   isempty(out.normals) || pad!(out.normals, out.points, (0f0, 0f0, 0f0))
   isempty(out.places) || pad!(out.places, out.points, (0f0, 0f0))
@@ -461,6 +496,7 @@ model(path::AbstractString) = begin
   # Only the pictures of materials that some triangle is made of are needed
   used = Set(Int.(out.made_of))
   wanted = Set(p.image for (i, m) in enumerate(out.materials) if i in used for p in (m.base, m.surface, m.glowing, m.shade, m.bumps))
+  push!(wanted, out.sky)
   append!(out.pictures, [i in wanted ? picture(f, i) : UInt8[] for i in 1:length(get(g, "images", []))])
   out
 end
