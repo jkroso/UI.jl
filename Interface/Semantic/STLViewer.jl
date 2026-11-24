@@ -25,6 +25,9 @@
 # Drag to turn the model. Hold ⌘ and scroll to make it bigger or smaller. It
 # grows towards the mouse, so you can go close to one part of it, and a drag
 # then turns it round that part. Click it twice to see it as it was at first.
+#
+# `STLViewer("bracket.stl", fill=true)` takes all the room that it's given and
+# has no frame. That's for a window that shows nothing but the model.
 
 const Vec = NTuple{3,Float32}
 const UV = NTuple{2,Float32}
@@ -660,6 +663,7 @@ const SMALLEST, BIGGEST = 0.4, 60.0
   shift::NTuple{2,Float64} = (0.0, 0.0)   # how many px right of the view's middle, and below it, the middle of the model shows
   height::px = 340px                  # of the view. The viewer is as wide as it's given room for.
   color::Colorant = colorant"rgb(132,160,196)"
+  fill::Bool = false                  # it takes all the room that it's given and has no frame, for when it's all that a window shows
   # What it remembers between frames
   model::Any = nothing                # the Mesh of the file, or a sentence that says why there isn't one
   rough::Any = nothing                # a Mesh with fewer triangles to draw while a big model turns, or nothing for a small one
@@ -715,10 +719,12 @@ describe(v::STLViewer) = begin
   # A model that has just stopped needs one more frame, to draw it in full
   (turning(v) || sketched(v)) && redraw_in!(v, SETTLE / 2)
   grow = GrowType.Grow
-  Column(width(grow=grow), radius(8px), border(1px, :solid, t.line), background(t.surface), clip=true,
-    Box(width(grow=grow), height(v.height), padding(16px),
+  # One that fills its room has no line round it and no round corners, since the window's edges are its edges
+  frame = v.fill ? (height(grow=grow),) : (radius(8px), border(1px, :solid, t.line))
+  Column(width(grow=grow), frame..., background(t.surface), clip=true,
+    Box(width(grow=grow), v.fill ? height(grow=grow) : height(v.height), padding(16px),
       (model isa Mesh ? () : (Text(String(model), size=sized(12pt, t), color=t.dim),))...),
-    Row(width(grow=grow), padding(12px, 7px), child_gap=12px, background(t.hover), radius(0px, 7px),
+    Row(width(grow=grow), padding(12px, 7px), child_gap=12px, background(t.hover), (v.fill ? () : (radius(0px, 7px),))...,
       Text(basename(v.path), size=sized(12pt, t), color=t.text, wrap=WrapMode.none),
       Box(width(grow=grow)),
       Text(about(model), size=sized(12pt, t), color=t.dim, wrap=WrapMode.none)))
@@ -762,9 +768,10 @@ draw(ctx, size, ui::ConcreteRect, v::STLViewer) = begin
   from = Ref(Skia.sk_rect_t(0f0, 0f0, Float32(w), Float32(h)))
   to = Ref(Skia.sk_rect_t(flt(area.left), flt(area.top), flt(area.left + area.width), flt(area.top + area.height)))
   # A model that's bigger than the view stops inside the viewer's border and its round corners
-  edge = Ref(Skia.sk_rect_t(flt(ui.left + 1px), flt(ui.top + 1px), flt(ui.left + ui.width - 1px), flt(ui.top + ui.height - 1px)))
+  inset, corner = v.fill ? (0px, 0px) : (1px, 7px)
+  edge = Ref(Skia.sk_rect_t(flt(ui.left + inset), flt(ui.top + inset), flt(ui.left + ui.width - inset), flt(ui.top + ui.height - inset)))
   clip = Skia.sk_path_new()
-  Skia.sk_path_add_rounded_rect(clip, edge, flt(7px), flt(7px), Skia.SK_PATH_DIRECTION_CW)
+  Skia.sk_path_add_rounded_rect(clip, edge, flt(corner), flt(corner), Skia.SK_PATH_DIRECTION_CW)
   paint = Skia.sk_paint_new()
   Skia.sk_paint_set_antialias(paint, true)
   Skia.sk_canvas_save(ctx)
@@ -876,8 +883,9 @@ onmouse(v::STLViewer, e::MouseMove) = begin
 end
 
 # Scrolling with ⌘ held makes the model bigger or smaller. Without ⌘ it scrolls the page that the viewer is on.
+# A viewer that fills its room is on no page, so any scroll makes its model bigger or smaller.
 onscroll(v::STLViewer, e::MouseScroll) = begin
-  Keys.cmd in e.window.keys || return
+  (v.fill || Keys.cmd in e.window.keys) || return
   zoom!(v, exp(e.delta[2].value / 10), e.window.mouse)
   handled
 end

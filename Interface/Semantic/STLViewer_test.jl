@@ -444,3 +444,16 @@ let around = 300, up = 150
   @test length(r.look.made_of) == triangles(r) && length(r.look.normals) == 3triangles(r)
   @test Set(r.look.made_of) == Set(Int32[1, 2])
 end
+
+# A viewer that fills its room is as big as the window, and any scroll makes its model bigger
+let v = STLViewer(joinpath(dir, "box.glb"), fill=true), w = Window(v, size=(500px, 440px))
+  frame(w)
+  r = rect(v)
+  @test (r.left, r.top, r.width, r.height) == (0px, 0px, 500px, 440px)
+  # The model has all of that but the line under it that says what it is
+  area = r.children[1]
+  @test area.width == 500px && 380px < area.height < 440px
+  move!(w, v)
+  onscroll(w, Vec2{px}(0px, 2px))
+  @test v.zoom > 1
+end
