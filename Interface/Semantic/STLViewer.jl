@@ -24,7 +24,9 @@
 #
 # Drag to turn the model. Hold ⌘ and scroll to make it bigger or smaller. It
 # grows towards the mouse, so you can go close to one part of it, and a drag
-# then turns it round that part. Click it twice to see it as it was at first.
+# then turns it round that part. Hold ⇧ and drag, or drag with the middle
+# button, to move the model across the view. Click it twice to see it as it
+# was at first.
 #
 # Code can make a model too, as the bytes of a .glb file, and give it to a
 # viewer with `show!(viewer, bytes)`. Give it a newer model the same way, and
@@ -34,7 +36,9 @@
 # so the model is all that shows.
 #
 # `STLViewer("bracket.stl", fill=true)` takes all the room that it's given and
-# has no frame. That's for a window that shows nothing but the model.
+# has no frame. That's for a window that shows nothing but the model. Nothing
+# under it scrolls, so there two fingers on the trackpad move the model across
+# the view, as a map moves, and the wheel of a mouse makes it bigger or smaller.
 
 const Vec = NTuple{3,Float32}
 const UV = NTuple{2,Float32}
@@ -1004,7 +1008,7 @@ end
 # The model's middle shows `shift` px from the middle of the view. When the
 # model grows, the shift changes so that the part under the mouse stays there.
 # When it turns, the shift changes so that the part it turns round stays where
-# it is.
+# it is. When it's moved across the view, the shift is all that changes.
 
 "The part of the viewer that shows the model, or nothing before the viewer is first drawn"
 stage(v::STLViewer) = (r = rect(v); r === nothing || isempty(r.children) ? nothing : r.children[1])
@@ -1054,19 +1058,36 @@ turn!(v::STLViewer, turn, tilt) = (area = stage(v); turn!(v, turn, tilt, area ==
 
 """
 Make the model `by` times bigger. `at` is where the mouse is in the window. The
-part of the model under it stays under it as the model grows. As the model gets
-smaller again, its middle goes back to the middle of the view.
+part of the model under it stays under it as the model grows, and as it gets
+smaller. So a model made bigger and then smaller again, with the mouse in one
+place, is back where it was, and a model that was moved across the view stays
+where it was put.
 """
 zoom!(v::STLViewer, by, at) = begin
   new = clamp(v.zoom * by, SMALLEST, BIGGEST)
   area = stage(v)
-  if new > v.zoom && area !== nothing
+  if area !== nothing
     m = from_middle(area, at)
     v.shift = m .- (m .- v.shift) .* (new / v.zoom)
-  elseif new < v.zoom
-    v.shift = v.shift .* (v.zoom > 1 ? max(0.0, (new - 1) / (v.zoom - 1)) : 0.0)
   end
   v.zoom = new
+  moved!(v)
+end
+
+"""
+Move the model across the view by `by` px: right, and down. Its middle can go
+only as far from the view as the ball round it reaches, so some of the model
+can always be moved back into the view.
+"""
+pan!(v::STLViewer, by) = begin
+  shift = v.shift .+ by
+  area = stage(v)
+  if area !== nothing
+    w, h = area.width.value, area.height.value
+    ball = FIT * min(w, h) * v.zoom   # how many px from the model's middle the ball round it reaches
+    shift = (clamp(shift[1], -(w / 2 + ball), w / 2 + ball), clamp(shift[2], -(h / 2 + ball), h / 2 + ball))
+  end
+  v.shift = shift
   moved!(v)
 end
 
@@ -1089,21 +1110,43 @@ onkey(v::STLViewer, e::KeyPress{Keys.mouse_left}) = begin
   handled
 end
 
+# The middle button only moves the model, so it needn't find the part that it was pressed on
+onkey(v::STLViewer, e::KeyPress{Keys.mouse_middle}) = (focus(v); v.grab = e.window.mouse; v.clicked = 0.0; handled)
+
+const MODIFIERS = Keys.cmd | Keys.shft | Keys.opt | Keys.ctrl
+"The modifier keys that are down in the window `w`, and no other keys or buttons"
+held(w) = w.keys & MODIFIERS
+
 # A drag turns the model: half a degree for each px. Up and down tilt it, as far as the top and the underside.
+# With ⇧ held, or with the middle button, a drag moves the model across the view, as far as the mouse moves.
 onmouse(v::STLViewer, e::MouseMove) = begin
-  (Keys.mouse_left in e.window.keys && v.grab !== nothing) || (v.grab = nothing; return)
+  left, middle = Keys.mouse_left in e.window.keys, Keys.mouse_middle in e.window.keys
+  ((left || middle) && v.grab !== nothing) || (v.grab = nothing; return)
   dx, dy = (e.position[1] - v.grab[1]).value, (e.position[2] - v.grab[2]).value
   v.grab = e.position
+  (dx == 0 && dy == 0) && return handled
   # A click that moved isn't half of a double click
-  (dx == 0 && dy == 0) || (v.clicked = 0.0; turn!(v, dx / 2, dy / 2, v.pivot))
+  v.clicked = 0.0
+  middle || held(e.window) == Keys.shft ? pan!(v, (dx, dy)) : turn!(v, dx / 2, dy / 2, v.pivot)
   handled   # the drag is the viewer's, so the nodes above don't act on it too
 end
 
+# How many px two fingers on the trackpad move the model for each step of a scroll. macOS gives a tenth of the
+# points that the fingers moved, so the model moves as far as the fingers do.
+const PAN_STEP = 10
+
 # Scrolling with ⌘ held makes the model bigger or smaller. Without ⌘ it scrolls the page that the viewer is on.
-# A viewer that fills its room is on no page, so any scroll makes its model bigger or smaller.
+# A viewer that fills its room is on no page. There two fingers on the trackpad move the model, with the
+# fingers, and the wheel of a mouse makes it bigger or smaller.
 onscroll(v::STLViewer, e::MouseScroll) = begin
-  (v.fill || Keys.cmd in e.window.keys) || return
-  zoom!(v, exp(e.delta[2].value / 10), e.window.mouse)
+  keys = held(e.window)
+  if keys == Keys.cmd || (v.fill && e.wheel && keys == Keys(0))
+    zoom!(v, exp(e.delta[2].value / 10), e.window.mouse)
+  elseif v.fill && keys == Keys(0)
+    pan!(v, (e.delta[1].value * PAN_STEP, e.delta[2].value * PAN_STEP))
+  else
+    return
+  end
   handled
 end
 

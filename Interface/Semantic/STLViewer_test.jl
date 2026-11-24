@@ -342,7 +342,7 @@ let v = STLViewer(joinpath(dir, "box.glb"), height=1100px), w = Window(Box(width
 end
 
 # The model grows towards the mouse, so the part under the mouse stays under it. A drag then turns the model
-# round the part that was pressed. As the model gets small again, it goes back to the middle of the view.
+# round the part that was pressed. As the model gets small again, the part under the mouse stays under it too.
 let v = STLViewer(joinpath(dir, "box.glb")), w = Window(Box(width(400px), v), size=(440px, 440px))
   frame(w)
   area = rect(v).children[1]
@@ -368,8 +368,71 @@ let v = STLViewer(joinpath(dir, "box.glb")), w = Window(Box(width(400px), v), si
   onkey(w, KeyRelease{Keys.mouse_left}(0, w))
   @test v.turn ≈ 35 + 30 && v.tilt ≈ 22 - 15
   @test all(isapprox.(stl.place(v, area, v.pivot), from, atol=0.01))
+  under = stl.from_middle(area, w.mouse)
+  part = stl.point(v, area, under)
   holding(() -> onscroll(w, Vec2{px}(0px, -30px)), w, (Keys.cmd,))
-  @test v.zoom < 1 && v.shift == (0.0, 0.0)
+  @test v.zoom == stl.SMALLEST
+  @test all(isapprox.(stl.place(v, area, part), under, atol=0.01))
+  # The mouse that stays in one place makes it bigger and smaller again, and it's back where it was
+  was = v.shift
+  holding(() -> onscroll(w, Vec2{px}(0px, 8px)), w, (Keys.cmd,))
+  holding(() -> onscroll(w, Vec2{px}(0px, -8px)), w, (Keys.cmd,))
+  @test all(isapprox.(v.shift, was, atol=1e-9))
+end
+
+# ⇧ and a drag move the model across the view, as far as the mouse moves, and so does a drag with the middle
+# button. Neither turns it. On a page, two fingers on the trackpad scroll the page and leave the model alone.
+let v = STLViewer(joinpath(dir, "box.glb")), w = Window(Box(width(400px), v), size=(440px, 440px))
+  frame(w)
+  turn, tilt = v.turn, v.tilt
+  at = move!(w, v)
+  holding(w, (Keys.shft,)) do
+    w.keys |= Keys.mouse_left
+    onkey(w, KeyPress{Keys.mouse_left}(0, w))
+    move!(w, (at[1] + 30px, at[2] - 12px))
+    move!(w, (at[1] + 50px, at[2] + 20px))
+    w.keys ⊻= Keys.mouse_left
+    onkey(w, KeyRelease{Keys.mouse_left}(0, w))
+  end
+  @test all(isapprox.(v.shift, (50.0, 20.0)))
+  @test (v.turn, v.tilt) == (turn, tilt)
+  # A drag with ⇧ and ⌘ isn't one with ⇧, so it turns the model
+  holding(w, (Keys.shft, Keys.cmd)) do
+    w.keys |= Keys.mouse_left
+    onkey(w, KeyPress{Keys.mouse_left}(0, w))
+    move!(w, (at[1] + 70px, at[2] + 20px))
+    w.keys ⊻= Keys.mouse_left
+    onkey(w, KeyRelease{Keys.mouse_left}(0, w))
+  end
+  @test v.turn ≈ turn + 10
+  turn, shift = v.turn, v.shift
+  w.keys |= Keys.mouse_middle
+  onkey(w, KeyPress{Keys.mouse_middle}(0, w))
+  move!(w, (at[1] + 40px, at[2] + 30px))
+  w.keys ⊻= Keys.mouse_middle
+  @test all(isapprox.(v.shift, shift .+ (-30.0, 10.0)))
+  @test v.turn == turn
+  # Once the button is up, the mouse moves nothing
+  move!(w, at)
+  @test all(isapprox.(v.shift, shift .+ (-30.0, 10.0)))
+  shift, zoom = v.shift, v.zoom
+  onscroll(w, Vec2{px}(3px, 2px), false)
+  @test (v.shift, v.zoom) == (shift, zoom)
+  # A model that's moved a long way stops while the ball round it still reaches the view
+  area = rect(v).children[1]
+  holding(w, (Keys.shft,)) do
+    w.keys |= Keys.mouse_left
+    onkey(w, KeyPress{Keys.mouse_left}(0, w))
+    move!(w, (at[1] + 5000px, at[2]))
+    w.keys ⊻= Keys.mouse_left
+    onkey(w, KeyRelease{Keys.mouse_left}(0, w))
+  end
+  @test v.shift[1] ≈ area.width.value / 2 + stl.FIT * min(area.width.value, area.height.value) * v.zoom
+  # Two clicks put it back in the middle
+  move!(w, v)
+  click!(w, v)
+  click!(w, v)
+  @test v.shift == (0.0, 0.0)
 end
 
 # A material can have a picture that's wrapped round the model. This square
@@ -445,7 +508,8 @@ let around = 300, up = 150
   @test Set(r.look.made_of) == Set(Int32[1, 2])
 end
 
-# A viewer that fills its room is as big as the window, and any scroll makes its model bigger
+# A viewer that fills its room is as big as the window. Two fingers on the trackpad move its model with them,
+# and the wheel of a mouse, or two fingers with ⌘ held, make it bigger.
 let v = STLViewer(joinpath(dir, "box.glb"), fill=true), w = Window(v, size=(500px, 440px))
   frame(w)
   r = rect(v)
@@ -454,8 +518,17 @@ let v = STLViewer(joinpath(dir, "box.glb"), fill=true), w = Window(v, size=(500p
   area = r.children[1]
   @test area.width == 500px && 380px < area.height < 440px
   move!(w, v)
-  onscroll(w, Vec2{px}(0px, 2px))
+  onscroll(w, Vec2{px}(3px, -2px), false)
+  @test v.zoom == 1 && all(isapprox.(v.shift, (30.0, -20.0)))
+  onscroll(w, Vec2{px}(0px, 2px), true)
   @test v.zoom > 1
+  zoom, shift = v.zoom, v.shift
+  holding(() -> onscroll(w, Vec2{px}(0px, 2px), false), w, (Keys.cmd,))
+  @test v.zoom > zoom
+  # With another key held, two fingers do nothing to the model
+  zoom, shift = v.zoom, v.shift
+  holding(() -> onscroll(w, Vec2{px}(3px, 2px), false), w, (Keys.opt,))
+  @test (v.zoom, v.shift) == (zoom, shift)
 end
 
 # A file can give its model a sky, and a light that shines one way, like the Sun. This sky is blue above
