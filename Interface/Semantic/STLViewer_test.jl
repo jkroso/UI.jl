@@ -508,8 +508,8 @@ let around = 300, up = 150
   @test Set(r.look.made_of) == Set(Int32[1, 2])
 end
 
-# A viewer that fills its room is as big as the window. Two fingers on the trackpad move its model with them,
-# and the wheel of a mouse, or two fingers with ⌘ held, make it bigger.
+# A viewer that fills its room is as big as the window. A scroll makes its model bigger, from a mouse's wheel
+# or from two fingers on a trackpad, and moves it nowhere.
 let v = STLViewer(joinpath(dir, "box.glb"), fill=true), w = Window(v, size=(500px, 440px))
   frame(w)
   r = rect(v)
@@ -518,14 +518,18 @@ let v = STLViewer(joinpath(dir, "box.glb"), fill=true), w = Window(v, size=(500p
   area = r.children[1]
   @test area.width == 500px && 380px < area.height < 440px
   move!(w, v)
-  onscroll(w, Vec2{px}(3px, -2px), false)
-  @test v.zoom == 1 && all(isapprox.(v.shift, (30.0, -20.0)))
-  onscroll(w, Vec2{px}(0px, 2px), true)
+  onscroll(w, Vec2{px}(0px, 2px), false)
   @test v.zoom > 1
+  zoom = v.zoom
+  onscroll(w, Vec2{px}(0px, 2px), true)
+  @test v.zoom > zoom
+  # A scroll across, as from the thumb wheel of a mouse, neither zooms nor moves the model
   zoom, shift = v.zoom, v.shift
+  onscroll(w, Vec2{px}(3px, 0px), false)
+  @test v.zoom ≈ zoom && all(isapprox.(v.shift, shift))
   holding(() -> onscroll(w, Vec2{px}(0px, 2px), false), w, (Keys.cmd,))
   @test v.zoom > zoom
-  # With another key held, two fingers do nothing to the model
+  # With another key held, a scroll does nothing to the model
   zoom, shift = v.zoom, v.shift
   holding(() -> onscroll(w, Vec2{px}(3px, 2px), false), w, (Keys.opt,))
   @test (v.zoom, v.shift) == (zoom, shift)

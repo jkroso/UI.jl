@@ -37,8 +37,7 @@
 #
 # `STLViewer("bracket.stl", fill=true)` takes all the room that it's given and
 # has no frame. That's for a window that shows nothing but the model. Nothing
-# under it scrolls, so there two fingers on the trackpad move the model across
-# the view, as a map moves, and the wheel of a mouse makes it bigger or smaller.
+# under it scrolls, so there a scroll makes the model bigger or smaller.
 
 const Vec = NTuple{3,Float32}
 const UV = NTuple{2,Float32}
@@ -1131,22 +1130,14 @@ onmouse(v::STLViewer, e::MouseMove) = begin
   handled   # the drag is the viewer's, so the nodes above don't act on it too
 end
 
-# How many px two fingers on the trackpad move the model for each step of a scroll. macOS gives a tenth of the
-# points that the fingers moved, so the model moves as far as the fingers do.
-const PAN_STEP = 10
-
 # Scrolling with ⌘ held makes the model bigger or smaller. Without ⌘ it scrolls the page that the viewer is on.
-# A viewer that fills its room is on no page. There two fingers on the trackpad move the model, with the
-# fingers, and the wheel of a mouse makes it bigger or smaller.
+# A viewer that fills its room is on no page, so there a scroll with no key held makes the model bigger or
+# smaller too. That's the same for a mouse's wheel and two fingers on a trackpad, because a mouse with smooth
+# scrolling, such as an MX Master, says that it's a trackpad.
 onscroll(v::STLViewer, e::MouseScroll) = begin
   keys = held(e.window)
-  if keys == Keys.cmd || (v.fill && e.wheel && keys == Keys(0))
-    zoom!(v, exp(e.delta[2].value / 10), e.window.mouse)
-  elseif v.fill && keys == Keys(0)
-    pan!(v, (e.delta[1].value * PAN_STEP, e.delta[2].value * PAN_STEP))
-  else
-    return
-  end
+  (keys == Keys.cmd || (v.fill && keys == Keys(0))) || return
+  zoom!(v, exp(e.delta[2].value / 10), e.window.mouse)
   handled
 end
 
