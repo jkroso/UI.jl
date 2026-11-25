@@ -60,12 +60,16 @@ window_button(win, kind) = ccall((:objc_msgSend, libobjc), Ptr{Cvoid}, (Ptr{Cvoi
 title_bar(close) = msg(msg(close, "superview"), "superview")
 
 const button_places = Dict{Ptr{Cvoid},NTuple{2,Float64}}()   # each NSWindow whose buttons moved, and where its close button's middle goes
+const button_fades = Dict{Ptr{Cvoid},Float64}()              # each NSWindow whose buttons faded, and how much they show, from 0 to 1
 const button_watcher = Ref{Ptr{Cvoid}}(C_NULL)
 const placing = Ref(false)   # true while the buttons move, so that their own moves don't move them again
 # What the window tells the watcher after macOS lays out its title bar
 const window_changes = ("NSWindowDidResizeNotification", "NSWindowDidBecomeKeyNotification", "NSWindowDidResignKeyNotification",
                         "NSWindowDidBecomeMainNotification", "NSWindowDidResignMainNotification",
-                        "NSWindowDidExitFullScreenNotification", "NSWindowWillCloseNotification")
+                        "NSWindowDidEnterFullScreenNotification", "NSWindowDidExitFullScreenNotification", "NSWindowWillCloseNotification")
+
+"True when the watcher already hears about the NSWindow `win`"
+watched(win) = haskey(button_places, win) || haskey(button_fades, win)
 
 points(x::Real) = Float64(x)
 points(x) = Float64(convert(px, x).value)
@@ -84,7 +88,7 @@ place_window_buttons!(w::AbstractWindow, x, y) = begin
   (Sys.isapple() && !isempty(w.glfw)) || return w
   win = nswindow(w)
   with_pool() do
-    haskey(button_places, win) || watch_window(win)
+    watched(win) || watch_window(win)
     button_places[win] = (points(x), points(y))
     # A title bar that macOS still has to lay out would put the buttons back later
     msg(msg(msg(win, "contentView"), "superview"), "layoutSubtreeIfNeeded")
@@ -105,6 +109,40 @@ stays as it is.
 fill_screen!(w::AbstractWindow, on::Bool=true) = begin
   isempty(w.glfw) || fills_screen(w) == on || with_pool(() -> msg(nswindow(w), "toggleFullScreen:", C_NULL))
   w
+end
+
+"""
+Fade the close, minimise and zoom buttons of a window without a title bar (see
+`hide_titlebar!`) so they show by `alpha`: 0 hides them, and 1 shows them as
+macOS draws them. An app whose top bar slides out of sight can fade them with
+it. Hidden buttons take no clicks, so a click there goes to the app. They stay
+as they are when macOS lays out the title bar again. In full screen macOS
+shows them with its menu bar, so there they always show.
+
+    fade_window_buttons!(w, 0)   # the bar has gone
+"""
+fade_window_buttons!(w::AbstractWindow, alpha) = begin
+  (Sys.isapple() && !isempty(w.glfw)) || return w
+  win = nswindow(w)
+  a = clamp(Float64(alpha), 0.0, 1.0)
+  get(button_fades, win, 1.0) == a && return w
+  with_pool() do
+    watched(win) || watch_window(win)
+    button_fades[win] = a
+    fade_buttons(win)
+  end
+  w
+end
+
+"Show the buttons of the NSWindow `win` as much as `button_fades` says"
+fade_buttons(win) = begin
+  a = get_value(UInt, win, "styleMask") & full_screen == 0 ? get(button_fades, win, 1.0) : 1.0
+  for kind in (close_button, minimise_button, zoom_button)
+    button = window_button(win, kind)
+    button == C_NULL && continue
+    send(button, "setAlphaValue:", a)
+    send(button, "setHidden:", a == 0)
+  end
 end
 
 "Put the buttons of the NSWindow `win` where `button_places` says"
@@ -145,16 +183,18 @@ window_changed(self::Ptr{Cvoid}, cmd::Ptr{Cvoid}, note::Ptr{Cvoid})::Cvoid = beg
     thing = msg(note, "object")
     win = startswith(name, "NSView") ? msg(thing, "window") : thing
     if name == "NSWindowWillCloseNotification"
-      if haskey(button_places, win)
+      if watched(win)
         delete!(button_places, win)
-        for watched in (win, title_bar(window_button(win, close_button)))
+        delete!(button_fades, win)
+        for thing in (win, title_bar(window_button(win, close_button)))
           ccall((:objc_msgSend, libobjc), Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
-                notifications(), sel("removeObserver:name:object:"), self, C_NULL, watched)
+                notifications(), sel("removeObserver:name:object:"), self, C_NULL, thing)
         end
       end
     # In full screen the strip sits in a window of its own, which isn't in `button_places`
-    elseif haskey(button_places, win)
-      place_buttons(win)
+    elseif watched(win)
+      haskey(button_places, win) && place_buttons(win)
+      haskey(button_fades, win) && fade_buttons(win)
     end
   catch err
     # An error mustn't go back into macOS's own code
@@ -559,4 +599,4 @@ scrolled_by_wheel() = Sys.isapple() && with_pool() do
   event != C_NULL && get_value(UInt, event, "type") == scroll_wheel_event && !get_value(Bool, event, "hasPreciseScrollingDeltas")
 end
 
-export fills_screen, fill_screen!, hide_titlebar!, place_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, watch_swipes!, swipe_button, click_button!, watch_drops!, scrolled_by_wheel
+export fills_screen, fill_screen!, hide_titlebar!, place_window_buttons!, fade_window_buttons!, drag_window!, dark_mode, set_dark!, system_menu, onpinch, watch_pinch!, watch_swipes!, swipe_button, click_button!, watch_drops!, scrolled_by_wheel
