@@ -971,7 +971,8 @@ hurry!(w::AbstractWindow) = begin
   if soon !== nothing
     # The app may set the wake on each frame. If it didn't, the wake is still the one given last frame.
     had = last !== nothing && w.wake == last[2] ? last[1] : w.wake
-    w.wake = had > 0 ? min(had, soon) : max(soon, 0.001)
+    # MiniFB reads a wake of 0 as "wait for input", so a node that asks for a frame at once gets one a moment later
+    w.wake = max(had > 0 ? min(had, soon) : soon, 0.001)
     _hurried[id] = (had, w.wake)
   elseif last !== nothing
     delete!(_hurried, id)

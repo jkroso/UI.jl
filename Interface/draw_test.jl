@@ -497,3 +497,26 @@ let opener = Opener(), w = Window(opener, size=(100px, 100px))
   frame(w)
   @test only(popups(w)).scene !== nothing
 end
+
+# A node that asks for a frame at once gets one, also in a window that wakes by itself, as one with a blinking caret does.
+# A wake of 0 means "wait for input" to MiniFB, so the window waited for the mouse to move.
+@use "./draw" redraw_in!
+"Something that asks for another frame at once, a set number of times"
+@def mutable struct Hasty <: SemanticUI
+  left::Int = 0
+end
+describe(h::Hasty) = (h.left > 0 && (h.left -= 1; redraw_in!(h, 0)); Box(width(20px), height(20px)))
+let hasty = Hasty(left=2), w = Window(hasty, size=(100px, 100px))
+  w.wake = 0.5
+  frame(w)
+  @test 0 < w.wake <= 0.001
+  frame(w)
+  @test 0 < w.wake <= 0.001
+  frame(w)
+  @test w.wake == 0.5                       # it stopped asking, so the window has its own wake again
+  w.wake = 0.0; hasty.left = 1
+  frame(w)
+  @test 0 < w.wake <= 0.001
+  frame(w)
+  @test w.wake == 0.0
+end
