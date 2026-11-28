@@ -13,6 +13,22 @@ The pixels are what the user actually interacts with and these interactions are 
 
 To put it another way, you `describe()` your way down the ladder of abstraction from data to pixels, event handlers mutate the semantic UI tree, and `integrate()` extracts domain data back out of that tree. Going from data to visuals is a chain of describe calls. Going from edited semantic UI back to domain values is an integrate call.
 
+## Importing
+
+A file that draws a page can take the usual names from one place:
+
+```julia
+@use "github.com/jkroso/UI.jl"...
+```
+
+`main.jl` exports the layout, the nodes, drawing, pictures, fonts, the window and the ready-made components.
+
+Three files stay separate:
+
+- `Interface/objc` is for macOS calls.
+- `Interface/media` is for playback. The player and the recorder bring `pause!`, `speed!` and `stop!` with them.
+- `Interface/testing` is for the test helpers.
+
 ## API
 
 ### `describe(data::Any, [parent::SemanticUI])::SemanticUI`
