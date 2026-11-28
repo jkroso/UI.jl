@@ -64,7 +64,9 @@
 # A small circle hangs off the bottom edge of each player, at the right, while
 # the mouse is over the player or the file plays. It says how fast the file
 # plays: 1× is as fast as it was made. Click it to play at 1½×, then at 2×, then
-# at ½×, then at 1× again. macOS keeps each voice at its own pitch.
+# at ½×, then at 1× again. macOS keeps each voice at its own pitch. A player
+# whose `screen` is true has nothing under it, so its speed button is the last
+# of its controls, after the times, and it shows while they show.
 #
 # Once a click has given a player the keyboard, the space bar plays and stops,
 # ← and → go back and on by 5 seconds, and < and > play slower and faster, by a
@@ -322,12 +324,12 @@ describe(v::VideoPlayer) = begin
     strip = Row(width(grow=GrowType.Grow), height(52px * g), padding(18px * g, 0px), child_gap=14px * g,
       Box(width(30px * g), height(30px * g)),
       Box(width(grow=GrowType.Grow), height(6px * g)),
-      Box(width(text_width(f, replace("$(clock(span(m)[2])) / $(clock(span(m)[2]))", r"\d" => "0"))), height(30px * g)))
+      Box(width(text_width(f, replace("$(clock(span(m)[2])) / $(clock(span(m)[2]))", r"\d" => "0"))), height(30px * g)),
+      Box(width(screen_speed_wide(v)), height(26px * g)))   # the speed button
     return Column(width(grow=GrowType.Grow),
       Stack(width(grow=GrowType.Grow), height(v.height), radius(v.corners), background(colorant"black"),
         Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow)),   # the picture is drawn here
-        Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), justify=Alignment.End, strip)),
-      Row(width(grow=GrowType.Grow), height(0px), Box(width(0px), height(0px))))   # where the speed button would hang
+        Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), justify=Alignment.End, strip)))
   end
   # A tall narrow video still has room under it for the controls
   wide = max(240px * k, v.height * (w > 0 && h > 0 ? w / h : 16 / 9))
@@ -348,15 +350,17 @@ parts(::AudioPlayer, ui) = begin
   length(body.children) == 3 ? (body.children[1], body.children[2], body, nothing, under.children[1]) : nothing
 end
 parts(v::VideoPlayer, ui) = begin
-  length(ui.children) == 2 || return nothing
-  body, under = ui.children
   if v.screen
-    # The picture, and over it a column with the controls at its foot
+    # The picture, and over it a column with the controls at its foot. The speed button is the last of them.
+    length(ui.children) == 1 || return nothing
+    body = ui.children[1]
     (length(body.children) == 2 && length(body.children[2].children) == 1) || return nothing
     strip = body.children[2].children[1]
-    (strip isa ConcreteRect && length(strip.children) == 3) || return nothing
-    return (strip.children[1], strip.children[2], strip, body.children[1], under.children[1])
+    (strip isa ConcreteRect && length(strip.children) == 4) || return nothing
+    return (strip.children[1], strip.children[2], strip, body.children[1], strip.children[4])
   end
+  length(ui.children) == 2 || return nothing
+  body, under = ui.children
   strip = isempty(body.children) ? nothing : body.children[end]
   (strip isa ConcreteRect && length(strip.children) == 3) || return nothing
   (strip.children[1], strip.children[2], strip, length(body.children) == 2 ? body.children[1] : nothing, under.children[1])
@@ -502,6 +506,9 @@ screen_scale(v::VideoPlayer) = clamp(Float64(v.height / 720px), 1.0, 1.8)
 "The font of the times of a player that fills a screen"
 screen_font(v::VideoPlayer) = skia_font(theme(v).family, sized(12pt, theme(v)) * screen_scale(v))
 
+"How wide the speed button of a player that fills a screen is: room for its widest words, 1¾×"
+screen_speed_wide(v::VideoPlayer) = text_width(screen_font(v), "1¾×") + 16px * scale(theme(v)) * screen_scale(v)
+
 """
 True while a VideoPlayer shows its controls. One that fills a screen shows
 them while it's stopped, while its track is dragged, and for a moment after
@@ -513,10 +520,11 @@ controls_show(v::VideoPlayer) =
 """
 Draw the controls of a player that fills a screen, over the foot of its
 picture: a shade, the sign that plays or stops, the track with the part that
-has played, and the times. They're white, since the picture under them is
-any colour.
+has played, the times and the speed button. They're white, since the picture
+under them is any colour. The speed button is white all over at any speed but
+1×, as it's the accent colour in a page.
 """
-controls_over(ctx, v::VideoPlayer, m, button, track, strip, _...) = begin
+controls_over(ctx, v::VideoPlayer, m, button, track, strip, _, speeds) = begin
   k = scale(theme(v)) * screen_scale(v)
   white = sk_color(colorant"white")
   paint = Skia.sk_paint_new()
@@ -557,6 +565,21 @@ controls_over(ctx, v::VideoPlayer, m, button, track, strip, _...) = begin
   Skia.sk_paint_set_color(ink, white)
   blob = Skia.sk_textblob_make_from_string(said, f.raw, Skia.SK_TEXT_ENCODING_UTF8)
   Skia.sk_canvas_draw_text_blob(ctx, blob, flt(words.left + words.width) - flt(text_width(f, said)), flt(words.top + words.height / 2) + size * 0.36f0, ink)
+  Skia.sk_textblob_unref(blob)
+  # The speed button, after the times
+  s = speed(v)
+  ends = speeds.height / 2   # its ends are round
+  if s == 1
+    line = 1.5px * k   # a line round it, inside its edge
+    rounded_rectangle(ctx, speeds.left + line / 2, speeds.top + line / 2, speeds.width - line, speeds.height - line, ends - line / 2,
+                      color=RGBA(1.0, 1.0, 1.0, 0.7), stroke_width=line)
+  else
+    rounded_rectangle(ctx, speeds.left, speeds.top, speeds.width, speeds.height, ends, background=colorant"white")
+  end
+  Skia.sk_paint_set_color(ink, s == 1 ? white : sk_color(colorant"black"))
+  said = speed_label(s)
+  blob = Skia.sk_textblob_make_from_string(said, f.raw, Skia.SK_TEXT_ENCODING_UTF8)
+  Skia.sk_canvas_draw_text_blob(ctx, blob, flt(speeds.left + speeds.width / 2) - flt(text_width(f, said)) / 2, flt(speeds.top + speeds.height / 2) + size * 0.36f0, ink)
   Skia.sk_textblob_unref(blob)
   Skia.sk_paint_delete(ink)
 end

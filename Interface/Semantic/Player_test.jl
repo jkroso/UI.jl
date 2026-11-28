@@ -334,6 +334,15 @@ if Sys.which("ffmpeg") !== nothing
     @test !playing(gif)
     # The picture fills the player, which has round corners
     @test rect(gif).height == 90px && parts(gif)[4].height == 90px
+    # Nothing hangs under it, so its speed button is the last of its controls, after the times. A click on it changes the speed.
+    _, track, strip, _, speeds = parts(gif)
+    @test track.left + track.width < speeds.left && speeds.left + speeds.width <= strip.left + strip.width
+    @test strip.top <= speeds.top && speeds.top + speeds.height <= strip.top + strip.height
+    click!(w, middle(speeds))
+    @test speed(gif) == 1.5 && !playing(gif)
+    click!(w, middle(speeds))
+    @test speed(gif) == 2
+    speed!(gif, 1)
   end
   # A player that isn't shown hasn't asked macOS for its file
   let v = VideoPlayer(flat)
