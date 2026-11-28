@@ -304,19 +304,34 @@ end
 """
 Run again the parts of the files that use `src` that used a name that changed
 in it: their @use lines for `src`, then the statements that use those names.
+Then do the same for the files that use those files, and so on.
+
+Each file runs once, after every file that it uses, with what changed in all
+of them. Most files of an app use its file of constants both themselves and
+through other files. Such a file isn't done with when the first of those
+reaches it, or it would keep the old value of a constant.
 """
-spread!(src, r, seen=Set([src.path])) =
-  for g in values(sources)
-    (g.path in seen || !any(((_, ex),) -> use_target(g, ex) == src.path, g.exprs)) && continue
-    push!(seen, g.path)
-    picks = [!isempty(r.changed) && use_target(g, ex) == src.path for (_, ex) in g.exprs]
-    r2 = rerun!(g, picks, r.hot)
+spread!(src, r) = begin
+  # What changed in each file so far, for the files that use it
+  passed = Dict{String,Any}(src.path => (; changed=r.changed, hot=r.hot))
+  for g in load_order()
+    haskey(passed, g.path) && continue
+    targets = [use_target(g, ex) for (_, ex) in g.exprs]
+    from = unique!(String[p for p in targets if p !== nothing && haskey(passed, p)])
+    isempty(from) && continue
+    picks = [p !== nothing && haskey(passed, p) && !isempty(passed[p].changed) for p in targets]
+    given = mapreduce(p -> passed[p].hot, union, from, init=Set{Symbol}())
+    r2 = rerun!(g, picks, given)
     r2.picked + r2.also == 0 && continue
-    say("Reloaded $(short(g.path)): ", plural(r2.picked + r2.also, "line", "lines"), " that use $(short(src.path))")
+    # The file that you saved is named first, and a long list is cut short
+    names = short.(sort!(from, by=p -> p != src.path))
+    used = length(names) <= 3 ? join(names, ", ", " and ") : names[1] * " and " * plural(length(names) - 1, "other file", "other files")
+    say("Reloaded $(short(g.path)): ", plural(r2.picked + r2.also, "line", "lines"), " that use ", used)
     structs = [n for n in r2.changed if r2.before[n] isa Type]
     isempty(structs) || return reload_users!(g, structs)
-    spread!(g, (; changed=r2.changed, hot=union(setdiff(r2.hot, r.hot), r2.changed)), seen)
+    passed[g.path] = (; changed=r2.changed, hot=union(setdiff(r2.hot, given), r2.changed))
   end
+end
 
 """
 A struct in `src` has new fields. What the window shows was made with the old
