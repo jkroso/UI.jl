@@ -43,12 +43,23 @@
 # in white with a dark edge, as a subtitle shows. The app sets `caption` as
 # the video plays, since the player doesn't read subtitles itself.
 #
-# A VideoPlayer whose `screen` is true is made to be all that a screen shows.
-# Its picture is as big as the room it's given, with black round it and no
-# border. Its button, its track and its times lie over the foot of the
-# picture. They show while the video is stopped, and for a moment after the
-# mouse moves. While the video plays and the mouse is still, only the picture
-# shows.
+# A VideoPlayer whose `screen` is true is made to be all that a screen shows,
+# or all of a space that an app keeps for the video. Its picture is as big as
+# the room it's given, with black round it and no border. Its button, its
+# track and its times lie over the foot of the picture. They show while the
+# video is stopped, and for a moment after the mouse moves. While the video
+# plays and the mouse is still, only the picture shows. Its corners are square,
+# or as round as its `corners` says.
+#
+# A VideoPlayer can play as a GIF does in a web page:
+#
+#     VideoPlayer("cat.mp4", autoplay=true, loop=true, muted=true)
+#
+# `autoplay` plays it as soon as macOS can. `loop` starts it again each time
+# it gets to its end. `muted` plays it with no sound. A muted video doesn't stop
+# the file that plays, and a file that starts doesn't stop it. When the app
+# stops showing a muted video, it stops, and it plays on when the app shows it
+# again.
 #
 # A small circle hangs off the bottom edge of each player, at the right, while
 # the mouse is over the player or the file plays. It says how fast the file
@@ -60,8 +71,9 @@
 # quarter at a time, from ½× to 2×.
 #
 # macOS plays the file, so the players only work on a Mac. One file plays at a
-# time: when a player starts, the one that was playing stops. When an app stops
-# showing a player, its file stops within a second or two.
+# time: when a player starts, the one that was playing stops. A muted video is
+# the exception. When an app stops showing a player, its file stops within a
+# second or two.
 
 "The last picture of a video, kept so that a frame in which the video didn't move on draws it again"
 mutable struct Still
@@ -88,6 +100,10 @@ end
   length::Float64 = 0.0    # how long a stream is in seconds, for a `path` that's a web address. macOS can't say while the stream is being made.
   caption::String = ""     # words that show over the foot of the picture, like a subtitle. Each line of it is a line there.
   screen::Bool = false     # it's all that a screen shows: black is round its picture, and its controls lie over the foot of the picture
+  corners::px = 0px        # how round the corners of a player whose `screen` is true are
+  autoplay::Bool = false   # it plays as soon as macOS can
+  loop::Bool = false       # it starts again at its start each time it gets to its end
+  muted::Bool = false      # it plays with no sound, beside the file that plays
   stirred::Float64 = 0.0   # when the mouse last moved over it. A player that fills a screen shows its controls for a moment after.
   # What it remembers between frames
   media::Any = nothing
@@ -105,7 +121,24 @@ const Player = Union{AudioPlayer,VideoPlayer}
 
 "The file as macOS plays it. It's opened the first time that the player is shown."
 media(p::AudioPlayer) = (p.media === nothing && (p.media = Playback(p.path)); p.media::Playback)
-media(p::VideoPlayer) = (p.media === nothing && (p.media = Playback(p.path, from=p.from, to=p.to, length=p.length)); p.media::Playback)
+media(p::VideoPlayer) = begin
+  p.media === nothing && (p.media = Playback(p.path, from=p.from, to=p.to, length=p.length, loop=p.loop, muted=p.muted, autoplay=p.autoplay))
+  p.media::Playback
+end
+
+"Has macOS read enough of the file to play it? A player that hasn't been shown yet hasn't asked macOS for its file."
+ready(p::Player) = p.media !== nothing && ready(p.media)
+"Is it a file that macOS can't play?"
+failed(p::Player) = p.media !== nothing && failed(p.media)
+"Is it playing now?"
+playing(p::Player) = p.media !== nothing && playing(p.media)
+
+"""
+Has the player a picture of its video to show? It has none until macOS has read
+the start of the file, and it shows black meanwhile. So an app can show a
+picture of its own over it until then, like the first frame of the video.
+"""
+has_picture(v::VideoPlayer) = v.still.image != C_NULL
 
 """
 How far through the file it is, in seconds. After a click on the track it's the
@@ -291,7 +324,7 @@ describe(v::VideoPlayer) = begin
       Box(width(grow=GrowType.Grow), height(6px * g)),
       Box(width(text_width(f, replace("$(clock(span(m)[2])) / $(clock(span(m)[2]))", r"\d" => "0"))), height(30px * g)))
     return Column(width(grow=GrowType.Grow),
-      Stack(width(grow=GrowType.Grow), height(v.height), background(colorant"black"),
+      Stack(width(grow=GrowType.Grow), height(v.height), radius(v.corners), background(colorant"black"),
         Box(width(grow=GrowType.Grow), height(grow=GrowType.Grow)),   # the picture is drawn here
         Column(width(grow=GrowType.Grow), height(grow=GrowType.Grow), justify=Alignment.End, strip)),
       Row(width(grow=GrowType.Grow), height(0px), Box(width(0px), height(0px))))   # where the speed button would hang
@@ -381,7 +414,20 @@ draw(ctx, size, ui::ConcreteRect, v::VideoPlayer) = begin
   t, k = theme(v), scale(theme(v))
   m = media(v)
   area === nothing || screen(ctx, ui.children[1], area, v, m)   # the body: the speed button hangs under it
-  v.screen && return controls_show(v) ? controls_over(ctx, v, m, found...) : nothing
+  if v.screen
+    controls_show(v) || return
+    # The shade behind the controls stops at the round corners of the picture
+    body = ui.children[1]
+    clip = Skia.sk_path_new()
+    Skia.sk_path_add_rounded_rect(clip, Ref(Skia.sk_rect_t(flt(body.left), flt(body.top), flt(body.left + body.width), flt(body.top + body.height))),
+                                  flt(v.corners), flt(v.corners), Skia.SK_PATH_DIRECTION_CW)
+    Skia.sk_canvas_save(ctx)
+    Skia.sk_canvas_clip_path_with_operation(ctx, clip, Skia.SK_CLIP_OP_INTERSECT, true)
+    controls_over(ctx, v, m, found...)
+    Skia.sk_canvas_restore(ctx)
+    Skia.sk_path_delete(clip)
+    return
+  end
   # The part of the track that has played, and a knob at the end of it, as a Slider has
   full = track.width * played(v)
   full > 0px && rounded_rectangle(ctx, track.left, track.top, full, track.height, track.height / 2, background=t.accent)
@@ -403,7 +449,7 @@ screen(ctx, ui, area, v::VideoPlayer, m::Playback) = begin
   end
   left, top, wide, tall = flt(area.left), flt(area.top), flt(area.width), flt(area.height)
   # The picture stops inside the player's border and its round corners
-  inset, round = v.screen ? (0px, 0px) : (1px, 7px)   # a picture that fills a screen has square corners
+  inset, round = v.screen ? (0px, v.corners) : (1px, 7px)   # a picture that fills a screen has the corners that the player is given
   edge = Ref(Skia.sk_rect_t(flt(ui.left + inset), flt(ui.top + inset), flt(ui.left + ui.width - inset), flt(ui.top + ui.height - inset)))
   clip = Skia.sk_path_new()
   Skia.sk_path_add_rounded_rect(clip, edge, flt(round), flt(round), Skia.SK_PATH_DIRECTION_CW)
@@ -629,4 +675,4 @@ ontype(p::Player, e::Typed) = begin
   handled
 end
 
-export AudioPlayer, VideoPlayer, toggle!, pause!, speed!, card_bottom, controls_show
+export AudioPlayer, VideoPlayer, toggle!, pause!, speed!, card_bottom, controls_show, has_picture

@@ -19,6 +19,12 @@
 # can't say how long such a stream is until its last piece is written, so
 # `length` says it, in seconds.
 #
+# `Playback("cat.mp4", loop=true, muted=true, autoplay=true)` plays as a GIF
+# does in a web page. `autoplay` plays it as soon as macOS can. `loop` starts
+# it again from the start each time it gets to the end. `muted` plays it with
+# no sound, and then it doesn't count as the one file that plays: any number of
+# muted files play at once, beside the one with sound.
+#
 # macOS reads the file while the app's event loop runs, so a `Playback` is
 # `ready` a moment after it's made, and only in an app with a window open.
 
@@ -65,6 +71,10 @@ mutable struct Playback
   speed::Float64    # how fast it plays: 1 is as fast as the file was made, and 2 is twice as fast
   long::Float64     # how long it is in seconds, as the one who made it said, for when macOS can't say. 0 when nobody said.
   wanted::Float64   # the time that `seek!` asked for and macOS can't go to yet, in a stream that's still being made. NaN when there's none.
+  loop::Bool        # it starts again at the start of the part that plays, each time it gets to the end
+  muted::Bool       # it makes no sound, and plays beside the file that does
+  autoplay::Bool    # it plays as soon as it's `ready`. It's false once it has started.
+  away::Bool        # it's muted, and it stopped because no player showed it. It plays on when one shows it again.
 end
 
 "True when `path` is a web address and not the path of a file"
@@ -73,7 +83,7 @@ isweb(path) = occursin(r"^https?://"i, path)
 "`path` as a Playback keeps it: a web address as it is, and the path of a file from the top of the disk"
 place_of(path) = isweb(path) ? String(path) : abspath(path)
 
-Playback(path::AbstractString; from::Real=0.0, to::Real=Inf, length::Real=0.0) = begin
+Playback(path::AbstractString; from::Real=0.0, to::Real=Inf, length::Real=0.0, loop::Bool=false, muted::Bool=false, autoplay::Bool=false) = begin
   # The classes of AVFoundation only have their names once it's loaded
   Base.Libc.Libdl.dlopen(AVFoundation)
   player = with_pool() do
@@ -84,14 +94,19 @@ Playback(path::AbstractString; from::Real=0.0, to::Real=Inf, length::Real=0.0) =
   item = msg(player, "currentItem")
   # macOS stops at `to`, as if the file ended there
   isfinite(to) && ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, CMTime), item, sel("setForwardPlaybackEndTime:"), cmtime(to))
+  muted && ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Bool), player, sel("setMuted:"), true)
+  # A file that loops doesn't stop at its end, so `place!` sees it there with its speed still on, and takes it back to the start
+  loop && ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Int), player, sel("setActionAtItemEnd:"), 2)   # AVPlayerActionAtItemEndNone
   from = max(Float64(from), 0.0)
-  finalizer(close!, Playback(place_of(path), player, item, C_NULL, 0, 0.0, 0.0, 0, from, Float64(to), from == 0, 1.0, max(Float64(length), 0.0), NaN))
+  finalizer(close!, Playback(place_of(path), player, item, C_NULL, 0, 0.0, 0.0, 0, from, Float64(to), from == 0, 1.0, max(Float64(length), 0.0), NaN,
+                             loop, muted, autoplay, false))
 end
 
 "Stop it and give its memory back to macOS"
 close!(p::Playback) = begin
   p.player == C_NULL && return
   sounding[] === p && (sounding[] = nothing)
+  filter!(q -> q !== p, quiet)
   msg(p.player, "pause")
   p.output == C_NULL || msg(p.output, "release")
   msg(p.player, "release")
@@ -142,25 +157,33 @@ picture_size(p::Playback) =
 
 # One file plays at a time, as in a music app. This is the one that plays now.
 const sounding = Ref{Any}(nothing)
+# The muted files that play now. They make no sound, so they play beside it, as many as the app shows.
+const quiet = Playback[]
 
 """
 Play it from where it is. If it's at the end of the part that plays, or outside
-that part, it plays from the start of the part. The file that was playing stops.
+that part, it plays from the start of the part. The file that was playing stops,
+unless one of the two is muted.
 """
 play!(p::Playback) = begin
   p.player == C_NULL && return p
-  other = sounding[]
-  other isa Playback && other !== p && pause!(other)
+  if p.muted
+    any(q -> q === p, quiet) || push!(quiet, p)
+  else
+    other = sounding[]
+    other isa Playback && other !== p && pause!(other)
+    sounding[] = p
+  end
   from, to = span(p)
   to > 0 && !(from - 0.05 <= position(p) < to - 0.05) && seek!(p, from)
-  sounding[] = p
+  p.away = p.autoplay = false
   p.missed = 0
   rate!(p, p.speed)
   guard!()
   p
 end
 
-pause!(p::Playback) = (p.player == C_NULL || msg(p.player, "pause"); p)
+pause!(p::Playback) = (p.away = false; p.player == C_NULL || msg(p.player, "pause"); p)
 
 "Tell macOS to play at `r` times as fast as the file was made. 0 stops it."
 rate!(p::Playback, r) = ccall((:objc_msgSend, libobjc), Cvoid, (Object, Object, Float32), p.player, sel("setRate:"), Float32(r))
@@ -229,11 +252,19 @@ Go to the start of the part that plays, the first time that it's called after
 the file is `ready`. A player calls it in each frame. macOS can't go to a time
 in a file that it hasn't read, so a Playback can't do this when it's made. It
 also goes to the time that `seek!` kept as `wanted`, once macOS knows that far.
+It plays a file that has `autoplay` once it's ready, and takes a file that
+loops back to its start when it gets to its end.
 """
 place!(p::Playback) = begin
-  p.placed || !ready(p) || seek!(p, p.from)
+  ready(p) || return p
+  p.placed || seek!(p, p.from)
   # A time in a stream that macOS didn't know of when it was asked for
-  isnan(p.wanted) || !ready(p) || reach(p) + 0.5 < p.wanted || seek!(p, p.wanted)
+  isnan(p.wanted) || reach(p) + 0.5 < p.wanted || seek!(p, p.wanted)
+  p.autoplay && play!(p)
+  if p.loop && playing(p)
+    from, to = span(p)
+    to > from && position(p) >= to - 0.01 && seek!(p, from)
+  end
   p
 end
 
@@ -251,23 +282,40 @@ end
 # twice a second. When it finds that the player wasn't described since the look
 # before last, it stops the file. It waits for two looks because one slow frame
 # can take longer than half a second.
+#
+# A muted file stops in the same way, so that a video nobody sees costs nothing.
+# It plays on when a player shows it again, as a GIF in a web page does. A file
+# with sound waits for a click: it would be a surprise to hear it start.
 
-"Note that a player shows `p` now"
-shown!(p::Playback) = (p.seen = time(); p)
+"Note that a player shows `p` now. A muted file that stopped because no player showed it plays on."
+shown!(p::Playback) = begin
+  p.seen = time()
+  p.away && play!(p)
+  p
+end
 
 const timer = Ref{Object}(C_NULL)
+
+"Stop `p` if no player showed it since the look before last. A file that no player ever showed plays on: a script may have started it."
+missed!(p::Playback) = begin
+  p.seen > 0 || return
+  p.seen == p.checked ? (p.missed += 1) : (p.missed = 0; p.checked = p.seen)
+  p.missed >= 2 || return
+  pause!(p)
+  p.away = p.muted
+  nothing
+end
 
 look(::Object, ::Object)::Cvoid = begin
   try
     p = sounding[]
-    if !(p isa Playback) || !playing(p)
-      sounding[] = nothing
+    p isa Playback && playing(p) ? missed!(p) : (sounding[] = nothing)
+    foreach(missed!, quiet)
+    filter!(playing, quiet)
+    if sounding[] === nothing && isempty(quiet)
       ccall((:CFRunLoopTimerInvalidate, CoreFoundation), Cvoid, (Object,), timer[])
       ccall((:CFRelease, CoreFoundation), Cvoid, (Object,), timer[])
       timer[] = C_NULL
-    elseif p.seen > 0   # a file that no player ever showed plays on: a script may have started it
-      p.seen == p.checked ? (p.missed += 1) : (p.missed = 0; p.checked = p.seen)
-      p.missed >= 2 && pause!(p)
     end
   catch
   end

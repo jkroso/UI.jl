@@ -10,7 +10,7 @@
 @use "../objc" libobjc sel
 @use "../media" => Media
 @use Skia
-@use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause! speed speed! next_speed stepped speed_label controls_show screen_scale caption_lines
+@use "./Player" AudioPlayer VideoPlayer clock parts toggle! pause! speed speed! next_speed stepped speed_label controls_show screen_scale caption_lines has_picture
 @use "../fonts" skia_font
 
 # A length of time, as a player shows it
@@ -295,6 +295,49 @@ if Sys.which("ffmpeg") !== nothing
     # ← can't go before the part
     press!(w, Keys.left)
     @test until(() -> shown() && abs(position(v.media) - 0.5) < 0.05)
+  end
+
+  # A video that plays as a GIF does in a web page: by itself, over and over, and with no sound
+  let gif = VideoPlayer(flat, height=90px, screen=true, corners=12px, autoplay=true, loop=true, muted=true), v = VideoPlayer(flat, height=180px)
+    w = Window(Shelf(gif, v), size=(500px, 400px))
+    shown() = (frame(w); true)
+    # It plays as soon as macOS has read it
+    @test until(() -> shown() && playing(gif) && has_picture(gif))
+    @test ready(gif) && !failed(gif)
+    # The video is 2 seconds long. It gets to its end, and starts again from its start.
+    @test until(() -> shown() && position(gif.media) > 1.6)
+    @test until(() -> shown() && position(gif.media) < 0.5)
+    @test playing(gif)
+    # It's muted, so it isn't the file that plays: a file with sound plays beside it, and doesn't stop it
+    @test sounding[] !== gif.media
+    @test until(() -> shown() && ready(v))
+    toggle!(v)
+    @test playing(v) && playing(gif) && sounding[] === v.media
+    pause!(v)
+    # With no frame for a second and a half, the timer stops it. It plays on when a frame shows it again.
+    loop(1.6)
+    @test !playing(gif)
+    frame(w)
+    @test playing(gif)
+    # A video with sound that stopped in the same way waits for a click
+    toggle!(v)
+    loop(1.6)
+    @test !playing(v)
+    frame(w)
+    @test !playing(v)
+    # A click stops the muted video, and it stays stopped while it's away and when it shows again
+    picture = parts(gif)[4]
+    click!(w, (picture.left + picture.width / 2, picture.top + 10px))   # over the controls, lower down, a click goes along the track
+    @test !playing(gif)
+    loop(1.6)
+    frame(w)
+    @test !playing(gif)
+    # The picture fills the player, which has round corners
+    @test rect(gif).height == 90px && parts(gif)[4].height == 90px
+  end
+  # A player that isn't shown hasn't asked macOS for its file
+  let v = VideoPlayer(flat)
+    @test !ready(v) && !failed(v) && !playing(v) && !has_picture(v)
   end
 
   # The pictures come in sRGB, as macOS shows the video itself. An HD video of #F38020 shows as (241,139,33).
